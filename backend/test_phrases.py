@@ -3,6 +3,7 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite:///./_smoke_phrases.db"
 os.environ["STORAGE_DIR"] = "./_smoke_storage"
+os.environ["OPENAI_API_KEY"] = ""  # o teste simula a IA; nunca toca na API real
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -23,6 +24,8 @@ print("parse_phrases ok ->", parsed)
 from app.main import app  # noqa: E402
 
 client = TestClient(app)
+_tok = client.post("/api/v1/auth/register", json={"email": "phr@t.com", "senha": "segredo1"}).json()["access_token"]
+client.headers.update({"Authorization": f"Bearer {_tok}"})
 
 # cria tipo
 r = client.post("/api/v1/phrase-types", json={"nome": "FLIRT", "descricao": "provocante"})

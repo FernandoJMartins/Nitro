@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"  # a opção mais barata da OpenAI para texto
 
+    # segredo para assinar os tokens JWT — TROQUE em produção (via .env)
+    secret_key: str = "dev-secret-troque-em-producao"
+    jwt_expire_hours: int = 720  # 30 dias
+
     @property
     def storage_path(self) -> Path:
         p = Path(self.storage_dir)

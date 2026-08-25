@@ -125,6 +125,17 @@ Uma barra de progresso acompanha o lote. Ao terminar, os vídeos aparecem com pr
 
 > ⚙️ **Escala:** hoje o lote roda em background no próprio processo do backend (FastAPI BackgroundTasks). Para volumes grandes/produção, trocar por Celery + Redis (já previsto no README).
 
-## Próximas fases (ver README)
+## Auth + API (Fase 7)
 
-Auth (login) + API pública com chave para integração externa (Fase 7).
+- **Login/registro** (e-mail + senha). Cada usuário vê **só** suas mídias, frases e vídeos.
+- Ao abrir o app, você cria a conta ou entra. Token fica salvo no navegador; botão **Sair** no topo.
+- **API para sistemas externos:** aba **API** → gere uma **chave** (`nitro_...`, mostrada só uma vez). Use nos mesmos endpoints:
+  ```bash
+  curl "http://localhost:8080/api/v1/videos/history" -H "Authorization: Bearer SUA_CHAVE"
+  ```
+- Documentação interativa completa em `/docs` (Swagger).
+- ⚠️ Em produção, defina um `SECRET_KEY` aleatório no `.env` (assina os tokens de login).
+
+## Sistema completo 🎉
+
+Todas as fases (0 a 7) estão implementadas e testadas. Para escalar em produção: mover arquivos para S3/R2 e a geração para Celery+Redis (ver README).

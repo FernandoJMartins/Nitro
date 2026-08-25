@@ -4,6 +4,43 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
+# ---------- Auth ----------
+class UserCreate(BaseModel):
+    email: str
+    senha: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    criado_em: datetime
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class ApiKeyCreate(BaseModel):
+    nome: str = "Minha chave"
+
+
+class ApiKeyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nome: str
+    prefixo: str
+    ativo: bool
+    criado_em: datetime
+
+
+class ApiKeyCreated(ApiKeyOut):
+    chave: str  # a chave crua — mostrada só uma vez, na criação
+
+
 class MediaOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

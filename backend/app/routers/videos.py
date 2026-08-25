@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import GeneratedVideo, Job, Media, Phrase
+from ..deps import get_current_user, get_user_for_file
+from ..models import GeneratedVideo, Job, Media, Phrase, PhraseType, User
 from ..schemas import BulkRequest, GeneratedVideoOut, JobOut
 from ..services import bulk, video
 from ..services.bulk import BulkConfig
@@ -41,9 +42,9 @@ class GenerateResponse(BaseModel):
     used_flash: bool
 
 
-def _media_or_404(db: Session, media_id: int, tipos: set[str]) -> Media:
+def _media_or_404(db: Session, media_id: int, tipos: set[str], user_id: int) -> Media:
     m = db.get(Media, media_id)
-    if not m:
+    if not m or m.user_id != user_id:
         raise HTTPException(status_code=404, detail=f"Mídia {media_id} não encontrada")
     if m.tipo not in tipos:
         raise HTTPException(status_code=400, detail=f"Mídia {media_id} deve ser {tipos}, é '{m.tipo}'")
@@ -51,30 +52,30 @@ def _media_or_404(db: Session, media_id: int, tipos: set[str]) -> Media:
 
 
 @router.post("/generate", response_model=GenerateResponse)
-def generate_video(body: GenerateRequest, db: Session = Depends(get_db)):
+def generate_video(body: GenerateRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     duration = max(1.0, min(body.duration, 60.0))
     storage = settings.storage_path
 
-    base = _media_or_404(db, body.base_media_id, {"video", "photo"})
+    base = _media_or_404(db, body.base_media_id, {"video", "photo"}, user.id)
     base_path = storage / base.caminho
 
     text = None
     if body.phrase_id is not None:
         ph = db.get(Phrase, body.phrase_id)
-        if not ph:
+        if not ph or ph.user_id != user.id:
             raise HTTPException(status_code=404, detail="Frase não encontrada")
         text = ph.texto
 
     music_path = None
     if body.music_media_id is not None:
-        music = _media_or_404(db, body.music_media_id, {"music"})
+        music = _media_or_404(db, body.music_media_id, {"music"}, user.id)
         music_path = storage / music.caminho
 
     hot_path = None
     if body.use_flash:
         if body.hot_media_id is None:
             raise HTTPException(status_code=400, detail="use_flash exige hot_media_id")
-        hot = _media_or_404(db, body.hot_media_id, {"photo_hot"})
+        hot = _media_or_404(db, body.hot_media_id, {"photo_hot"}, user.id)
         hot_path = storage / hot.caminho
 
     gen_dir = storage / "generated"
@@ -115,8 +116,21 @@ def download_generated(token: str):
 
 
 # ---------- Geração em massa (Fase 5) ----------
+def _owned_media_ids(db: Session, ids: list[int], user_id: int) -> None:
+    """Garante que todas as mídias do pool pertencem ao usuário."""
+    for mid in set(ids):
+        m = db.get(Media, mid)
+        if not m or m.user_id != user_id:
+            raise HTTPException(status_code=404, detail=f"Mídia {mid} não encontrada")
+
+
 @router.post("/bulk", response_model=JobOut)
-def generate_bulk(body: BulkRequest, background: BackgroundTasks, db: Session = Depends(get_db)):
+def generate_bulk(
+    body: BulkRequest,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     if not body.base_media_ids:
         raise HTTPException(status_code=400, detail="Selecione ao menos uma mídia base")
     quantidade = max(1, min(body.quantidade, 200))
@@ -127,17 +141,25 @@ def generate_bulk(body: BulkRequest, background: BackgroundTasks, db: Session = 
     if body.use_flash and not body.hot_media_ids:
         raise HTTPException(status_code=400, detail="use_flash exige ao menos uma foto hot")
 
+    # todas as mídias e o tipo de frase precisam ser do próprio usuário
+    _owned_media_ids(db, body.base_media_ids + body.music_media_ids + body.hot_media_ids, user.id)
+    if body.phrase_type_id is not None:
+        pt = db.get(PhraseType, body.phrase_type_id)
+        if not pt or pt.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Tipo de frase não encontrado")
+
     # range de duração: clamp em [1, 60] e garante min <= max
     dur_min = max(1.0, min(body.duration_min, 60.0))
     dur_max = max(1.0, min(body.duration_max, 60.0))
     dur_min, dur_max = min(dur_min, dur_max), max(dur_min, dur_max)
 
-    job = Job(status="fila", total=quantidade, concluidos=0)
+    job = Job(user_id=user.id, status="fila", total=quantidade, concluidos=0)
     db.add(job)
     db.commit()
     db.refresh(job)
 
     cfg = BulkConfig(
+        user_id=user.id,
         quantidade=quantidade,
         base_media_ids=body.base_media_ids,
         music_media_ids=body.music_media_ids,
@@ -154,17 +176,17 @@ def generate_bulk(body: BulkRequest, background: BackgroundTasks, db: Session = 
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
-def get_job(job_id: int, db: Session = Depends(get_db)):
+def get_job(job_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     job = db.get(Job, job_id)
-    if not job:
+    if not job or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="Job não encontrado")
     return job
 
 
 # ---------- Histórico (Fase 6, alimentado pela geração em massa) ----------
 @router.get("/history", response_model=list[GeneratedVideoOut])
-def history(job_id: int | None = None, db: Session = Depends(get_db)):
-    stmt = select(GeneratedVideo).order_by(GeneratedVideo.criado_em.desc())
+def history(job_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    stmt = select(GeneratedVideo).where(GeneratedVideo.user_id == user.id).order_by(GeneratedVideo.criado_em.desc())
     if job_id is not None:
         stmt = stmt.where(GeneratedVideo.job_id == job_id)
     return list(db.scalars(stmt))
@@ -175,12 +197,12 @@ class DeleteBatch(BaseModel):
 
 
 @router.post("/history/delete")
-def delete_history_batch(body: DeleteBatch, db: Session = Depends(get_db)):
+def delete_history_batch(body: DeleteBatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Apaga vários vídeos gerados de uma vez (arquivo no disco + registro)."""
     removidos = 0
     for vid in body.ids:
         gv = db.get(GeneratedVideo, vid)
-        if gv:
+        if gv and gv.user_id == user.id:
             (settings.storage_path / gv.caminho).unlink(missing_ok=True)
             db.delete(gv)
             removidos += 1
@@ -189,9 +211,9 @@ def delete_history_batch(body: DeleteBatch, db: Session = Depends(get_db)):
 
 
 @router.get("/{video_id}/download")
-def download_video(video_id: int, db: Session = Depends(get_db)):
+def download_video(video_id: int, db: Session = Depends(get_db), user: User = Depends(get_user_for_file)):
     gv = db.get(GeneratedVideo, video_id)
-    if not gv:
+    if not gv or gv.user_id != user.id:
         raise HTTPException(status_code=404, detail="Vídeo não encontrado")
     path = settings.storage_path / gv.caminho
     if not path.exists():

@@ -16,6 +16,10 @@ client = TestClient(app)
 assert client.get("/health").json() == {"status": "ok"}
 print("health ok")
 
+# autenticação (Fase 7): registra e usa o token em todas as chamadas
+_tok = client.post("/api/v1/auth/register", json={"email": "smoke@t.com", "senha": "segredo1"}).json()["access_token"]
+client.headers.update({"Authorization": f"Bearer {_tok}"})
+
 # monta uma foto com EXIF em memoria
 buf = io.BytesIO()
 img = Image.new("RGB", (100, 100), (10, 200, 90))

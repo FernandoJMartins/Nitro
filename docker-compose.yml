@@ -21,6 +21,7 @@ services:
       CORS_ORIGINS: http://localhost:8080
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
     volumes:
       - storage:/app/storage
     depends_on:

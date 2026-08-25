@@ -28,6 +28,7 @@ from . import ai, video
 
 @dataclass
 class BulkConfig:
+    user_id: int
     quantidade: int
     base_media_ids: list[int]
     music_media_ids: list[int]
@@ -122,6 +123,7 @@ def run_bulk_job(job_id: int, cfg: BulkConfig) -> None:
                         legenda = None
 
                 db.add(GeneratedVideo(
+                    user_id=cfg.user_id,
                     job_id=job_id,
                     caminho=f"generated/{token}.mp4",
                     duracao=dur,

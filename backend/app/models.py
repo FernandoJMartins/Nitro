@@ -5,7 +5,7 @@ api_keys entram nas próximas fases (ver roadmap no README).
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -13,6 +13,29 @@ from .database import Base
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    senha_hash: Mapped[str] = mapped_column(String(255))
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ApiKey(Base):
+    """Chave de API de um usuário, para integração externa."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    nome: Mapped[str] = mapped_column(String(100), default="Minha chave")
+    chave_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # sha256 hex
+    prefixo: Mapped[str] = mapped_column(String(16))  # ex.: "nitro_ab12cd" (para exibição)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class Media(Base):
@@ -45,10 +68,12 @@ class PhraseType(Base):
     """Tipo/categoria de frase (ex.: FLIRT, SARCASMIC). Frases ficam DENTRO do vídeo."""
 
     __tablename__ = "phrase_types"
+    # o mesmo nome pode existir para usuários diferentes, mas é único por usuário.
+    __table_args__ = (UniqueConstraint("user_id", "nome", name="uq_phrase_type_user_nome"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    nome: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    nome: Mapped[str] = mapped_column(String(64), index=True)
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

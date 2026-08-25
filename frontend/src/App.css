@@ -223,3 +223,42 @@ input {
 .btn.sm { padding: 5px 10px; font-size: 12px; }
 .day-count { color: #7b818c; font-weight: 400; font-size: 13px; }
 .day-group .grid { margin-top: 12px; }
+
+/* header com logout */
+.apphead { display: flex; justify-content: space-between; align-items: center; }
+.linkbtn { background: none; border: none; color: #9aa0aa; cursor: pointer; text-decoration: underline; font-size: 14px; }
+.linkbtn:hover { color: #fff; }
+
+/* tela de login */
+.auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.auth-card {
+  background: #14171d;
+  border: 1px solid #262a33;
+  border-radius: 16px;
+  padding: 32px;
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.auth-card h1 { margin: 0; text-align: center; }
+.auth-card .sub { text-align: center; margin: 0 0 8px; }
+.auth-card input { width: 100%; }
+.auth-switch { text-align: center; font-size: 13px; color: #9aa0aa; margin-top: 4px; }
+
+/* API keys */
+.keybox {
+  background: #141a24;
+  border: 1px solid #24304a;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.keyval { background: #0f1115; padding: 10px; border-radius: 8px; word-break: break-all; color: #60a5fa; font-family: monospace; }
+.apidoc { margin-top: 32px; border-top: 1px solid #262a33; padding-top: 16px; }
+.apidoc pre { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 12px; }
+code { background: #0f1115; padding: 2px 6px; border-radius: 4px; font-size: 12px; }

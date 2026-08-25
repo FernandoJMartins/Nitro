@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import Media
+from ..deps import get_current_user, get_user_for_file
+from ..models import Media, User
 from ..schemas import MediaOut
 from ..services import metadata
 
@@ -32,7 +33,7 @@ ALLOWED = {
 _AV = {"video", "music"}
 
 
-def _save_upload(tipo: str, upload: UploadFile, db: Session, *, is_trending: bool = False) -> Media:
+def _save_upload(tipo: str, upload: UploadFile, db: Session, user_id: int, *, is_trending: bool = False) -> Media:
     ext = Path(upload.filename or "").suffix.lower()
     if ext not in ALLOWED[tipo]:
         raise HTTPException(
@@ -71,6 +72,7 @@ def _save_upload(tipo: str, upload: UploadFile, db: Session, *, is_trending: boo
     # 3) registra no banco
     duracao = metadata.probe_duration(final_path) if tipo in _AV else None
     media = Media(
+        user_id=user_id,
         tipo=tipo,
         caminho=final_rel,
         nome_original=upload.filename or f"{token}{ext}",
@@ -86,18 +88,18 @@ def _save_upload(tipo: str, upload: UploadFile, db: Session, *, is_trending: boo
 
 
 @router.post("/video", response_model=MediaOut)
-def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    return _save_upload("video", file, db)
+def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return _save_upload("video", file, db, user.id)
 
 
 @router.post("/photo", response_model=MediaOut)
-def upload_photo(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    return _save_upload("photo", file, db)
+def upload_photo(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return _save_upload("photo", file, db, user.id)
 
 
 @router.post("/photo_hot", response_model=MediaOut)
-def upload_photo_hot(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    return _save_upload("photo_hot", file, db)
+def upload_photo_hot(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return _save_upload("photo_hot", file, db, user.id)
 
 
 @router.post("/music", response_model=MediaOut)
@@ -105,13 +107,14 @@ def upload_music(
     file: UploadFile = File(...),
     is_trending: bool = False,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    return _save_upload("music", file, db, is_trending=is_trending)
+    return _save_upload("music", file, db, user.id, is_trending=is_trending)
 
 
 @router.get("", response_model=list[MediaOut])
-def list_media(tipo: str | None = None, db: Session = Depends(get_db)):
-    stmt = select(Media).order_by(Media.criado_em.desc())
+def list_media(tipo: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    stmt = select(Media).where(Media.user_id == user.id).order_by(Media.criado_em.desc())
     if tipo:
         if tipo not in ALLOWED:
             raise HTTPException(status_code=400, detail=f"tipo inválido: {tipo}")
@@ -119,11 +122,16 @@ def list_media(tipo: str | None = None, db: Session = Depends(get_db)):
     return list(db.scalars(stmt))
 
 
-@router.get("/{media_id}/download")
-def download_media(media_id: int, db: Session = Depends(get_db)):
+def _owned_media(db: Session, media_id: int, user_id: int) -> Media:
     media = db.get(Media, media_id)
-    if not media:
+    if not media or media.user_id != user_id:
         raise HTTPException(status_code=404, detail="Mídia não encontrada")
+    return media
+
+
+@router.get("/{media_id}/download")
+def download_media(media_id: int, db: Session = Depends(get_db), user: User = Depends(get_user_for_file)):
+    media = _owned_media(db, media_id, user.id)
     path = settings.storage_path / media.caminho
     if not path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não existe no disco")
@@ -131,10 +139,8 @@ def download_media(media_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{media_id}", status_code=204)
-def delete_media(media_id: int, db: Session = Depends(get_db)):
-    media = db.get(Media, media_id)
-    if not media:
-        raise HTTPException(status_code=404, detail="Mídia não encontrada")
+def delete_media(media_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    media = _owned_media(db, media_id, user.id)
     (settings.storage_path / media.caminho).unlink(missing_ok=True)
     db.delete(media)
     db.commit()

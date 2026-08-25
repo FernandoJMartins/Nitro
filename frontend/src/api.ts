@@ -1,3 +1,100 @@
+// ---------- Auth / token ----------
+const TOKEN_KEY = "nitro_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+export function setToken(t: string) {
+  localStorage.setItem(TOKEN_KEY, t);
+}
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const t = getToken();
+  return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
+}
+
+async function jsonOrThrow(r: Response) {
+  if (r.status === 401) {
+    clearToken();
+    window.dispatchEvent(new Event("nitro-unauth"));
+  }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || (await r.text()) || "Erro");
+  return r.status === 204 ? null : r.json();
+}
+
+// GET/DELETE/POST json helpers já com auth
+async function apiGetAsync(path: string) {
+  return jsonOrThrow(await fetch(path, { headers: authHeaders() }));
+}
+async function apiSend(path: string, method: string, body?: unknown) {
+  return jsonOrThrow(
+    await fetch(path, {
+      method,
+      headers: authHeaders(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  );
+}
+
+// ---------- Auth endpoints ----------
+export interface UserOut {
+  id: number;
+  email: string;
+  criado_em: string;
+}
+
+export async function register(email: string, senha: string): Promise<void> {
+  const data = await jsonOrThrow(
+    await fetch("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, senha }),
+    })
+  );
+  setToken(data.access_token);
+}
+
+export async function login(email: string, senha: string): Promise<void> {
+  const data = await jsonOrThrow(
+    await fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, senha }),
+    })
+  );
+  setToken(data.access_token);
+}
+
+export function me(): Promise<UserOut> {
+  return apiGetAsync("/api/v1/auth/me");
+}
+
+// ---------- API keys ----------
+export interface ApiKey {
+  id: number;
+  nome: string;
+  prefixo: string;
+  ativo: boolean;
+  criado_em: string;
+}
+export interface ApiKeyCreated extends ApiKey {
+  chave: string;
+}
+
+export function listKeys(): Promise<ApiKey[]> {
+  return apiGetAsync("/api/v1/keys");
+}
+export function createKey(nome: string): Promise<ApiKeyCreated> {
+  return apiSend("/api/v1/keys", "POST", { nome });
+}
+export function deleteKey(id: number): Promise<void> {
+  return apiSend(`/api/v1/keys/${id}`, "DELETE");
+}
+
+// ---------- Mídias ----------
 export type MediaType = "video" | "photo" | "photo_hot" | "music";
 
 export interface Media {
@@ -15,31 +112,26 @@ export interface Media {
 
 const BASE = "/api/v1/media";
 
-export async function listMedia(tipo: MediaType): Promise<Media[]> {
-  const r = await fetch(`${BASE}?tipo=${tipo}`);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
+export function listMedia(tipo: MediaType): Promise<Media[]> {
+  return apiGetAsync(`${BASE}?tipo=${tipo}`);
 }
 
 export async function uploadMedia(tipo: MediaType, file: File): Promise<Media> {
   const form = new FormData();
   form.append("file", file);
-  // os endpoints têm o mesmo nome do tipo: /media/video, /photo, /photo_hot, /music
-  const r = await fetch(`${BASE}/${tipo}`, { method: "POST", body: form });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Falha no upload");
-  return r.json();
+  const r = await fetch(`${BASE}/${tipo}`, { method: "POST", headers: authHeaders(), body: form });
+  return jsonOrThrow(r);
 }
 
-export async function deleteMedia(id: number): Promise<void> {
-  const r = await fetch(`${BASE}/${id}`, { method: "DELETE" });
-  if (!r.ok) throw new Error(await r.text());
+export function deleteMedia(id: number): Promise<void> {
+  return apiSend(`${BASE}/${id}`, "DELETE");
 }
 
 export function downloadUrl(id: number): string {
-  return `${BASE}/${id}/download`;
+  return `${BASE}/${id}/download?token=${getToken() ?? ""}`;
 }
 
-// ---------- Frases (Fase 2) ----------
+// ---------- Frases ----------
 const V1 = "/api/v1";
 
 export interface PhraseType {
@@ -48,7 +140,6 @@ export interface PhraseType {
   descricao: string | null;
   criado_em: string;
 }
-
 export interface Phrase {
   id: number;
   phrase_type_id: number;
@@ -57,45 +148,23 @@ export interface Phrase {
   criado_em: string;
 }
 
-async function jsonOrThrow(r: Response) {
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || (await r.text()) || "Erro");
-  return r.status === 204 ? null : r.json();
+export function listPhraseTypes(): Promise<PhraseType[]> {
+  return apiGetAsync(`${V1}/phrase-types`);
 }
-
-export async function listPhraseTypes(): Promise<PhraseType[]> {
-  return jsonOrThrow(await fetch(`${V1}/phrase-types`));
+export function createPhraseType(nome: string, descricao?: string): Promise<PhraseType> {
+  return apiSend(`${V1}/phrase-types`, "POST", { nome, descricao });
 }
-
-export async function createPhraseType(nome: string, descricao?: string): Promise<PhraseType> {
-  return jsonOrThrow(
-    await fetch(`${V1}/phrase-types`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nome, descricao }),
-    })
-  );
+export function deletePhraseType(id: number): Promise<void> {
+  return apiSend(`${V1}/phrase-types/${id}`, "DELETE");
 }
-
-export async function deletePhraseType(id: number): Promise<void> {
-  await jsonOrThrow(await fetch(`${V1}/phrase-types/${id}`, { method: "DELETE" }));
+export function listPhrases(tipoId: number): Promise<Phrase[]> {
+  return apiGetAsync(`${V1}/phrases?tipo_id=${tipoId}`);
 }
-
-export async function listPhrases(tipoId: number): Promise<Phrase[]> {
-  return jsonOrThrow(await fetch(`${V1}/phrases?tipo_id=${tipoId}`));
+export function createPhrase(phrase_type_id: number, texto: string): Promise<Phrase> {
+  return apiSend(`${V1}/phrases`, "POST", { phrase_type_id, texto });
 }
-
-export async function createPhrase(phrase_type_id: number, texto: string): Promise<Phrase> {
-  return jsonOrThrow(
-    await fetch(`${V1}/phrases`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phrase_type_id, texto }),
-    })
-  );
-}
-
-export async function deletePhrase(id: number): Promise<void> {
-  await jsonOrThrow(await fetch(`${V1}/phrases/${id}`, { method: "DELETE" }));
+export function deletePhrase(id: number): Promise<void> {
+  return apiSend(`${V1}/phrases/${id}`, "DELETE");
 }
 
 export interface AIResult {
@@ -103,32 +172,14 @@ export interface AIResult {
   modelo: string;
   baseado_em: number;
 }
-
-export async function generateAI(
-  phrase_type_id: number,
-  quantidade: number,
-  instrucao_extra?: string
-): Promise<AIResult> {
-  return jsonOrThrow(
-    await fetch(`${V1}/phrases/ai`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phrase_type_id, quantidade, instrucao_extra }),
-    })
-  );
+export function generateAI(phrase_type_id: number, quantidade: number, instrucao_extra?: string): Promise<AIResult> {
+  return apiSend(`${V1}/phrases/ai`, "POST", { phrase_type_id, quantidade, instrucao_extra });
+}
+export function bulkSavePhrases(phrase_type_id: number, textos: string[]): Promise<Phrase[]> {
+  return apiSend(`${V1}/phrases/bulk-save`, "POST", { phrase_type_id, textos, origem: "ia" });
 }
 
-export async function bulkSavePhrases(phrase_type_id: number, textos: string[]): Promise<Phrase[]> {
-  return jsonOrThrow(
-    await fetch(`${V1}/phrases/bulk-save`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phrase_type_id, textos, origem: "ia" }),
-    })
-  );
-}
-
-// ---------- Geração de vídeo (Fase 3 + 4) ----------
+// ---------- Geração ----------
 export interface GenerateBody {
   base_media_id: number;
   phrase_id?: number | null;
@@ -138,25 +189,16 @@ export interface GenerateBody {
   hot_media_id?: number | null;
   flash_at?: number | null;
 }
-
 export interface GenerateResult {
   id: string;
   url: string;
   duration: number;
   used_flash: boolean;
 }
-
-export async function generateVideo(body: GenerateBody): Promise<GenerateResult> {
-  return jsonOrThrow(
-    await fetch(`${V1}/videos/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-  );
+export function generateVideo(body: GenerateBody): Promise<GenerateResult> {
+  return apiSend(`${V1}/videos/generate`, "POST", body);
 }
 
-// ---------- Geração em massa (Fase 5) + Histórico (Fase 6) ----------
 export interface BulkBody {
   quantidade: number;
   base_media_ids: number[];
@@ -169,7 +211,6 @@ export interface BulkBody {
   duration_max: number;
   use_flash: boolean;
 }
-
 export interface Job {
   id: number;
   status: "fila" | "processando" | "concluido" | "erro";
@@ -178,7 +219,6 @@ export interface Job {
   erro: string | null;
   criado_em: string;
 }
-
 export interface GeneratedVideo {
   id: number;
   job_id: number | null;
@@ -190,35 +230,18 @@ export interface GeneratedVideo {
   criado_em: string;
 }
 
-export async function bulkGenerate(body: BulkBody): Promise<Job> {
-  return jsonOrThrow(
-    await fetch(`${V1}/videos/bulk`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-  );
+export function bulkGenerate(body: BulkBody): Promise<Job> {
+  return apiSend(`${V1}/videos/bulk`, "POST", body);
 }
-
-export async function getJob(id: number): Promise<Job> {
-  return jsonOrThrow(await fetch(`${V1}/videos/jobs/${id}`));
+export function getJob(id: number): Promise<Job> {
+  return apiGetAsync(`${V1}/videos/jobs/${id}`);
 }
-
-export async function getHistory(jobId?: number): Promise<GeneratedVideo[]> {
-  const q = jobId != null ? `?job_id=${jobId}` : "";
-  return jsonOrThrow(await fetch(`${V1}/videos/history${q}`));
+export function getHistory(jobId?: number): Promise<GeneratedVideo[]> {
+  return apiGetAsync(`${V1}/videos/history${jobId != null ? `?job_id=${jobId}` : ""}`);
 }
-
 export function videoDownloadUrl(id: number): string {
-  return `${V1}/videos/${id}/download`;
+  return `${V1}/videos/${id}/download?token=${getToken() ?? ""}`;
 }
-
-export async function deleteVideos(ids: number[]): Promise<{ removidos: number }> {
-  return jsonOrThrow(
-    await fetch(`${V1}/videos/history/delete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
-    })
-  );
+export function deleteVideos(ids: number[]): Promise<{ removidos: number }> {
+  return apiSend(`${V1}/videos/history/delete`, "POST", { ids });
 }

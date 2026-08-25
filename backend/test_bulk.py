@@ -14,6 +14,8 @@ from app.main import app  # noqa: E402
 from app.services.video import FFMPEG  # noqa: E402
 
 client = TestClient(app)
+_tok = client.post("/api/v1/auth/register", json={"email": "bulk@t.com", "senha": "segredo1"}).json()["access_token"]
+client.headers.update({"Authorization": f"Bearer {_tok}"})
 tmp = Path("_smoke_bulk_tmp")
 tmp.mkdir(exist_ok=True)
 

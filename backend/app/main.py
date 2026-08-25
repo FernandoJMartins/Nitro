@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine
-from .routers import media, phrases, videos
+from .routers import auth, media, phrases, videos
 
 # Cria as tabelas que ainda não existem. (Em produção, trocar por migrations/Alembic.)
 Base.metadata.create_all(bind=engine)
@@ -19,6 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(media.router)
 app.include_router(phrases.router)
 app.include_router(videos.router)
