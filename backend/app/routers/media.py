@@ -1,0 +1,140 @@
+"""Rotas de mídia: upload (com remoção de metadados), listagem, download, exclusão."""
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..config import settings
+from ..database import get_db
+from ..models import Media
+from ..schemas import MediaOut
+from ..services import metadata
+
+router = APIRouter(prefix="/api/v1/media", tags=["media"])
+
+# Extensões aceitas por tipo de mídia.
+# 'photo'      = foto normal (pode ser base de vídeo)
+# 'photo_hot'  = foto hot (usada só no flash de 1 frame)
+_IMG = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED = {
+    "video": {".mp4", ".mov", ".mkv", ".webm", ".avi"},
+    "photo": _IMG,
+    "photo_hot": _IMG,
+    "music": {".mp3", ".wav", ".m4a", ".aac", ".ogg"},
+}
+
+# Quais tipos removem metadados via ffmpeg (áudio/vídeo) vs. Pillow (imagem).
+_AV = {"video", "music"}
+
+
+def _save_upload(tipo: str, upload: UploadFile, db: Session, *, is_trending: bool = False) -> Media:
+    ext = Path(upload.filename or "").suffix.lower()
+    if ext not in ALLOWED[tipo]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Extensão '{ext}' não permitida para {tipo}. Aceitas: {sorted(ALLOWED[tipo])}",
+        )
+
+    storage = settings.storage_path
+    tmp_dir = storage / "_tmp"
+    dest_dir = storage / tipo
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    token = uuid.uuid4().hex
+    tmp_path = tmp_dir / f"{token}{ext}"
+    final_rel = f"{tipo}/{token}{ext}"
+    final_path = storage / final_rel
+
+    # 1) grava o arquivo enviado em um temporário
+    try:
+        with tmp_path.open("wb") as f:
+            while chunk := upload.file.read(1024 * 1024):
+                f.write(chunk)
+
+        # 2) remove os metadados escrevendo no caminho final
+        if tipo in _AV:
+            metadata.strip_av_metadata(tmp_path, final_path)
+        else:
+            metadata.strip_image_metadata(tmp_path, final_path)
+    except Exception as exc:  # noqa: BLE001
+        final_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=f"Falha ao processar mídia: {exc}") from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    # 3) registra no banco
+    duracao = metadata.probe_duration(final_path) if tipo in _AV else None
+    media = Media(
+        tipo=tipo,
+        caminho=final_rel,
+        nome_original=upload.filename or f"{token}{ext}",
+        duracao=duracao,
+        tamanho_bytes=final_path.stat().st_size,
+        metadados_removidos=True,
+        is_trending=is_trending,
+    )
+    db.add(media)
+    db.commit()
+    db.refresh(media)
+    return media
+
+
+@router.post("/video", response_model=MediaOut)
+def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    return _save_upload("video", file, db)
+
+
+@router.post("/photo", response_model=MediaOut)
+def upload_photo(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    return _save_upload("photo", file, db)
+
+
+@router.post("/photo_hot", response_model=MediaOut)
+def upload_photo_hot(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    return _save_upload("photo_hot", file, db)
+
+
+@router.post("/music", response_model=MediaOut)
+def upload_music(
+    file: UploadFile = File(...),
+    is_trending: bool = False,
+    db: Session = Depends(get_db),
+):
+    return _save_upload("music", file, db, is_trending=is_trending)
+
+
+@router.get("", response_model=list[MediaOut])
+def list_media(tipo: str | None = None, db: Session = Depends(get_db)):
+    stmt = select(Media).order_by(Media.criado_em.desc())
+    if tipo:
+        if tipo not in ALLOWED:
+            raise HTTPException(status_code=400, detail=f"tipo inválido: {tipo}")
+        stmt = stmt.where(Media.tipo == tipo)
+    return list(db.scalars(stmt))
+
+
+@router.get("/{media_id}/download")
+def download_media(media_id: int, db: Session = Depends(get_db)):
+    media = db.get(Media, media_id)
+    if not media:
+        raise HTTPException(status_code=404, detail="Mídia não encontrada")
+    path = settings.storage_path / media.caminho
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo não existe no disco")
+    return FileResponse(path, filename=media.nome_original)
+
+
+@router.delete("/{media_id}", status_code=204)
+def delete_media(media_id: int, db: Session = Depends(get_db)):
+    media = db.get(Media, media_id)
+    if not media:
+        raise HTTPException(status_code=404, detail="Mídia não encontrada")
+    (settings.storage_path / media.caminho).unlink(missing_ok=True)
+    db.delete(media)
+    db.commit()

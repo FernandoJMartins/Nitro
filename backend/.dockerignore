@@ -1,0 +1,9 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+storage/
+_test_*/
+_smoke*/
+test_*.py

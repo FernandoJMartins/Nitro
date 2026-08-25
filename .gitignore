@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Env / segredos
+.env
+backend/.env
+
+# Armazenamento de mídias (arquivos ficam em disco, não no git)
+backend/storage/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# cache de build do TypeScript
+frontend/*.tsbuildinfo
