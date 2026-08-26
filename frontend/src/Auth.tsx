@@ -25,7 +25,7 @@ export default function Auth({ onAuth }: { onAuth: () => void }) {
   return (
     <div className="auth-wrap">
       <div className="auth-card">
-        <h1>🎬 Nitro</h1>
+        <h1>Nitro</h1>
         <p className="sub">{modo === "login" ? "Entre na sua conta" : "Crie sua conta"}</p>
 
         {error && <div className="error">⚠️ {error}</div>}

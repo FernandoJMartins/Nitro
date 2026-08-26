@@ -32,6 +32,7 @@ function diaLabel(dia: string): string {
 export default function History() {
   const [items, setItems] = useState<GeneratedVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
   function refresh() {
     getHistory().then(setItems).catch((e) => setError(String(e)));
@@ -41,7 +42,16 @@ export default function History() {
     refresh();
   }, []);
 
-  async function baixarDia(videos: GeneratedVideo[]) {
+  function toggle(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function baixarVideos(videos: GeneratedVideo[]) {
     for (const v of videos) {
       const a = document.createElement("a");
       a.href = videoDownloadUrl(v.id);
@@ -51,6 +61,15 @@ export default function History() {
       a.remove();
       await new Promise((r) => setTimeout(r, 500));
     }
+  }
+
+  async function baixarDia(videos: GeneratedVideo[]) {
+    await baixarVideos(videos);
+  }
+
+  async function baixarSelecionados() {
+    const videos = items.filter((v) => selected.has(v.id));
+    await baixarVideos(videos);
   }
 
   async function apagarDia(dia: string, videos: GeneratedVideo[]) {
@@ -74,6 +93,18 @@ export default function History() {
       {error && <div className="error">⚠️ {error}</div>}
       {items.length === 0 && !error && <div className="empty">Nenhum vídeo gerado ainda.</div>}
 
+      {selected.size > 0 && (
+        <div className="selbar">
+          <span>{selected.size} selecionado(s)</span>
+          <button className="btn primary sm" onClick={baixarSelecionados}>
+            ⬇️ Baixar selecionados ({selected.size})
+          </button>
+          <button className="btn sm" onClick={() => setSelected(new Set())}>
+            Limpar
+          </button>
+        </div>
+      )}
+
       {groups.map((g) => (
         <section key={g.dia} className="day-group">
           <div className="day-header">
@@ -91,7 +122,14 @@ export default function History() {
           </div>
           <ul className="grid">
             {g.videos.map((v) => (
-              <li key={v.id} className="vcard">
+              <li key={v.id} className={"vcard" + (selected.has(v.id) ? " selected" : "")}>
+                <label className="vsel">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(v.id)}
+                    onChange={() => toggle(v.id)}
+                  />
+                </label>
                 <video src={videoDownloadUrl(v.id)} controls preload="metadata" />
                 <div className="vmeta">
                   {v.texto && <div className="vtext">“{v.texto}”</div>}

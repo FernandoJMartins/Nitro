@@ -1,0 +1,61 @@
+# Modo DESENVOLVIMENTO: hot-reload de frontend e backend.
+# Usa o SEU Postgres local (dedicado), definido em LOCAL_DATABASE_URL no .env
+# — NÃO sobe um Postgres em container.
+#
+# Pré-requisito (uma vez): o banco precisa existir no seu Postgres local:
+#   psql -U postgres -c "CREATE DATABASE videos_em_massa;"
+#
+# Suba com:
+#   docker compose -f docker-compose.dev.yml up
+#
+# Abra:  http://localhost:5173   (frontend com HMR)
+# API:   http://localhost:8000/docs
+#
+# Qualquer edição em ./frontend/src ou ./backend/app recarrega sozinho,
+# sem rebuild e sem se preocupar com cache.
+
+services:
+  backend:
+    build: ./backend
+    # --reload reinicia o uvicorn a cada mudança no código.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
+    environment:
+      # Banco dedicado (seu Postgres local), definido no .env.
+      DATABASE_URL: ${LOCAL_DATABASE_URL}
+      STORAGE_DIR: /app/storage
+      # Vite roda em :5173, então o CORS precisa liberar essa origem.
+      CORS_ORIGINS: http://localhost:5173
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
+      # No Windows+Docker os eventos de arquivo não chegam; polling resolve.
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      # Código montado ao vivo -> uvicorn --reload enxerga as mudanças.
+      - ./backend/app:/app/app
+      - storage:/app/storage
+    # permite o container enxergar o Postgres da sua máquina (host.docker.internal).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    # Instala deps (se preciso) e sobe o Vite com HMR.
+    command: sh -c "npm install && npm run dev -- --host"
+    environment:
+      # Dentro da rede do compose o backend atende em backend:8000.
+      VITE_PROXY_TARGET: http://backend:8000
+    volumes:
+      - ./frontend:/app
+      # Evita que o node_modules do host (Windows) sobrescreva o do container.
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  storage:

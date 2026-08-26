@@ -9,6 +9,61 @@ import ApiKeys from "./ApiKeys";
 
 type Section = "midias" | "frases" | "criar" | "historico" | "api";
 
+/* ícones de linha, no estilo Instagram (stroke fino, 24px) */
+function Icon({ name, active }: { name: Section; active: boolean }) {
+  const sw = active ? 2.4 : 2;
+  const common = {
+    width: 26,
+    height: 26,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: sw,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  switch (name) {
+    case "midias": // grade / biblioteca
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="7" height="7" rx="1.5" fill={active ? "currentColor" : "none"} />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" fill={active ? "currentColor" : "none"} />
+        </svg>
+      );
+    case "frases": // balão de mensagem
+      return (
+        <svg {...common} fill={active ? "currentColor" : "none"}>
+          <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 9.5 9.5 0 0 1-4-.9L3 21l1.9-5.5A8.5 8.5 0 1 1 21 11.5Z" />
+        </svg>
+      );
+    case "criar": // criar (+)
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="18" height="18" rx="5" />
+          <line x1="12" y1="8" x2="12" y2="16" />
+          <line x1="8" y1="12" x2="16" y2="12" />
+        </svg>
+      );
+    case "historico": // reels / play
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="18" height="18" rx="4" />
+          <path d="M3 8h18M8 3l2 5M14 3l2 5" />
+          <path d="M10.5 11.5v4l3.5-2-3.5-2Z" fill={active ? "currentColor" : "none"} />
+        </svg>
+      );
+    case "api": // perfil / chave
+      return (
+        <svg {...common} fill={active ? "currentColor" : "none"}>
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" />
+        </svg>
+      );
+  }
+}
+
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "midias", label: "Mídias" },
   { id: "frases", label: "Frases" },
@@ -16,6 +71,14 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "historico", label: "Histórico" },
   { id: "api", label: "API" },
 ];
+
+const TITLES: Record<Section, string> = {
+  midias: "Mídias",
+  frases: "Frases",
+  criar: "Criar",
+  historico: "Histórico",
+  api: "API",
+};
 
 export default function App() {
   const [logged, setLogged] = useState<boolean>(!!getToken());
@@ -37,30 +100,39 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="apphead">
-        <h1>🎬 Nitro</h1>
-        <button className="linkbtn" onClick={logout}>
-          Sair
+      <header className="ighead">
+        <span className="iglogo">Nitro</span>
+        <span className="ightitle">{TITLES[section]}</span>
+        <button className="iglogout" onClick={logout} title="Sair" aria-label="Sair">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
         </button>
       </header>
 
-      <nav className="topnav">
+      <main className="igmain">
+        {section === "midias" && <MediaLibrary />}
+        {section === "frases" && <Phrases />}
+        {section === "criar" && <Create />}
+        {section === "historico" && <History />}
+        {section === "api" && <ApiKeys />}
+      </main>
+
+      <nav className="igtab">
         {SECTIONS.map((s) => (
           <button
             key={s.id}
-            className={section === s.id ? "topbtn active" : "topbtn"}
+            className={section === s.id ? "igtab-btn active" : "igtab-btn"}
             onClick={() => setSection(s.id)}
+            aria-label={s.label}
           >
-            {s.label}
+            <Icon name={s.id} active={section === s.id} />
+            <span className="igtab-label">{s.label}</span>
           </button>
         ))}
       </nav>
-
-      {section === "midias" && <MediaLibrary />}
-      {section === "frases" && <Phrases />}
-      {section === "criar" && <Create />}
-      {section === "historico" && <History />}
-      {section === "api" && <ApiKeys />}
     </div>
   );
 }

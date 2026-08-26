@@ -35,12 +35,9 @@ services:
     ports:
       - "8000:8000"
 
-  frontend:
-    build: ./frontend
-    ports:
-      - "8080:80"
-    depends_on:
-      - backend
+# Obs.: não há mais serviço "frontend" aqui. O front roda em modo dev (Vite, :5173)
+# via docker-compose.dev.yml. A porta 8080 foi removida para não servir um build
+# estático desatualizado.
 
 volumes:
   pgdata:
