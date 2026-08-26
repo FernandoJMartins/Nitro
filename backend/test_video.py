@@ -1,10 +1,15 @@
-"""Teste do motor de vídeo (Fase 3) + flash de 1 frame (Fase 4)."""
+"""Teste do motor de vídeo (Fase 3) + flash hot (Fase 4).
+
+Flash padrão = FLASH_FRAMES_DEFAULT (3 frames = menor foto do CapCut, ~0,1s),
+centrado em FLASH_AT. Em FLASH_AT=3s / 30fps o centro é o frame 90, então o
+bloco vermelho cobre os frames 89, 90 e 91.
+"""
 import subprocess
 from pathlib import Path
 
 from PIL import Image
 
-from app.services.video import FFMPEG, build_video
+from app.services.video import FFMPEG, FLASH_FRAMES_DEFAULT, build_video
 
 tmp = Path("_test_video")
 tmp.mkdir(exist_ok=True)
@@ -72,15 +77,24 @@ def frame_color(n: int):
     return r, g, b
 
 
-r0, g0, b0 = frame_color(FLASH_FRAME - 1)   # antes do flash → azul
-rf, gf, bf = frame_color(FLASH_FRAME)       # o flash → vermelho
-r1, g1, b1 = frame_color(FLASH_FRAME + 1)   # depois do flash → azul
+N = FLASH_FRAMES_DEFAULT
+START = FLASH_FRAME - N // 2          # bloco centrado no instante do flash
+END = START + N - 1
 
-print(f"frame {FLASH_FRAME-1} (antes) : R={r0:.0f} G={g0:.0f} B={b0:.0f}")
-print(f"frame {FLASH_FRAME}   (FLASH) : R={rf:.0f} G={gf:.0f} B={bf:.0f}")
-print(f"frame {FLASH_FRAME+1} (depois): R={r1:.0f} G={g1:.0f} B={b1:.0f}")
+# frame logo antes do bloco → azul
+r0, g0, b0 = frame_color(START - 1)
+print(f"frame {START-1} (antes) : R={r0:.0f} G={g0:.0f} B={b0:.0f}")
+assert b0 > r0, "frame antes do bloco deveria ser AZUL"
 
-assert b0 > r0, "frame antes deveria ser AZUL"
-assert rf > bf, "o frame do FLASH deveria ser VERMELHO (hot)"
-assert b1 > r1, "frame depois deveria ser AZUL"
-print(">>> FLASH caiu em EXATAMENTE 1 frame. MOTOR DE VÍDEO OK")
+# todos os frames do bloco → vermelho
+for n in range(START, END + 1):
+    rf, gf, bf = frame_color(n)
+    print(f"frame {n}   (FLASH) : R={rf:.0f} G={gf:.0f} B={bf:.0f}")
+    assert rf > bf, f"o frame {n} do FLASH deveria ser VERMELHO (hot)"
+
+# frame logo depois do bloco → azul
+r1, g1, b1 = frame_color(END + 1)
+print(f"frame {END+1} (depois): R={r1:.0f} G={g1:.0f} B={b1:.0f}")
+assert b1 > r1, "frame depois do bloco deveria ser AZUL"
+
+print(f">>> FLASH caiu em EXATAMENTE {N} frames ({START}..{END}). MOTOR DE VÍDEO OK")

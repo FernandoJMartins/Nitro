@@ -10,6 +10,8 @@ export default defineConfig({
   server: {
     host: true, // escuta em 0.0.0.0 (necessário dentro do container)
     port: 5173,
+    // Permite acesso via ngrok e outros túneis (qualquer host).
+    allowedHosts: true,
     // No Windows + bind mount do Docker os eventos de arquivo não chegam;
     // polling garante que o hot-reload funcione.
     watch: { usePolling: true, interval: 200 },

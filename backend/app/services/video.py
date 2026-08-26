@@ -1,13 +1,13 @@
-"""Motor de vídeo (Fase 3) + flash hot de 1 frame (Fase 4).
+"""Motor de vídeo (Fase 3) + flash hot (Fase 4).
 
 Monta um vídeo curto (formato vertical 1080x1920) a partir de:
 - uma mídia base (foto vira vídeo estático; vídeo é repetido/cortado na duração),
 - um texto opcional desenhado DENTRO do vídeo (a frase),
 - uma música opcional (repetida/cortada na duração),
-- opcionalmente, o FLASH HOT: 1 único frame de uma imagem hot inserido no meio.
+- opcionalmente, o FLASH HOT: um bloco curto de frames da imagem hot no meio.
 
-Tudo via ffmpeg. Sobre o "1ms": o menor tempo possível é 1 frame (~33ms a 30fps),
-por isso o flash é medido em FRAMES, não em milissegundos (ver README).
+Tudo via ffmpeg. O flash é medido em FRAMES. O padrão (FLASH_FRAMES_DEFAULT)
+é a menor duração de foto do CapCut (~0,1s = 3 frames a 30fps), não 1 frame só.
 """
 from __future__ import annotations
 
@@ -21,6 +21,10 @@ FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+
+# Duração padrão do flash hot: a menor duração de foto do CapCut é ~0,1s.
+# A 30fps isso dá 3 frames (0,1 * 30). Antes era 1 frame só (curto demais).
+FLASH_FRAMES_DEFAULT = 3
 
 # Fonte usada para desenhar o texto (Windows local OU Linux/container).
 _FONT_CANDIDATES = [
@@ -70,13 +74,18 @@ def build_video(
     music_path: Path | None = None,
     hot_path: Path | None = None,
     flash_at: float | None = None,
+    flash_frames: int = FLASH_FRAMES_DEFAULT,
     fps: int = 30,
     width: int = 1080,
     height: int = 1920,
     text_file: Path | None = None,
     wrap_width: int = 25,
 ) -> None:
-    """Gera um .mp4. Se hot_path for dado, insere 1 frame do hot em flash_at (seg)."""
+    """Gera um .mp4. Se hot_path for dado, insere o flash hot em flash_at (seg).
+
+    O flash dura ``flash_frames`` frames (padrão: a menor duração de foto do
+    CapCut, ~0,1s = 3 frames a 30fps), não 1 único frame.
+    """
     base_is_image = is_image(base_path)
 
     # ---- entradas (a ordem define os índices [0], [1], ...) ----
@@ -131,8 +140,14 @@ def build_video(
 
     if hot_idx is not None:
         frame_num = int(round((flash_at if flash_at is not None else duration / 2) * fps))
+        n = max(1, int(flash_frames))
+        # início centrado no instante do flash, para o bloco de frames cair "no meio"
+        start = max(0, frame_num - n // 2)
+        end = start + n - 1  # between() é inclusivo
         parts.append(f"[{hot_idx}:v]{scale_crop}[hotv]")
-        parts.append(f"[{cur}][hotv]overlay=enable='eq(n\\,{frame_num})'[v]")
+        parts.append(
+            f"[{cur}][hotv]overlay=enable='between(n\\,{start}\\,{end})'[v]"
+        )
         cur = "v"
 
     filter_complex = ";".join(parts)

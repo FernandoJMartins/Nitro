@@ -286,7 +286,7 @@ export default function Create() {
         </label>
         <label className="field checkrow">
           <input type="checkbox" checked={useFlash} onChange={(e) => setUseFlash(e.target.checked)} />
-          <span>Inserir flash da imagem hot (1 frame subliminar)</span>
+          <span>Inserir flash da imagem hot (subliminar, ~0,1s)</span>
         </label>
 
         {useFlash && (
