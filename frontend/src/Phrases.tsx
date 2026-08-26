@@ -18,10 +18,10 @@ export default function Phrases() {
   const [phrases, setPhrases] = useState<Phrase[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const [newType, setNewType] = useState("");
   const [newPhrase, setNewPhrase] = useState("");
 
   // IA
+  const [aiOpen, setAiOpen] = useState(false);
   const [aiQty, setAiQty] = useState(5);
   const [aiExtra, setAiExtra] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -29,11 +29,12 @@ export default function Phrases() {
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [aiInfo, setAiInfo] = useState<string | null>(null);
 
-  async function loadTypes() {
+  async function loadTypes(selectId?: number) {
     try {
       const t = await listPhraseTypes();
       setTypes(t);
-      if (selected == null && t.length > 0) setSelected(t[0].id);
+      if (selectId != null) setSelected(selectId);
+      else if (selected == null && t.length > 0) setSelected(t[0].id);
     } catch (e) {
       setError(String(e));
     }
@@ -57,19 +58,28 @@ export default function Phrases() {
     setSuggestions([]);
     setPicked(new Set());
     setAiInfo(null);
+    setAiOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
-  async function onAddType() {
-    if (!newType.trim()) return;
+  async function novoTipo() {
+    const nome = window.prompt("Nome do novo tipo de frase (ex.: FLIRT, SARCASMIC):");
+    if (!nome?.trim()) return;
     setError(null);
     try {
-      const t = await createPhraseType(newType.trim().toUpperCase());
-      setNewType("");
-      await loadTypes();
-      setSelected(t.id);
+      const t = await createPhraseType(nome.trim().toUpperCase());
+      await loadTypes(t.id);
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  async function removerTipo(t: PhraseType) {
+    if (!window.confirm(`Excluir o tipo "${t.nome}" e todas as suas frases?`)) return;
+    await deletePhraseType(t.id);
+    setSelected(null);
+    setTypes([]);
+    await loadTypes();
   }
 
   async function onAddPhrase() {
@@ -92,7 +102,7 @@ export default function Phrases() {
     try {
       const res = await generateAI(selected, aiQty, aiExtra || undefined);
       setSuggestions(res.frases);
-      setPicked(new Set(res.frases.map((_, i) => i))); // todas marcadas por padrão
+      setPicked(new Set(res.frases.map((_, i) => i)));
       setAiInfo(`Modelo ${res.modelo} · baseado em ${res.baseado_em} frase(s) suas`);
     } catch (e) {
       setError(String(e));
@@ -122,61 +132,43 @@ export default function Phrases() {
     setPicked(next);
   }
 
+  const tipoAtual = types.find((t) => t.id === selected);
+
   return (
     <>
       <p className="sub">
-        Frases que aparecem <strong>dentro</strong> do vídeo. A IA gera novas baseada nas suas.
+        Frases que aparecem <strong>dentro</strong> do vídeo. Escolha um tipo para gerenciar suas frases.
       </p>
 
-      {/* tipos */}
-      <div className="row">
-        <div className="tabs" style={{ flexWrap: "wrap" }}>
-          {types.map((t) => (
-            <button
-              key={t.id}
-              className={t.id === selected ? "tab active" : "tab"}
-              onClick={() => setSelected(t.id)}
-            >
+      {/* tipos como chips + botão de criar */}
+      <div className="folderbar">
+        {types.map((t) => (
+          <span key={t.id} className={t.id === selected ? "fchip active" : "fchip"}>
+            <button className="fchip-name" onClick={() => setSelected(t.id)}>
               {t.nome}
             </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="uploader" style={{ flexDirection: "row", alignItems: "center" }}>
-        <input
-          placeholder="Novo tipo (ex.: FLIRT, SARCASMIC)"
-          value={newType}
-          onChange={(e) => setNewType(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && onAddType()}
-        />
-        <button className="btn" onClick={onAddType}>
-          + Tipo
+            <button className="fchip-x" title="Excluir tipo" onClick={() => removerTipo(t)}>
+              ×
+            </button>
+          </span>
+        ))}
+        <button className="fchip new" onClick={novoTipo}>
+          + Novo tipo
         </button>
-        {selected != null && (
-          <button
-            className="btn danger"
-            onClick={async () => {
-              if (confirm("Excluir este tipo e todas as suas frases?")) {
-                await deletePhraseType(selected);
-                setSelected(null);
-                await loadTypes();
-              }
-            }}
-          >
-            Excluir tipo
-          </button>
-        )}
       </div>
 
       {error && <div className="error">⚠️ {error}</div>}
 
-      {selected != null && (
+      {types.length === 0 && (
+        <div className="empty">Crie um tipo de frase para começar (botão “+ Novo tipo”).</div>
+      )}
+
+      {selected != null && tipoAtual && (
         <>
           {/* adicionar frase manual */}
           <div className="uploader" style={{ flexDirection: "row", alignItems: "center" }}>
             <input
-              placeholder="Escreva uma frase e Enter…"
+              placeholder={`Escreva uma frase de ${tipoAtual.nome} e tecle Enter…`}
               value={newPhrase}
               onChange={(e) => setNewPhrase(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onAddPhrase()}
@@ -187,47 +179,55 @@ export default function Phrases() {
             </button>
           </div>
 
-          {/* gerador IA */}
-          <div className="ai-box">
-            <div className="ai-head">🤖 Gerar com IA (opcional)</div>
-            <div className="ai-controls">
-              <label>
-                Qtd:
+          {/* IA recolhida por padrão */}
+          {!aiOpen ? (
+            <button className="btn" style={{ marginBottom: 16 }} onClick={() => setAiOpen(true)}>
+              🤖 Gerar frases com IA (opcional)
+            </button>
+          ) : (
+            <div className="ai-box">
+              <div className="ai-head">
+                🤖 Gerar com IA <button className="fchip-x" onClick={() => setAiOpen(false)}>×</button>
+              </div>
+              <div className="ai-controls">
+                <label>
+                  Qtd:
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={aiQty}
+                    onChange={(e) => setAiQty(Number(e.target.value))}
+                    style={{ width: 60, marginLeft: 6 }}
+                  />
+                </label>
                 <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={aiQty}
-                  onChange={(e) => setAiQty(Number(e.target.value))}
-                  style={{ width: 60, marginLeft: 6 }}
+                  placeholder="Instrução extra (opcional)"
+                  value={aiExtra}
+                  onChange={(e) => setAiExtra(e.target.value)}
+                  style={{ flex: 1 }}
                 />
-              </label>
-              <input
-                placeholder="Instrução extra (opcional)"
-                value={aiExtra}
-                onChange={(e) => setAiExtra(e.target.value)}
-                style={{ flex: 1 }}
-              />
-              <button className="btn primary" onClick={onGenerate} disabled={aiLoading}>
-                {aiLoading ? "Gerando…" : "Gerar"}
-              </button>
-            </div>
-            {aiInfo && <div className="hint">{aiInfo}</div>}
-
-            {suggestions.length > 0 && (
-              <div className="suggestions">
-                {suggestions.map((s, i) => (
-                  <label key={i} className={picked.has(i) ? "sugg picked" : "sugg"}>
-                    <input type="checkbox" checked={picked.has(i)} onChange={() => togglePick(i)} />
-                    {s}
-                  </label>
-                ))}
-                <button className="btn primary" onClick={onSavePicked}>
-                  Salvar selecionadas ({picked.size})
+                <button className="btn primary" onClick={onGenerate} disabled={aiLoading}>
+                  {aiLoading ? "Gerando…" : "Gerar"}
                 </button>
               </div>
-            )}
-          </div>
+              {aiInfo && <div className="hint">{aiInfo}</div>}
+
+              {suggestions.length > 0 && (
+                <div className="suggestions">
+                  {suggestions.map((s, i) => (
+                    <label key={i} className={picked.has(i) ? "sugg picked" : "sugg"}>
+                      <input type="checkbox" checked={picked.has(i)} onChange={() => togglePick(i)} />
+                      {s}
+                    </label>
+                  ))}
+                  <button className="btn primary" onClick={onSavePicked}>
+                    Salvar selecionadas ({picked.size})
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* lista de frases */}
           <ul className="list">
@@ -241,7 +241,7 @@ export default function Phrases() {
                 </div>
                 <div className="card-actions">
                   <button
-                    className="btn danger"
+                    className="btn danger sm"
                     onClick={async () => {
                       await deletePhrase(p.id);
                       if (selected != null) await loadPhrases(selected);
@@ -256,8 +256,6 @@ export default function Phrases() {
           </ul>
         </>
       )}
-
-      {types.length === 0 && <div className="empty">Crie um tipo de frase para começar.</div>}
     </>
   );
 }

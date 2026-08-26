@@ -41,6 +41,18 @@ export default function History() {
     refresh();
   }, []);
 
+  async function baixarDia(videos: GeneratedVideo[]) {
+    for (const v of videos) {
+      const a = document.createElement("a");
+      a.href = videoDownloadUrl(v.id);
+      a.download = `video_${v.id}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
   async function apagarDia(dia: string, videos: GeneratedVideo[]) {
     const ok = window.confirm(
       `Apagar TODOS os ${videos.length} vídeo(s) do dia ${dia}?\n\nEsta ação não pode ser desfeita.`
@@ -68,9 +80,14 @@ export default function History() {
             <span>
               📅 {diaLabel(g.dia)} <span className="day-count">({g.videos.length})</span>
             </span>
-            <button className="btn danger sm" onClick={() => apagarDia(g.dia, g.videos)}>
-              🗑️ Apagar tudo
-            </button>
+            <div className="day-actions">
+              <button className="btn primary sm" onClick={() => baixarDia(g.videos)}>
+                ⬇️ Baixar todos ({g.videos.length})
+              </button>
+              <button className="btn danger sm" onClick={() => apagarDia(g.dia, g.videos)}>
+                🗑️ Apagar tudo
+              </button>
+            </div>
           </div>
           <ul className="grid">
             {g.videos.map((v) => (

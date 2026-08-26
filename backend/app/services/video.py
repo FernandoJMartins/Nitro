@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import textwrap
+import uuid
 from pathlib import Path
 
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
@@ -46,6 +48,19 @@ def is_image(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTS
 
 
+def wrap_text(text: str, width: int = 25) -> str:
+    """Quebra o texto em várias linhas (por palavra) para caber na tela.
+
+    Ex.: "poucas pessoas conseguem acertar o momento certo" ->
+         "poucas pessoas conseguem\\nacertar o momento certo"
+    """
+    linhas: list[str] = []
+    for paragrafo in text.splitlines() or [text]:
+        wrapped = textwrap.wrap(paragrafo, width=width, break_long_words=True) or [""]
+        linhas.extend(wrapped)
+    return "\n".join(linhas)
+
+
 def build_video(
     base_path: Path,
     out_path: Path,
@@ -59,6 +74,7 @@ def build_video(
     width: int = 1080,
     height: int = 1920,
     text_file: Path | None = None,
+    wrap_width: int = 25,
 ) -> None:
     """Gera um .mp4. Se hot_path for dado, insere 1 frame do hot em flash_at (seg)."""
     base_is_image = is_image(base_path)
@@ -91,20 +107,27 @@ def build_video(
     parts = [f"[0:v]{scale_crop},fps={fps}[base]"]
     cur = "base"
 
-    if text or text_file:
+    # ---- texto: quebrado em linhas; cada linha é um drawtext próprio (centralizado) ----
+    # Desenhar linha a linha evita bugs do drawtext ao interpretar '\n' de textfile.
+    temp_textfiles: list[Path] = []
+    if text_file is not None and not text:
+        text = text_file.read_text(encoding="utf-8")
+    if text:
         font = _esc_filter_path(_font_path())
-        if text_file is not None:
-            src = f"textfile='{_esc_filter_path(text_file.as_posix())}'"
-        else:
-            safe = (text or "").replace("\\", "\\\\").replace(":", "\\:").replace("'", "\u2019")
-            src = f"text='{safe}'"
-        drawtext = (
-            f"[{cur}]drawtext=fontfile='{font}':{src}:"
-            f"fontcolor=white:fontsize=64:borderw=3:bordercolor=black@0.9:"
-            f"x=(w-text_w)/2:y=h*0.72:line_spacing=8[txt]"
-        )
-        parts.append(drawtext)
-        cur = "txt"
+        lines = [ln for ln in wrap_text(text, wrap_width).split("\n") if ln.strip()]
+        line_h = 90  # altura de cada linha (fontsize 64 + espaçamento)
+        y0 = height * 0.72 - (len(lines) * line_h) / 2  # bloco centrado ~72% da altura
+        for i, line in enumerate(lines):
+            lf = out_path.parent / f".txt_{uuid.uuid4().hex}.txt"
+            lf.write_bytes(line.encode("utf-8"))
+            temp_textfiles.append(lf)
+            y = int(y0 + i * line_h)
+            parts.append(
+                f"[{cur}]drawtext=fontfile='{font}':textfile='{_esc_filter_path(lf.as_posix())}':"
+                f"fontcolor=white:fontsize=64:borderw=3:bordercolor=black@0.9:"
+                f"x=(w-text_w)/2:y={y}[txt{i}]"
+            )
+            cur = f"txt{i}"
 
     if hot_idx is not None:
         frame_num = int(round((flash_at if flash_at is not None else duration / 2) * fps))
@@ -129,6 +152,10 @@ def build_video(
         cmd += ["-c:a", "aac", "-b:a", "128k"]
     cmd += ["-movflags", "+faststart", str(out_path)]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg falhou:\n{result.stderr[-1500:]}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg falhou:\n{result.stderr[-1500:]}")
+    finally:
+        for lf in temp_textfiles:
+            lf.unlink(missing_ok=True)

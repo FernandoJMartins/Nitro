@@ -46,6 +46,7 @@ class MediaOut(BaseModel):
 
     id: int
     tipo: str
+    folder_id: int | None
     nome_original: str
     caminho: str
     duracao: float | None
@@ -53,6 +54,19 @@ class MediaOut(BaseModel):
     metadados_removidos: bool
     is_trending: bool
     observacao: str | None
+    criado_em: datetime
+
+
+# ---------- Pastas ----------
+class FolderCreate(BaseModel):
+    nome: str
+
+
+class FolderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nome: str
     criado_em: datetime
 
 

@@ -222,6 +222,7 @@ input {
 }
 .btn.sm { padding: 5px 10px; font-size: 12px; }
 .day-count { color: #7b818c; font-weight: 400; font-size: 13px; }
+.day-actions { display: flex; gap: 8px; }
 .day-group .grid { margin-top: 12px; }
 
 /* header com logout */
@@ -262,3 +263,102 @@ input {
 .apidoc { margin-top: 32px; border-top: 1px solid #262a33; padding-top: 16px; }
 .apidoc pre { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 12px; }
 code { background: #0f1115; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+/* barra de pastas */
+.folderbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; align-items: center; }
+.fchip {
+  background: #1a1d24;
+  color: #c7ccd4;
+  border: 1px solid #262a33;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.fchip.active { background: #6d28d9; color: #fff; border-color: #6d28d9; }
+.fchip.new { border-style: dashed; color: #9aa0aa; }
+.fchip-name { background: none; border: none; color: inherit; cursor: pointer; font-size: 13px; padding: 0; }
+.fchip-x { background: none; border: none; color: inherit; cursor: pointer; opacity: 0.6; font-size: 15px; line-height: 1; padding: 0 2px; }
+.fchip-x:hover { opacity: 1; }
+
+/* thumbnails na biblioteca */
+.thumb { width: 100%; aspect-ratio: 9/16; object-fit: cover; display: block; background: #000; }
+.thumb-music { display: flex; align-items: center; justify-content: center; font-size: 40px; color: #6d28d9; }
+.movesel {
+  background: #0f1115;
+  border: 1px solid #2c313b;
+  color: #c7ccd4;
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 12px;
+  width: 100%;
+}
+.vtext { word-break: break-word; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* mini thumbnails nos checklists (tela Criar) */
+.chk { gap: 8px; }
+.mini-thumb { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; background: #000; flex-shrink: 0; }
+.mini-music { display: inline-flex; align-items: center; justify-content: center; font-size: 18px; }
+.chk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* grid de pastas */
+.folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; }
+.folder-card {
+  position: relative;
+  background: #14171d;
+  border: 1px solid #262a33;
+  border-radius: 12px;
+  padding: 20px 12px;
+  cursor: pointer;
+  color: #e6e6e6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.folder-card:hover { border-color: #6d28d9; }
+.folder-card.new { border-style: dashed; color: #9aa0aa; }
+.folder-icon { font-size: 36px; }
+.folder-name { font-size: 13px; text-align: center; word-break: break-word; }
+.folder-del {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  color: #7b818c;
+  font-size: 18px;
+  line-height: 1;
+}
+.folder-del:hover { color: #ff9aa6; }
+
+.folder-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.folder-head h2 { margin: 0; font-size: 20px; }
+
+/* modo pasta inteira / itens */
+.mode-row { display: flex; gap: 8px; margin-top: 6px; }
+.moderb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #0f1115;
+  border: 1px solid #2c313b;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: #c7ccd4;
+  cursor: pointer;
+  flex: 1;
+}
+.moderb.active { border-color: #6d28d9; color: #fff; }
+.moderb input { width: auto; }
+
+.results-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 24px;
+  gap: 12px;
+  flex-wrap: wrap;
+}

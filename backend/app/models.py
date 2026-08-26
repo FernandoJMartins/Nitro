@@ -38,13 +38,32 @@ class ApiKey(Base):
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class Folder(Base):
+    """Pasta para organizar mídias. Guarda vídeos + fotos + fotos hot juntos.
+
+    Músicas NÃO usam pasta (são universais).
+    """
+
+    __tablename__ = "folders"
+    __table_args__ = (UniqueConstraint("user_id", "nome", name="uq_folder_user_nome"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    nome: Mapped[str] = mapped_column(String(100))
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Media(Base):
     __tablename__ = "media"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # user_id fica nullable por enquanto (auth chega na Fase 7).
-    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+    # pasta opcional (0 ou 1 pasta por mídia). Null = sem pasta.
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # tipo: 'video' | 'photo' | 'music'
     tipo: Mapped[str] = mapped_column(String(16), index=True)

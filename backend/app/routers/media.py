@@ -9,10 +9,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from pydantic import BaseModel
+
 from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, get_user_for_file
-from ..models import Media, User
+from ..models import Folder, Media, User
 from ..schemas import MediaOut
 from ..services import metadata
 
@@ -33,7 +35,18 @@ ALLOWED = {
 _AV = {"video", "music"}
 
 
-def _save_upload(tipo: str, upload: UploadFile, db: Session, user_id: int, *, is_trending: bool = False) -> Media:
+def _validate_folder(db: Session, folder_id: int | None, user_id: int) -> int | None:
+    if folder_id is None:
+        return None
+    folder = db.get(Folder, folder_id)
+    if not folder or folder.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pasta não encontrada")
+    return folder_id
+
+
+def _save_upload(
+    tipo: str, upload: UploadFile, db: Session, user_id: int, *, is_trending: bool = False, folder_id: int | None = None
+) -> Media:
     ext = Path(upload.filename or "").suffix.lower()
     if ext not in ALLOWED[tipo]:
         raise HTTPException(
@@ -73,6 +86,7 @@ def _save_upload(tipo: str, upload: UploadFile, db: Session, user_id: int, *, is
     duracao = metadata.probe_duration(final_path) if tipo in _AV else None
     media = Media(
         user_id=user_id,
+        folder_id=folder_id,
         tipo=tipo,
         caminho=final_rel,
         nome_original=upload.filename or f"{token}{ext}",
@@ -88,18 +102,27 @@ def _save_upload(tipo: str, upload: UploadFile, db: Session, user_id: int, *, is
 
 
 @router.post("/video", response_model=MediaOut)
-def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return _save_upload("video", file, db, user.id)
+def upload_video(
+    file: UploadFile = File(...), folder_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return _save_upload("video", file, db, user.id, folder_id=_validate_folder(db, folder_id, user.id))
 
 
 @router.post("/photo", response_model=MediaOut)
-def upload_photo(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return _save_upload("photo", file, db, user.id)
+def upload_photo(
+    file: UploadFile = File(...), folder_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return _save_upload("photo", file, db, user.id, folder_id=_validate_folder(db, folder_id, user.id))
 
 
 @router.post("/photo_hot", response_model=MediaOut)
-def upload_photo_hot(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return _save_upload("photo_hot", file, db, user.id)
+def upload_photo_hot(
+    file: UploadFile = File(...), folder_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return _save_upload("photo_hot", file, db, user.id, folder_id=_validate_folder(db, folder_id, user.id))
 
 
 @router.post("/music", response_model=MediaOut)
@@ -109,17 +132,41 @@ def upload_music(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return _save_upload("music", file, db, user.id, is_trending=is_trending)
+    # músicas são universais: nunca ficam em pasta.
+    return _save_upload("music", file, db, user.id, is_trending=is_trending, folder_id=None)
 
 
 @router.get("", response_model=list[MediaOut])
-def list_media(tipo: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def list_media(
+    tipo: str | None = None,
+    folder_id: int | None = None,
+    sem_pasta: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     stmt = select(Media).where(Media.user_id == user.id).order_by(Media.criado_em.desc())
     if tipo:
         if tipo not in ALLOWED:
             raise HTTPException(status_code=400, detail=f"tipo inválido: {tipo}")
         stmt = stmt.where(Media.tipo == tipo)
+    if sem_pasta:
+        stmt = stmt.where(Media.folder_id.is_(None))
+    elif folder_id is not None:
+        stmt = stmt.where(Media.folder_id == folder_id)
     return list(db.scalars(stmt))
+
+
+class MoveMedia(BaseModel):
+    folder_id: int | None = None
+
+
+@router.patch("/{media_id}/folder", response_model=MediaOut)
+def move_media(media_id: int, body: MoveMedia, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    media = _owned_media(db, media_id, user.id)
+    media.folder_id = _validate_folder(db, body.folder_id, user.id)
+    db.commit()
+    db.refresh(media)
+    return media
 
 
 def _owned_media(db: Session, media_id: int, user_id: int) -> Media:

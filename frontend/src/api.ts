@@ -100,6 +100,7 @@ export type MediaType = "video" | "photo" | "photo_hot" | "music";
 export interface Media {
   id: number;
   tipo: MediaType;
+  folder_id: number | null;
   nome_original: string;
   caminho: string;
   duracao: number | null;
@@ -110,17 +111,43 @@ export interface Media {
   criado_em: string;
 }
 
-const BASE = "/api/v1/media";
-
-export function listMedia(tipo: MediaType): Promise<Media[]> {
-  return apiGetAsync(`${BASE}?tipo=${tipo}`);
+export interface Folder {
+  id: number;
+  nome: string;
+  criado_em: string;
 }
 
-export async function uploadMedia(tipo: MediaType, file: File): Promise<Media> {
+const BASE = "/api/v1/media";
+
+// folder: número = pasta específica; "none" = sem pasta; undefined = todas
+export function listMedia(tipo: MediaType, folder?: number | "none"): Promise<Media[]> {
+  let q = `?tipo=${tipo}`;
+  if (folder === "none") q += "&sem_pasta=true";
+  else if (typeof folder === "number") q += `&folder_id=${folder}`;
+  return apiGetAsync(`${BASE}${q}`);
+}
+
+export async function uploadMedia(tipo: MediaType, file: File, folderId?: number | null): Promise<Media> {
   const form = new FormData();
   form.append("file", file);
-  const r = await fetch(`${BASE}/${tipo}`, { method: "POST", headers: authHeaders(), body: form });
+  const q = folderId ? `?folder_id=${folderId}` : "";
+  const r = await fetch(`${BASE}/${tipo}${q}`, { method: "POST", headers: authHeaders(), body: form });
   return jsonOrThrow(r);
+}
+
+export function moveMedia(id: number, folderId: number | null): Promise<Media> {
+  return apiSend(`${BASE}/${id}/folder`, "PATCH", { folder_id: folderId });
+}
+
+// ---------- Pastas (guardam vídeo+foto+foto hot; música é universal) ----------
+export function listFolders(): Promise<Folder[]> {
+  return apiGetAsync(`/api/v1/folders`);
+}
+export function createFolder(nome: string): Promise<Folder> {
+  return apiSend(`/api/v1/folders`, "POST", { nome });
+}
+export function deleteFolder(id: number): Promise<void> {
+  return apiSend(`/api/v1/folders/${id}`, "DELETE");
 }
 
 export function deleteMedia(id: number): Promise<void> {
