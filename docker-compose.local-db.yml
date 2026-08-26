@@ -1,0 +1,39 @@
+# Variante que usa o SEU Postgres local (o do pgAdmin), em vez de um container.
+# Assim as tabelas aparecem direto no seu pgAdmin (localhost:5432).
+#
+# Como rodar:
+#   docker compose -f docker-compose.local-db.yml up -d --build
+#
+# Antes, crie o banco no SEU Postgres (uma vez):
+#   psql -U postgres -c "CREATE DATABASE videos_em_massa;"
+#
+# E defina LOCAL_DATABASE_URL no arquivo .env (ver .env.example).
+
+services:
+  backend:
+    build: ./backend
+    environment:
+      # URL do SEU Postgres local (definida no .env). host.docker.internal = sua máquina.
+      DATABASE_URL: ${LOCAL_DATABASE_URL}
+      STORAGE_DIR: /app/storage
+      CORS_ORIGINS: http://localhost:8080
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
+    volumes:
+      - storage:/app/storage
+    # permite o container enxergar o Postgres da máquina host (Docker Desktop e Linux)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  storage:

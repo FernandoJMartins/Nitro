@@ -7,6 +7,10 @@ services:
       POSTGRES_DB: videos_em_massa
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # expõe o Postgres do container na porta 5433 do seu Windows (pgAdmin/DBeaver).
+    # Usa 5433 para não conflitar com um Postgres local na 5432.
+    ports:
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d videos_em_massa"]
       interval: 5s
