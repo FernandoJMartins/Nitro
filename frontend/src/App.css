@@ -501,6 +501,38 @@ input:focus, select:focus, textarea:focus {
 .day-actions { display: flex; gap: 8px; }
 .day-group .grid { margin-top: 12px; }
 
+/* ---------- filtro do histórico ---------- */
+.hist-filtro {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 8px 0 4px;
+}
+.hist-filtro label { font-size: 14px; color: var(--muted); }
+.hist-filtro select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* ---------- grupo por lote ---------- */
+.lote-group { margin-top: 6px; }
+.lote-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 14px 0 2px;
+  padding-left: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.lote-group .grid { margin-top: 8px; }
+
 /* ---------- tela de login ---------- */
 .auth-wrap {
   min-height: 100vh;
