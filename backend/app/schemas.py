@@ -62,6 +62,10 @@ class FolderCreate(BaseModel):
     nome: str
 
 
+class FolderUpdate(BaseModel):
+    nome: str
+
+
 class FolderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -125,13 +129,31 @@ class BulkRequest(BaseModel):
     quantidade: int = 5
     base_media_ids: list[int]
     music_media_ids: list[int] = []
-    hot_media_ids: list[int] = []
-    phrase_type_id: int | None = None   # pool de textos (lista do usuário)
+    # tipo de frase GLOBAL (fallback p/ vídeo simples). Cada tipo de vídeo pode ter o seu.
+    phrase_type_id: int | None = None
+    # tipo de frase POR tipo de vídeo, ex.: {"pause": 3, "imagem": 5, "final": 7}
+    text_types: dict[str, int | None] = {}
     use_ia_texto: bool = False          # IA gera os textos no lugar da lista
     gerar_legenda_ia: bool = False      # legenda da postagem por IA (opcional)
     # duração é um RANGE: cada vídeo pega um valor aleatório entre min e max.
     duration_min: float = 5.0
-    duration_max: float = 15.0
+    duration_max: float = 8.0
+
+    # ---- Tipos de vídeo (marque 1 ou vários — sorteado por vídeo) ----
+    # subconjunto de: "pause" (flash hot) | "imagem" (imagem estática) | "final" (clipe final)
+    video_types: list[str] = []
+    hot_media_ids: list[int] = []       # pool do tipo "pause"
+    overlay_media_ids: list[int] = []   # pool do tipo "imagem"
+    final_media_ids: list[int] = []     # pool do tipo "final"
+    font_id: str | None = None          # fonte do texto (ver GET /videos/fonts)
+
+    # posições (centro do elemento) em fração da tela [0..1]. Definidas no preview 9:16.
+    text_x: float = 0.5
+    text_y: float = 0.72
+    overlay_x: float = 0.5
+    overlay_y: float = 0.22
+
+    # compatibilidade: versão antiga mandava só use_flash (equivale a video_types=["pause"])
     use_flash: bool = False
 
 
@@ -156,4 +178,5 @@ class GeneratedVideoOut(BaseModel):
     texto: str | None
     legenda: str | None
     usou_flash: bool
+    tipo_video: str | None = None
     criado_em: datetime

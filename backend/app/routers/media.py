@@ -22,17 +22,28 @@ router = APIRouter(prefix="/api/v1/media", tags=["media"])
 
 # Extensões aceitas por tipo de mídia.
 # 'photo'      = foto normal (pode ser base de vídeo)
-# 'photo_hot'  = foto hot (usada só no flash de 1 frame)
+# 'photo_hot'  = foto hot (usada só no flash do "desafio do pause")
+# 'overlay'    = imagem estática sobreposta (tipo de vídeo "imagem estática")
+# 'final_clip' = vídeo OU foto exibido no fim (tipo de vídeo "clipe final")
 _IMG = {".jpg", ".jpeg", ".png", ".webp"}
+_VID = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+_AUDIO = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
 ALLOWED = {
-    "video": {".mp4", ".mov", ".mkv", ".webm", ".avi"},
+    "video": _VID,
     "photo": _IMG,
     "photo_hot": _IMG,
-    "music": {".mp3", ".wav", ".m4a", ".aac", ".ogg"},
+    "overlay": _IMG,
+    "final_clip": _IMG | _VID,  # clipe final pode ser foto ou vídeo
+    "music": _AUDIO,
 }
 
-# Quais tipos removem metadados via ffmpeg (áudio/vídeo) vs. Pillow (imagem).
-_AV = {"video", "music"}
+
+def _is_av_ext(ext: str) -> bool:
+    """Decide o método de limpeza de metadados pela EXTENSÃO (não pelo tipo).
+
+    Necessário porque 'final_clip' aceita tanto foto (Pillow) quanto vídeo (ffmpeg).
+    """
+    return ext in _VID or ext in _AUDIO
 
 
 def _validate_folder(db: Session, folder_id: int | None, user_id: int) -> int | None:
@@ -72,7 +83,7 @@ def _save_upload(
                 f.write(chunk)
 
         # 2) remove os metadados escrevendo no caminho final
-        if tipo in _AV:
+        if _is_av_ext(ext):
             metadata.strip_av_metadata(tmp_path, final_path)
         else:
             metadata.strip_image_metadata(tmp_path, final_path)
@@ -83,7 +94,7 @@ def _save_upload(
         tmp_path.unlink(missing_ok=True)
 
     # 3) registra no banco
-    duracao = metadata.probe_duration(final_path) if tipo in _AV else None
+    duracao = metadata.probe_duration(final_path) if _is_av_ext(ext) else None
     media = Media(
         user_id=user_id,
         folder_id=folder_id,
@@ -123,6 +134,22 @@ def upload_photo_hot(
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     return _save_upload("photo_hot", file, db, user.id, folder_id=_validate_folder(db, folder_id, user.id))
+
+
+@router.post("/overlay", response_model=MediaOut)
+def upload_overlay(
+    file: UploadFile = File(...), folder_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return _save_upload("overlay", file, db, user.id, folder_id=_validate_folder(db, folder_id, user.id))
+
+
+@router.post("/final_clip", response_model=MediaOut)
+def upload_final_clip(
+    file: UploadFile = File(...), folder_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return _save_upload("final_clip", file, db, user.id, folder_id=_validate_folder(db, folder_id, user.id))
 
 
 @router.post("/music", response_model=MediaOut)

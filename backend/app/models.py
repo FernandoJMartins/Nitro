@@ -150,6 +150,8 @@ class GeneratedVideo(Base):
     texto: Mapped[str | None] = mapped_column(Text, nullable=True)      # texto no vídeo
     legenda: Mapped[str | None] = mapped_column(Text, nullable=True)    # legenda da postagem
     usou_flash: Mapped[bool] = mapped_column(Boolean, default=False)
+    # tipo de vídeo aplicado: 'pause' | 'imagem' | 'final' | None (vídeo simples)
+    tipo_video: Mapped[str | None] = mapped_column(String(16), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     job: Mapped["Job | None"] = relationship(back_populates="videos")

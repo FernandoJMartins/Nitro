@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Folder, Media, User
-from ..schemas import FolderCreate, FolderOut
+from ..schemas import FolderCreate, FolderOut, FolderUpdate
 
 router = APIRouter(prefix="/api/v1/folders", tags=["folders"])
 
@@ -34,6 +34,28 @@ def create_folder(body: FolderCreate, db: Session = Depends(get_db), user: User 
 @router.get("", response_model=list[FolderOut])
 def list_folders(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return list(db.scalars(select(Folder).where(Folder.user_id == user.id).order_by(Folder.nome)))
+
+
+@router.patch("/{folder_id}", response_model=FolderOut)
+def rename_folder(
+    folder_id: int, body: FolderUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    folder = db.get(Folder, folder_id)
+    if not folder or folder.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Pasta não encontrada")
+    nome = body.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="nome é obrigatório")
+    # não pode colidir com outra pasta do mesmo usuário
+    existe = db.scalar(
+        select(Folder).where(Folder.user_id == user.id, Folder.nome == nome, Folder.id != folder_id)
+    )
+    if existe:
+        raise HTTPException(status_code=409, detail=f"Você já tem uma pasta '{nome}'")
+    folder.nome = nome
+    db.commit()
+    db.refresh(folder)
+    return folder
 
 
 @router.delete("/{folder_id}", status_code=204)

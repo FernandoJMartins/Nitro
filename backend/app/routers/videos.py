@@ -104,6 +104,12 @@ def generate_video(body: GenerateRequest, db: Session = Depends(get_db), user: U
     )
 
 
+@router.get("/fonts")
+def list_fonts(user: User = Depends(get_current_user)):
+    """Fontes disponíveis para o texto do vídeo (curadas presentes + .ttf/.otf soltos)."""
+    return video.available_fonts()
+
+
 @router.get("/gen/{token}/download")
 def download_generated(token: str):
     # token é hex de uuid — evita path traversal.
@@ -135,18 +141,54 @@ def generate_bulk(
         raise HTTPException(status_code=400, detail="Selecione ao menos uma mídia base")
     quantidade = max(1, min(body.quantidade, 200))
 
-    # valida pré-condição de texto: precisa de frases OU IA de texto (ou nenhum texto)
-    if body.use_ia_texto and body.phrase_type_id is None:
-        raise HTTPException(status_code=400, detail="use_ia_texto exige um phrase_type_id de referência")
-    if body.use_flash and not body.hot_media_ids:
-        raise HTTPException(status_code=400, detail="use_flash exige ao menos uma foto hot")
+    # tipos de vídeo habilitados. Back-compat: use_flash antigo vira o tipo "pause".
+    tipos = list(dict.fromkeys(body.video_types))  # remove duplicatas, mantém ordem
+    if body.use_flash and "pause" not in tipos:
+        tipos.append("pause")
+    validos = {"pause", "imagem", "final"}
+    invalidos = [t for t in tipos if t not in validos]
+    if invalidos:
+        raise HTTPException(status_code=400, detail=f"Tipos de vídeo inválidos: {invalidos}")
 
-    # todas as mídias e o tipo de frase precisam ser do próprio usuário
-    _owned_media_ids(db, body.base_media_ids + body.music_media_ids + body.hot_media_ids, user.id)
+    # tipo de frase efetivo por tipo de vídeo (o do tipo, ou o global como fallback)
+    text_types = {k: v for k, v in body.text_types.items() if v}
+
+    def _pt_do_tipo(t: str) -> int | None:
+        return text_types.get(t) or body.phrase_type_id
+
+    # IA de texto precisa de ao menos um tipo de frase de referência (global ou por tipo)
+    if body.use_ia_texto and not (text_types or body.phrase_type_id is not None):
+        raise HTTPException(status_code=400, detail="Para a IA de texto, escolha um tipo de frase em algum tipo de vídeo")
+
+    # pré-condições por tipo de vídeo
+    if "pause" in tipos and not body.hot_media_ids:
+        raise HTTPException(status_code=400, detail='O tipo "pause" exige ao menos uma foto hot')
+    if "imagem" in tipos:
+        if not body.overlay_media_ids:
+            raise HTTPException(status_code=400, detail='O tipo "imagem estática" exige ao menos uma imagem')
+        if _pt_do_tipo("imagem") is None:
+            raise HTTPException(status_code=400, detail='O tipo "imagem estática" exige um tipo de frase (textos)')
+    if "final" in tipos and not body.final_media_ids:
+        raise HTTPException(status_code=400, detail='O tipo "clipe final" exige ao menos um clipe')
+
+    def _clamp01(v: float) -> float:
+        return max(0.0, min(1.0, v))
+
+    # todas as mídias precisam ser do próprio usuário
+    _owned_media_ids(
+        db,
+        body.base_media_ids + body.music_media_ids + body.hot_media_ids
+        + body.overlay_media_ids + body.final_media_ids,
+        user.id,
+    )
+    # todos os tipos de frase usados (global + por tipo) precisam ser do usuário
+    pt_ids = set(text_types.values())
     if body.phrase_type_id is not None:
-        pt = db.get(PhraseType, body.phrase_type_id)
+        pt_ids.add(body.phrase_type_id)
+    for pid in pt_ids:
+        pt = db.get(PhraseType, pid)
         if not pt or pt.user_id != user.id:
-            raise HTTPException(status_code=404, detail="Tipo de frase não encontrado")
+            raise HTTPException(status_code=404, detail=f"Tipo de frase {pid} não encontrado")
 
     # range de duração: clamp em [1, 60] e garante min <= max
     dur_min = max(1.0, min(body.duration_min, 60.0))
@@ -163,13 +205,21 @@ def generate_bulk(
         quantidade=quantidade,
         base_media_ids=body.base_media_ids,
         music_media_ids=body.music_media_ids,
-        hot_media_ids=body.hot_media_ids,
         phrase_type_id=body.phrase_type_id,
+        text_types=text_types,
         use_ia_texto=body.use_ia_texto,
         gerar_legenda_ia=body.gerar_legenda_ia,
         duration_min=dur_min,
         duration_max=dur_max,
-        use_flash=body.use_flash,
+        video_types=tipos,
+        hot_media_ids=body.hot_media_ids,
+        overlay_media_ids=body.overlay_media_ids,
+        final_media_ids=body.final_media_ids,
+        font_id=body.font_id,
+        text_x=_clamp01(body.text_x),
+        text_y=_clamp01(body.text_y),
+        overlay_x=_clamp01(body.overlay_x),
+        overlay_y=_clamp01(body.overlay_y),
     )
     background.add_task(bulk.run_bulk_job, job.id, cfg)
     return job
