@@ -180,3 +180,35 @@ class GeneratedVideoOut(BaseModel):
     usou_flash: bool
     tipo_video: str | None = None
     criado_em: datetime
+
+
+# ---------- Upscaling (utilitário) ----------
+class UpscaleFromMediaRequest(BaseModel):
+    media_ids: list[int]
+    escala: int = 2  # 2 ou 4
+
+
+class UpscaleJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    escala: int
+    total: int
+    concluidos: int
+    erro: str | None
+    criado_em: datetime
+
+
+class UpscaledImageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int | None
+    caminho: str
+    nome_original: str
+    escala: int
+    largura: int
+    altura: int
+    tamanho_bytes: int
+    criado_em: datetime

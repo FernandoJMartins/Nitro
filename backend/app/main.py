@@ -5,7 +5,7 @@ from sqlalchemy import inspect, text
 
 from .config import settings
 from .database import Base, engine
-from .routers import auth, folders, media, phrases, videos
+from .routers import auth, folders, media, phrases, upscale, videos
 
 # Cria as tabelas que ainda não existem. (Em produção, trocar por migrations/Alembic.)
 Base.metadata.create_all(bind=engine)
@@ -42,6 +42,7 @@ app.include_router(auth.router)
 app.include_router(folders.router)
 app.include_router(media.router)
 app.include_router(phrases.router)
+app.include_router(upscale.router)
 app.include_router(videos.router)
 
 

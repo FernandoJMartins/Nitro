@@ -155,3 +155,45 @@ class GeneratedVideo(Base):
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     job: Mapped["Job | None"] = relationship(back_populates="videos")
+
+
+class UpscaleJob(Base):
+    """Um lote de upscaling de imagens. Acompanha o progresso (concluidos/total).
+
+    Espelha `Job`, mas é do utilitário de upscaling (histórico separado).
+    """
+
+    __tablename__ = "upscale_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # status: 'fila' | 'processando' | 'concluido' | 'erro'
+    status: Mapped[str] = mapped_column(String(16), default="fila", index=True)
+    escala: Mapped[int] = mapped_column(Integer, default=2)  # 2 ou 4
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    concluidos: Mapped[int] = mapped_column(Integer, default=0)
+    erro: Mapped[str | None] = mapped_column(Text, nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    imagens: Mapped[list["UpscaledImage"]] = relationship(back_populates="job")
+
+
+class UpscaledImage(Base):
+    """Uma imagem ampliada (alimenta o histórico do upscaling)."""
+
+    __tablename__ = "upscaled_images"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("upscale_jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    caminho: Mapped[str] = mapped_column(String(512))  # relativo a STORAGE_DIR
+    nome_original: Mapped[str] = mapped_column(String(512))
+    escala: Mapped[int] = mapped_column(Integer, default=2)
+    largura: Mapped[int] = mapped_column(Integer, default=0)
+    altura: Mapped[int] = mapped_column(Integer, default=0)
+    tamanho_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    job: Mapped["UpscaleJob | None"] = relationship(back_populates="imagens")

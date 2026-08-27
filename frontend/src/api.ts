@@ -298,3 +298,74 @@ export function videoDownloadUrl(id: number): string {
 export function deleteVideos(ids: number[]): Promise<{ removidos: number }> {
   return apiSend(`${V1}/videos/history/delete`, "POST", { ids });
 }
+
+// ---------- Upscaling (utilitário) ----------
+export type Escala = 2 | 4;
+
+export interface UpscaleJob {
+  id: number;
+  status: "fila" | "processando" | "concluido" | "erro";
+  escala: number;
+  total: number;
+  concluidos: number;
+  erro: string | null;
+  criado_em: string;
+}
+
+export interface UpscaledImage {
+  id: number;
+  job_id: number | null;
+  caminho: string;
+  nome_original: string;
+  escala: number;
+  largura: number;
+  altura: number;
+  tamanho_bytes: number;
+  criado_em: string;
+}
+
+export async function upscaleUpload(files: File[], escala: Escala): Promise<UpscaleJob> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const r = await fetch(`${V1}/upscale/upload?escala=${escala}`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  return jsonOrThrow(r);
+}
+
+export function upscaleFromMedia(media_ids: number[], escala: Escala): Promise<UpscaleJob> {
+  return apiSend(`${V1}/upscale/from-media`, "POST", { media_ids, escala });
+}
+
+export function getUpscaleJob(id: number): Promise<UpscaleJob> {
+  return apiGetAsync(`${V1}/upscale/jobs/${id}`);
+}
+
+export function getUpscaleHistory(jobId?: number): Promise<UpscaledImage[]> {
+  return apiGetAsync(`${V1}/upscale/history${jobId != null ? `?job_id=${jobId}` : ""}`);
+}
+
+export function upscaledDownloadUrl(id: number): string {
+  return `${V1}/upscale/${id}/download?token=${getToken() ?? ""}`;
+}
+
+export function deleteUpscaled(ids: number[]): Promise<{ removidos: number }> {
+  return apiSend(`${V1}/upscale/history/delete`, "POST", { ids });
+}
+
+export function upscaleZipUrl(ids: number[]): string {
+  return `${V1}/upscale/history/zip?ids=${ids.join(",")}&token=${getToken() ?? ""}`;
+}
+
+// Dispara o download do ZIP com um link direto (GET), no mesmo gesto do clique —
+// assim o navegador não bloqueia como acontece com download via fetch/blob.
+export function downloadUpscaleZip(ids: number[], nome = "upscaled.zip"): void {
+  const a = document.createElement("a");
+  a.href = upscaleZipUrl(ids);
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
