@@ -6,6 +6,7 @@ import {
   downloadUrl,
   listFolders,
   listMedia,
+  renameFolder,
   uploadMedia,
   type Folder,
   type Media,
@@ -17,6 +18,8 @@ const SUBTABS: { tipo: MediaType; label: string; accept: string }[] = [
   { tipo: "video", label: "🎬 Vídeos", accept: "video/*" },
   { tipo: "photo", label: "🖼️ Fotos", accept: "image/*" },
   { tipo: "photo_hot", label: "🔥 Fotos hot", accept: "image/*" },
+  { tipo: "overlay", label: "🏷️ Imagens estáticas", accept: "image/*" },
+  { tipo: "final_clip", label: "🎞️ Clipes finais", accept: "image/*,video/*" },
 ];
 
 function formatSize(bytes: number): string {
@@ -25,9 +28,13 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+const VIDEO_RE = /\.(mp4|mov|mkv|webm|avi)$/i;
+
 function Thumb({ m }: { m: Media }) {
   const src = downloadUrl(m.id);
-  if (m.tipo === "video") return <video className="thumb" src={src} preload="metadata" muted />;
+  // 'final_clip' pode ser foto OU vídeo — decide pela extensão do arquivo.
+  const isVideo = m.tipo === "video" || VIDEO_RE.test(m.caminho);
+  if (isVideo) return <video className="thumb" src={src} preload="metadata" muted />;
   if (m.tipo === "music") return <div className="thumb thumb-music">🎵</div>;
   return <img className="thumb" src={src} alt={m.nome_original} />;
 }
@@ -142,6 +149,21 @@ export default function MediaLibrary() {
     await loadFolders();
   }
 
+  async function renomearPasta(f: Folder, ev?: React.MouseEvent) {
+    ev?.stopPropagation();
+    const nome = window.prompt("Novo nome da pasta:", f.nome);
+    if (nome == null) return; // cancelou
+    const limpo = nome.trim();
+    if (!limpo || limpo === f.nome) return;
+    try {
+      const atualizada = await renameFolder(f.id, limpo);
+      await loadFolders();
+      if (openFolder?.id === f.id) setOpenFolder(atualizada);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   const currentAccept = view === "musicas" ? "audio/*" : SUBTABS.find((s) => s.tipo === subtab)!.accept;
 
   return (
@@ -199,6 +221,9 @@ export default function MediaLibrary() {
               <button key={f.id} className="folder-card" onClick={() => { setOpenFolder(f); setSubtab("video"); }}>
                 <div className="folder-icon">📁</div>
                 <div className="folder-name">{f.nome}</div>
+                <span className="folder-edit" title="Renomear pasta" onClick={(e) => renomearPasta(f, e)}>
+                  ✏️
+                </span>
                 <span className="folder-del" title="Apagar pasta" onClick={(e) => removerPasta(f, e)}>
                   ×
                 </span>
@@ -221,6 +246,9 @@ export default function MediaLibrary() {
               ← Pastas
             </button>
             <h2>📁 {openFolder.nome}</h2>
+            <button className="btn sm" title="Renomear pasta" onClick={() => renomearPasta(openFolder)}>
+              ✏️ Renomear
+            </button>
           </div>
 
           <nav className="tabs">

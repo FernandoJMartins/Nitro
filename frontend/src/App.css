@@ -32,7 +32,7 @@
 
   --tabbar-h: 58px;
   --head-h: 54px;
-  --maxw: 640px;
+  --maxw: 960px;
 
   font-family: var(--font);
 }
@@ -653,7 +653,17 @@ code {
   line-height: 1;
 }
 .folder-del:hover { color: var(--danger); }
+.folder-edit {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.75;
+}
+.folder-edit:hover { opacity: 1; }
 .folder-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.folder-head .btn:last-child { margin-left: auto; }
 .folder-head h2 { margin: 0; font-size: 18px; }
 
 /* ---------- modo pasta inteira / itens ---------- */
@@ -683,6 +693,153 @@ code {
   padding: 6px 8px;
   font-size: 12px;
   width: 100%;
+}
+
+/* ---------- cards de tipo de vídeo ---------- */
+.typecards { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.typecard {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.typecard.active { border-color: var(--blue); background: var(--blue-soft); }
+.typecard-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.typecard-head input { width: auto; accent-color: var(--blue); grid-row: span 2; align-self: center; }
+.typecard-title { font-weight: 700; color: var(--text); font-size: 14px; }
+.typecard-desc { grid-column: 2; font-size: 12px; color: var(--muted); }
+.typecard-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+.typecard.active .typecard-body { border-top-color: var(--blue); }
+
+/* ---------- preview 9:16 com arrasto ---------- */
+.create-layout { display: flex; flex-direction: column; gap: 16px; }
+/* No mobile o preview rola junto com a página (estático). Sticky só no desktop. */
+.preview { position: static; align-self: center; }
+.preview-canvas {
+  position: relative;
+  width: 100%;
+  max-width: 190px;
+  aspect-ratio: 9 / 16;
+  margin: 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  touch-action: none; /* impede o scroll da página enquanto arrasta */
+  user-select: none;
+}
+.preview-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.preview-bg-empty {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-weight: 700; letter-spacing: 2px;
+}
+.drag-el { position: absolute; transform: translate(-50%, -50%); cursor: grab; touch-action: none; }
+.drag-el:active { cursor: grabbing; }
+.drag-el.txt { width: 82%; text-align: center; }
+.drag-el.txt span {
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1.15;
+  text-shadow: 0 0 3px #000, 1px 1px 2px #000, -1px -1px 2px #000;
+  word-break: break-word;
+}
+.drag-el.ov { width: 55%; }
+.drag-el.ov img {
+  width: 100%; height: auto; display: block; border-radius: 4px;
+  outline: 2px dashed rgba(255, 255, 255, 0.7); outline-offset: 2px;
+}
+.ov-ph {
+  width: 100%; height: 56px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.18); color: #fff; font-size: 12px; font-weight: 700;
+  border: 2px dashed rgba(255, 255, 255, 0.7); border-radius: 6px;
+}
+.preview-hint { text-align: center; font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+/* guias de centralização (aparecem só ao arrastar) */
+.guide { position: absolute; background: rgba(255, 255, 255, 0.35); pointer-events: none; z-index: 3; }
+.guide-v { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-0.5px); }
+.guide-h { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-0.5px); }
+.guide-v.on { width: 2px; background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+.guide-h.on { height: 2px; background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+.center-badge {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--blue);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  z-index: 6;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+@media (min-width: 860px) {
+  .create-layout { display: grid; grid-template-columns: 1fr 300px; gap: 22px; align-items: start; }
+  .create-form-col { grid-column: 1; grid-row: 1; }
+  .preview { grid-column: 2; grid-row: 1; position: sticky; top: 16px; z-index: 5; }
+  .preview-canvas { max-width: 260px; }
+
+  /* itens do "escolher itens": grade de tiles clicáveis no desktop */
+  .checklist.items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 8px;
+    max-height: 360px;
+  }
+  .checklist.items-grid .chk {
+    position: relative;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+    gap: 4px;
+    padding: 4px;
+    border: 2px solid transparent;
+  }
+  .checklist.items-grid .chk.picked {
+    border-color: var(--blue);
+    background: var(--blue-soft);
+  }
+  /* seleciona clicando na própria imagem/vídeo — esconde o checkbox */
+  .checklist.items-grid .chk input { position: absolute; opacity: 0; pointer-events: none; }
+  .checklist.items-grid .chk.picked::after {
+    content: "✓";
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--blue);
+    color: #fff;
+    font-size: 13px;
+    line-height: 20px;
+    text-align: center;
+  }
+  .checklist.items-grid .mini-thumb {
+    width: 100%;
+    height: 120px;
+    object-fit: contain;
+    background: #000;
+  }
+  .checklist.items-grid .chk-name { font-size: 11px; }
 }
 
 /* ---------- telas maiores: 3 colunas no feed ---------- */

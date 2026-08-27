@@ -5,19 +5,24 @@ import {
   getHistory,
   getJob,
   listFolders,
+  listFonts,
   listMedia,
   listPhraseTypes,
   videoDownloadUrl,
   type Folder,
+  type Font,
   type GeneratedVideo,
   type Job,
   type Media,
   type PhraseType,
 } from "./api";
 
+const VIDEO_RE = /\.(mp4|mov|mkv|webm|avi)$/i;
+
 function ItemThumb({ m }: { m: Media }) {
   const src = downloadUrl(m.id);
-  if (m.tipo === "video") return <video className="mini-thumb" src={src} preload="metadata" muted />;
+  const isVideo = m.tipo === "video" || VIDEO_RE.test(m.caminho);
+  if (isVideo) return <video className="mini-thumb" src={src} preload="metadata" muted />;
   return <img className="mini-thumb" src={src} alt="" />;
 }
 
@@ -67,7 +72,7 @@ function FolderPicker({
           </div>
 
           {mode === "items" && (
-            <div className="checklist">
+            <div className="checklist items-grid">
               {items.map((m) => (
                 <label key={m.id} className={sel.has(m.id) ? "chk picked" : "chk"}>
                   <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggle(m.id)} />
@@ -84,10 +89,262 @@ function FolderPicker({
   );
 }
 
+// Card de um tipo de vídeo: checkbox + painel revelado quando marcado.
+function TypeCard({
+  icon,
+  title,
+  desc,
+  checked,
+  onToggle,
+  children,
+}: {
+  icon: string;
+  title: string;
+  desc: string;
+  checked: boolean;
+  onToggle: (v: boolean) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={checked ? "typecard active" : "typecard"}>
+      <label className="typecard-head">
+        <input type="checkbox" checked={checked} onChange={(e) => onToggle(e.target.checked)} />
+        <span className="typecard-title">
+          {icon} {title}
+        </span>
+        <span className="typecard-desc">{desc}</span>
+      </label>
+      {checked && <div className="typecard-body">{children}</div>}
+    </div>
+  );
+}
+
+// Seletor de tipo de frase (textos) para UM tipo de vídeo.
+function PhraseSelect({
+  types,
+  value,
+  onChange,
+  required,
+}: {
+  types: PhraseType[];
+  value: number | null;
+  onChange: (v: number | null) => void;
+  required?: boolean;
+}) {
+  return (
+    <label className="field">
+      <span>Textos deste tipo — tipo de frase{required ? " (obrigatório)" : ""}</span>
+      <select value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
+        <option value="">{required ? "— escolha um tipo de frase —" : "— nenhum (sem texto) —"}</option>
+        {types.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.nome}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+type Pos = { x: number; y: number };
+type Size = { w: number; h: number };
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+const SNAP = 0.025; // distância (fração) para "grudar" no centro
+const CENTERED = 0.004; // tolerância para considerar centralizado
+
+// Empurra o ponto `p` (elemento arrastado, com tamanho `d`) para fora do outro
+// elemento (centro `o`, tamanho `os`) pelo eixo de menor penetração — impede overlap.
+function avoidOverlap(p: Pos, d: Size, o: Pos, os: Size): Pos {
+  const combW = (d.w + os.w) / 2 + 0.008;
+  const combH = (d.h + os.h) / 2 + 0.008;
+  const dx = p.x - o.x;
+  const dy = p.y - o.y;
+  const ox = combW - Math.abs(dx);
+  const oy = combH - Math.abs(dy);
+  if (ox > 0 && oy > 0) {
+    if (ox <= oy) return { x: clamp01(o.x + (dx < 0 ? -combW : combW)), y: p.y };
+    return { x: p.x, y: clamp01(o.y + (dy < 0 ? -combH : combH)) };
+  }
+  return p;
+}
+
+// Preview 9:16 com elementos arrastáveis (texto e imagem estática).
+// Funciona no desktop e no mobile via Pointer Events. As posições são frações 0..1.
+// Mostra guias de centralização (com snap) e nunca deixa texto e imagem se sobreporem.
+function PreviewCanvas({
+  bg,
+  sampleText,
+  fontCss,
+  hasText,
+  textPos,
+  setTextPos,
+  showOverlay,
+  overlayMedia,
+  ovPos,
+  setOvPos,
+}: {
+  bg: Media | undefined;
+  sampleText: string;
+  fontCss: string;
+  hasText: boolean;
+  textPos: Pos;
+  setTextPos: (p: Pos) => void;
+  showOverlay: boolean;
+  overlayMedia: Media | undefined;
+  ovPos: Pos;
+  setOvPos: (p: Pos) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const textElRef = useRef<HTMLDivElement>(null);
+  const ovElRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef<null | "text" | "overlay">(null);
+  const [active, setActive] = useState<null | "text" | "overlay">(null);
+  const [ovNat, setOvNat] = useState<Size | null>(null);
+
+  useEffect(() => setOvNat(null), [overlayMedia?.id]);
+
+  // largura da imagem (fração da tela) reproduzindo o backend: cabe na caixa
+  // 0.85 x 0.45 preservando o aspecto, ampliando no máximo OVERLAY_SCALE do nativo.
+  const BOX_W = 0.85, BOX_H = 0.45, VW = 1080, VH = 1920, OVERLAY_SCALE = 1.75;
+  let ovW = 0.55; // fallback enquanto a imagem carrega
+  if (ovNat && ovNat.w > 0 && ovNat.h > 0) {
+    const nfw = ovNat.w / VW, nfh = ovNat.h / VH;
+    const scale = Math.min(BOX_W / nfw, BOX_H / nfh, OVERLAY_SCALE);
+    ovW = nfw * scale;
+  }
+
+  function sizeFrac(el: HTMLElement | null): Size {
+    const c = ref.current;
+    if (!el || !c) return { w: 0, h: 0 };
+    const cr = c.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    return { w: er.width / cr.width, h: er.height / cr.height };
+  }
+
+  // Segurança: se texto e imagem se sobrepuserem SEM estar arrastando (imagem trocou,
+  // carregou maior, ou o tipo foi ligado), empurra o texto para fora da imagem.
+  useEffect(() => {
+    if (!hasText || !showOverlay || dragging.current) return;
+    const fixed = avoidOverlap(textPos, sizeFrac(textElRef.current), ovPos, sizeFrac(ovElRef.current));
+    if (fixed.x !== textPos.x || fixed.y !== textPos.y) setTextPos(fixed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textPos, ovPos, ovNat, hasText, showOverlay]);
+
+  useEffect(() => {
+    function move(e: PointerEvent) {
+      if (!dragging.current || !ref.current) return;
+      const r = ref.current.getBoundingClientRect();
+      let p: Pos = {
+        x: clamp01((e.clientX - r.left) / r.width),
+        y: clamp01((e.clientY - r.top) / r.height),
+      };
+      // snap ao centro
+      if (Math.abs(p.x - 0.5) < SNAP) p.x = 0.5;
+      if (Math.abs(p.y - 0.5) < SNAP) p.y = 0.5;
+      // impede sobreposição entre texto e imagem (só quando ambos existem)
+      if (hasText && showOverlay) {
+        const isText = dragging.current === "text";
+        const dSize = sizeFrac(isText ? textElRef.current : ovElRef.current);
+        const other = isText ? ovPos : textPos;
+        const oSize = sizeFrac(isText ? ovElRef.current : textElRef.current);
+        p = avoidOverlap(p, dSize, other, oSize);
+      }
+      (dragging.current === "text" ? setTextPos : setOvPos)(p);
+    }
+    function up() {
+      dragging.current = null;
+      setActive(null);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [hasText, showOverlay, ovPos, textPos, setTextPos, setOvPos]);
+
+  const start = (t: "text" | "overlay") => (e: React.PointerEvent) => {
+    e.preventDefault();
+    dragging.current = t;
+    setActive(t);
+  };
+
+  const bgSrc = bg ? downloadUrl(bg.id) : null;
+  const bgIsVideo = bg && (bg.tipo === "video" || VIDEO_RE.test(bg.caminho));
+
+  // centralização do elemento ativo (para as guias)
+  const activePos = active === "text" ? textPos : active === "overlay" ? ovPos : null;
+  const cX = !!activePos && Math.abs(activePos.x - 0.5) < CENTERED;
+  const cY = !!activePos && Math.abs(activePos.y - 0.5) < CENTERED;
+  const centerLabel = cX && cY ? "⊹ centralizado" : cX ? "↕ centro horizontal" : cY ? "↔ centro vertical" : null;
+
+  return (
+    <div className="preview">
+      <div className="preview-canvas" ref={ref}>
+        {bgSrc ? (
+          bgIsVideo ? (
+            <video className="preview-bg" src={bgSrc} muted playsInline autoPlay loop preload="metadata" />
+          ) : (
+            <img className="preview-bg" src={bgSrc} alt="" />
+          )
+        ) : (
+          <div className="preview-bg preview-bg-empty">9:16</div>
+        )}
+
+        {active && (
+          <>
+            <div className={cX ? "guide guide-v on" : "guide guide-v"} />
+            <div className={cY ? "guide guide-h on" : "guide guide-h"} />
+            {centerLabel && <div className="center-badge">{centerLabel}</div>}
+          </>
+        )}
+
+        {showOverlay && (
+          <div
+            ref={ovElRef}
+            className="drag-el ov"
+            style={{ left: `${ovPos.x * 100}%`, top: `${ovPos.y * 100}%`, width: `${ovW * 100}%` }}
+            onPointerDown={start("overlay")}
+          >
+            {overlayMedia ? (
+              <img
+                src={downloadUrl(overlayMedia.id)}
+                alt=""
+                draggable={false}
+                onLoad={(e) => setOvNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+              />
+            ) : (
+              <div className="ov-ph">imagem</div>
+            )}
+          </div>
+        )}
+
+        {hasText && (
+          <div
+            ref={textElRef}
+            className="drag-el txt"
+            style={{ left: `${textPos.x * 100}%`, top: `${textPos.y * 100}%` }}
+            onPointerDown={start("text")}
+          >
+            <span style={{ fontFamily: fontCss }}>{sampleText}</span>
+          </div>
+        )}
+      </div>
+      <div className="preview-hint">
+        {hasText || showOverlay
+          ? `Arraste ${[hasText && "o texto", showOverlay && "a imagem"].filter(Boolean).join(" e ")} para posicionar. Vale para todo o lote.`
+          : "Escolha um tipo de frase (ou a imagem estática) para posicionar aqui."}
+      </div>
+    </div>
+  );
+}
+
 export default function Create() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [musics, setMusics] = useState<Media[]>([]);
   const [types, setTypes] = useState<PhraseType[]>([]);
+  const [fonts, setFonts] = useState<Font[]>([]);
 
   // base (vídeos + fotos de uma pasta)
   const [baseFolderId, setBaseFolderId] = useState<number | null>(null);
@@ -95,20 +352,44 @@ export default function Create() {
   const [baseItems, setBaseItems] = useState<Media[]>([]);
   const [baseSel, setBaseSel] = useState<Set<number>>(new Set());
 
-  // hot (fotos hot de uma pasta)
+  // ---- tipos de vídeo (marque 1 ou vários) ----
+  const [typePause, setTypePause] = useState(false);
+  const [typeImagem, setTypeImagem] = useState(false);
+  const [typeFinal, setTypeFinal] = useState(false);
+
+  // pool do "pause" (fotos hot)
   const [hotFolderId, setHotFolderId] = useState<number | null>(null);
   const [hotMode, setHotMode] = useState<"whole" | "items">("whole");
   const [hotItems, setHotItems] = useState<Media[]>([]);
   const [hotSel, setHotSel] = useState<Set<number>>(new Set());
 
+  // pool da "imagem estática" (overlay)
+  const [ovFolderId, setOvFolderId] = useState<number | null>(null);
+  const [ovMode, setOvMode] = useState<"whole" | "items">("whole");
+  const [ovItems, setOvItems] = useState<Media[]>([]);
+  const [ovSel, setOvSel] = useState<Set<number>>(new Set());
+
+  // posições (centro, fração 0..1) definidas arrastando no preview 9:16
+  const [textPos, setTextPos] = useState({ x: 0.5, y: 0.72 });
+  const [ovPos, setOvPos] = useState({ x: 0.5, y: 0.22 });
+
+  // pool do "clipe final"
+  const [finFolderId, setFinFolderId] = useState<number | null>(null);
+  const [finMode, setFinMode] = useState<"whole" | "items">("whole");
+  const [finItems, setFinItems] = useState<Media[]>([]);
+  const [finSel, setFinSel] = useState<Set<number>>(new Set());
+
   const [musicSel, setMusicSel] = useState<Set<number>>(new Set());
   const [quantidade, setQuantidade] = useState(5);
   const [durMin, setDurMin] = useState(5);
-  const [durMax, setDurMax] = useState(15);
-  const [typeId, setTypeId] = useState<number | null>(null);
+  const [durMax, setDurMax] = useState(8);
+  // tipo de frase POR tipo de vídeo (cada tipo tem seus próprios textos)
+  const [ptPause, setPtPause] = useState<number | null>(null);
+  const [ptImagem, setPtImagem] = useState<number | null>(null);
+  const [ptFinal, setPtFinal] = useState<number | null>(null);
+  const [fontId, setFontId] = useState<string | null>(null);
   const [useIaTexto, setUseIaTexto] = useState(false);
   const [legendaIa, setLegendaIa] = useState(false);
-  const [useFlash, setUseFlash] = useState(false);
 
   const [job, setJob] = useState<Job | null>(null);
   const [results, setResults] = useState<GeneratedVideo[]>([]);
@@ -118,10 +399,12 @@ export default function Create() {
   useEffect(() => {
     (async () => {
       try {
-        const [fs, m, t] = await Promise.all([listFolders(), listMedia("music"), listPhraseTypes()]);
+        const [fs, m, t, fo] = await Promise.all([listFolders(), listMedia("music"), listPhraseTypes(), listFonts()]);
         setFolders(fs);
         setMusics(m);
         setTypes(t);
+        setFonts(fo);
+        if (fo.length > 0) setFontId(fo[0].id);
       } catch (e) {
         setError(String(e));
       }
@@ -140,14 +423,24 @@ export default function Create() {
       .catch((e) => setError(String(e)));
   }, [baseFolderId]);
 
-  // carrega fotos hot da pasta hot
+  // pools dos tipos de vídeo
   useEffect(() => {
     setHotSel(new Set());
     if (hotFolderId == null) return setHotItems([]);
-    listMedia("photo_hot", hotFolderId)
-      .then(setHotItems)
-      .catch((e) => setError(String(e)));
+    listMedia("photo_hot", hotFolderId).then(setHotItems).catch((e) => setError(String(e)));
   }, [hotFolderId]);
+
+  useEffect(() => {
+    setOvSel(new Set());
+    if (ovFolderId == null) return setOvItems([]);
+    listMedia("overlay", ovFolderId).then(setOvItems).catch((e) => setError(String(e)));
+  }, [ovFolderId]);
+
+  useEffect(() => {
+    setFinSel(new Set());
+    if (finFolderId == null) return setFinItems([]);
+    listMedia("final_clip", finFolderId).then(setFinItems).catch((e) => setError(String(e)));
+  }, [finFolderId]);
 
   function toggler(setter: React.Dispatch<React.SetStateAction<Set<number>>>) {
     return (id: number) =>
@@ -158,20 +451,37 @@ export default function Create() {
       });
   }
 
-  function resolveBaseIds(): number[] {
-    return baseMode === "whole" ? baseItems.map((m) => m.id) : [...baseSel];
-  }
-  function resolveHotIds(): number[] {
-    return hotMode === "whole" ? hotItems.map((m) => m.id) : [...hotSel];
-  }
+  const resolveIds = (mode: "whole" | "items", items: Media[], sel: Set<number>) =>
+    mode === "whole" ? items.map((m) => m.id) : [...sel];
 
   async function onGenerate() {
     setError(null);
-    const baseIds = resolveBaseIds();
+    const baseIds = resolveIds(baseMode, baseItems, baseSel);
     if (baseIds.length === 0) return setError("Escolha uma pasta base (ou itens dela) com vídeos/fotos.");
-    const hotIds = useFlash ? resolveHotIds() : [];
-    if (useFlash && hotIds.length === 0) return setError("Escolha uma pasta (ou itens) com fotos hot para o flash.");
-    if (useIaTexto && typeId == null) return setError("Para IA de texto, escolha um tipo de frase.");
+
+    const hotIds = typePause ? resolveIds(hotMode, hotItems, hotSel) : [];
+    const ovIds = typeImagem ? resolveIds(ovMode, ovItems, ovSel) : [];
+    const finIds = typeFinal ? resolveIds(finMode, finItems, finSel) : [];
+
+    if (typePause && hotIds.length === 0) return setError('Desafio do pause: escolha fotos hot (pasta ou itens).');
+    if (typeImagem && ovIds.length === 0) return setError('Imagem estática: escolha as imagens (pasta ou itens).');
+    if (typeImagem && ptImagem == null) return setError('Imagem estática exige um tipo de frase (escolha os textos dentro do tipo).');
+    if (typeFinal && finIds.length === 0) return setError('Clipe final: escolha os clipes (pasta ou itens).');
+
+    // tipo de frase por tipo de vídeo (só dos tipos habilitados)
+    const text_types: Record<string, number | null> = {};
+    if (typePause) text_types.pause = ptPause;
+    if (typeImagem) text_types.imagem = ptImagem;
+    if (typeFinal) text_types.final = ptFinal;
+
+    if (useIaTexto && !(typePause && ptPause) && !(typeImagem && ptImagem) && !(typeFinal && ptFinal))
+      return setError("Para a IA de texto, escolha um tipo de frase em algum tipo de vídeo.");
+
+    const video_types = [
+      ...(typePause ? (["pause"] as const) : []),
+      ...(typeImagem ? (["imagem"] as const) : []),
+      ...(typeFinal ? (["final"] as const) : []),
+    ];
 
     setResults([]);
     try {
@@ -179,13 +489,21 @@ export default function Create() {
         quantidade,
         base_media_ids: baseIds,
         music_media_ids: [...musicSel],
-        hot_media_ids: hotIds,
-        phrase_type_id: typeId,
+        phrase_type_id: null,
+        text_types,
         use_ia_texto: useIaTexto,
         gerar_legenda_ia: legendaIa,
         duration_min: Math.min(durMin, durMax),
         duration_max: Math.max(durMin, durMax),
-        use_flash: useFlash,
+        video_types: [...video_types],
+        hot_media_ids: hotIds,
+        overlay_media_ids: ovIds,
+        final_media_ids: finIds,
+        font_id: fontId,
+        text_x: textPos.x,
+        text_y: textPos.y,
+        overlay_x: ovPos.x,
+        overlay_y: ovPos.y,
       });
       setJob(j);
       startPolling(j.id);
@@ -233,12 +551,35 @@ export default function Create() {
     );
   }
 
+  const TIPO_BADGE: Record<string, string> = { pause: "⏸️ pause", imagem: "🏷️ imagem", final: "🎞️ final" };
+
+  const pickFirst = (mode: "whole" | "items", items: Media[], sel: Set<number>) =>
+    mode === "whole" ? items[0] : items.find((m) => sel.has(m.id));
+  const bgMedia = pickFirst(baseMode, baseItems, baseSel);
+  const ovMedia = pickFirst(ovMode, ovItems, ovSel);
+  const sampleText = "Seu texto aparece aqui";
+  const selectedFontCss = fonts.find((f) => f.id === fontId)?.css || "inherit";
+
   return (
     <>
       <p className="sub">Gere vários vídeos de uma vez. Escolha uma pasta (inteira ou itens dela) como base.</p>
       {error && <div className="error">⚠️ {error}</div>}
 
-      <div className="form">
+      <div className="create-layout">
+        <PreviewCanvas
+          bg={bgMedia}
+          sampleText={sampleText}
+          fontCss={selectedFontCss}
+          hasText={(typePause && ptPause != null) || (typeImagem && ptImagem != null) || (typeFinal && ptFinal != null)}
+          textPos={textPos}
+          setTextPos={setTextPos}
+          showOverlay={typeImagem}
+          overlayMedia={ovMedia}
+          ovPos={ovPos}
+          setOvPos={setOvPos}
+        />
+
+      <div className="form create-form-col">
         <FolderPicker
           label="Base — vídeos e fotos (sorteados por vídeo)"
           folders={folders}
@@ -265,15 +606,20 @@ export default function Create() {
         </label>
 
         <label className="field">
-          <span>Textos no vídeo — tipo de frase</span>
-          <select value={typeId ?? ""} onChange={(e) => setTypeId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">— nenhum (sem texto) —</option>
-            {types.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.nome}
+          <span>Fonte do texto</span>
+          <select
+            value={fontId ?? ""}
+            onChange={(e) => setFontId(e.target.value || null)}
+            style={{ fontFamily: selectedFontCss, fontWeight: 700 }}
+          >
+            {fonts.length === 0 && <option value="">— padrão —</option>}
+            {fonts.map((f) => (
+              <option key={f.id} value={f.id} style={{ fontFamily: f.css, fontWeight: 700 }}>
+                {f.nome}
               </option>
             ))}
           </select>
+          <div className="hint">Para adicionar fontes (ex.: um .ttf que você tenha), solte o arquivo em <code>storage/fonts</code>.</div>
         </label>
 
         <label className="field checkrow">
@@ -284,24 +630,76 @@ export default function Create() {
           <input type="checkbox" checked={legendaIa} onChange={(e) => setLegendaIa(e.target.checked)} />
           <span>Gerar legenda da postagem com IA (opcional)</span>
         </label>
-        <label className="field checkrow">
-          <input type="checkbox" checked={useFlash} onChange={(e) => setUseFlash(e.target.checked)} />
-          <span>Inserir flash da imagem hot (subliminar, ~0,1s)</span>
-        </label>
 
-        {useFlash && (
-          <FolderPicker
-            label="Fotos hot do flash (sorteadas por vídeo)"
-            folders={folders}
-            folderId={hotFolderId}
-            setFolderId={setHotFolderId}
-            mode={hotMode}
-            setMode={setHotMode}
-            items={hotItems}
-            sel={hotSel}
-            toggle={toggler(setHotSel)}
-          />
-        )}
+        {/* ---------- Tipos de vídeo ---------- */}
+        <div className="field">
+          <span>Tipos de vídeo — marque 1 ou vários (sorteado por vídeo no lote)</span>
+          <div className="typecards">
+            <TypeCard
+              icon="⏸️"
+              title="Desafio do pause"
+              desc="Flash subliminar (~0,1s) de uma foto hot no meio do vídeo."
+              checked={typePause}
+              onToggle={setTypePause}
+            >
+              <FolderPicker
+                label="Fotos hot (sorteadas por vídeo)"
+                folders={folders}
+                folderId={hotFolderId}
+                setFolderId={setHotFolderId}
+                mode={hotMode}
+                setMode={setHotMode}
+                items={hotItems}
+                sel={hotSel}
+                toggle={toggler(setHotSel)}
+              />
+              <PhraseSelect types={types} value={ptPause} onChange={setPtPause} />
+            </TypeCard>
+
+            <TypeCard
+              icon="🏷️"
+              title="Imagem estática"
+              desc="Uma imagem fixa no topo ou embaixo, acima do texto. Exige textos."
+              checked={typeImagem}
+              onToggle={setTypeImagem}
+            >
+              <div className="hint">👉 Arraste a imagem no preview ao lado para escolher onde ela aparece.</div>
+              <FolderPicker
+                label="Imagens estáticas (sorteadas por vídeo)"
+                folders={folders}
+                folderId={ovFolderId}
+                setFolderId={setOvFolderId}
+                mode={ovMode}
+                setMode={setOvMode}
+                items={ovItems}
+                sel={ovSel}
+                toggle={toggler(setOvSel)}
+              />
+              <PhraseSelect types={types} value={ptImagem} onChange={setPtImagem} required />
+            </TypeCard>
+
+            <TypeCard
+              icon="🎞️"
+              title="Clipe final"
+              desc="Um vídeo/foto extra no fim do vídeo, com o mesmo texto."
+              checked={typeFinal}
+              onToggle={setTypeFinal}
+            >
+              <FolderPicker
+                label="Clipes finais — vídeos ou fotos (sorteados por vídeo)"
+                folders={folders}
+                folderId={finFolderId}
+                setFolderId={setFinFolderId}
+                mode={finMode}
+                setMode={setFinMode}
+                items={finItems}
+                sel={finSel}
+                toggle={toggler(setFinSel)}
+              />
+              <PhraseSelect types={types} value={ptFinal} onChange={setPtFinal} />
+            </TypeCard>
+          </div>
+        </div>
 
         <label className="field">
           <span>Quantidade de vídeos: {quantidade}</span>
@@ -327,6 +725,7 @@ export default function Create() {
         <button className="btn primary big" onClick={onGenerate} disabled={!!running}>
           {running ? "Gerando…" : `🎬 Gerar ${quantidade} vídeos`}
         </button>
+      </div>
       </div>
 
       {job && (
@@ -357,7 +756,7 @@ export default function Create() {
               <video src={videoDownloadUrl(v.id)} controls />
               <div className="vmeta">
                 {v.texto && <div className="vtext">“{v.texto}”</div>}
-                {v.usou_flash && <span className="badge">flash</span>}
+                {v.tipo_video && <span className="badge">{TIPO_BADGE[v.tipo_video] ?? v.tipo_video}</span>}
                 {v.legenda && <div className="vlegenda">📝 {v.legenda}</div>}
                 <a href={videoDownloadUrl(v.id)} download className="btn sm">
                   Baixar .mp4

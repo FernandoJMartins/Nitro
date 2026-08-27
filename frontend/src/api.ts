@@ -95,7 +95,7 @@ export function deleteKey(id: number): Promise<void> {
 }
 
 // ---------- Mídias ----------
-export type MediaType = "video" | "photo" | "photo_hot" | "music";
+export type MediaType = "video" | "photo" | "photo_hot" | "overlay" | "final_clip" | "music";
 
 export interface Media {
   id: number;
@@ -145,6 +145,9 @@ export function listFolders(): Promise<Folder[]> {
 }
 export function createFolder(nome: string): Promise<Folder> {
   return apiSend(`/api/v1/folders`, "POST", { nome });
+}
+export function renameFolder(id: number, nome: string): Promise<Folder> {
+  return apiSend(`/api/v1/folders/${id}`, "PATCH", { nome });
 }
 export function deleteFolder(id: number): Promise<void> {
   return apiSend(`/api/v1/folders/${id}`, "DELETE");
@@ -226,17 +229,39 @@ export function generateVideo(body: GenerateBody): Promise<GenerateResult> {
   return apiSend(`${V1}/videos/generate`, "POST", body);
 }
 
+export type VideoType = "pause" | "imagem" | "final";
+
 export interface BulkBody {
   quantidade: number;
   base_media_ids: number[];
   music_media_ids: number[];
-  hot_media_ids: number[];
-  phrase_type_id: number | null;
+  phrase_type_id: number | null;                 // fallback global (vídeo simples)
+  text_types: Record<string, number | null>;     // tipo de frase por tipo de vídeo
   use_ia_texto: boolean;
   gerar_legenda_ia: boolean;
   duration_min: number;
   duration_max: number;
-  use_flash: boolean;
+  // tipos de vídeo (marque 1 ou vários — sorteado por vídeo)
+  video_types: VideoType[];
+  hot_media_ids: number[];
+  overlay_media_ids: number[];
+  final_media_ids: number[];
+  font_id: string | null;
+  // posições (centro do elemento) em fração da tela [0..1], vindas do preview 9:16
+  text_x: number;
+  text_y: number;
+  overlay_x: number;
+  overlay_y: number;
+}
+
+export interface Font {
+  id: string;
+  nome: string;
+  origem: "sistema" | "arquivo";
+  css: string; // família aproximada para renderizar no navegador
+}
+export function listFonts(): Promise<Font[]> {
+  return apiGetAsync(`${V1}/videos/fonts`);
 }
 export interface Job {
   id: number;
@@ -254,6 +279,7 @@ export interface GeneratedVideo {
   texto: string | null;
   legenda: string | null;
   usou_flash: boolean;
+  tipo_video: string | null;
   criado_em: string;
 }
 

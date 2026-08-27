@@ -261,10 +261,10 @@ export default function History() {
                       {v.texto && <div className="vtext">“{v.texto}”</div>}
                       <div className="meta">
                         {v.duracao}s
-                        {v.usou_flash && (
+                        {v.tipo_video && (
                           <>
                             {" "}
-                            · <span className="badge">flash</span>
+                            · <span className="badge">{({ pause: "pause", imagem: "imagem", final: "final" } as Record<string, string>)[v.tipo_video] ?? v.tipo_video}</span>
                           </>
                         )}
                         {v.job_id && <> · lote #{v.job_id}</>}
