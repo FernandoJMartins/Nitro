@@ -1,26 +1,16 @@
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: videos_em_massa
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    # expõe o Postgres do container na porta 5433 do seu Windows (pgAdmin/DBeaver).
-    # Usa 5433 para não conflitar com um Postgres local na 5432.
-    ports:
-      - "5433:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d videos_em_massa"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+# Este compose usa SEMPRE o mesmo banco dos demais: o seu Postgres local,
+# definido em LOCAL_DATABASE_URL no .env (host.docker.internal:5432).
+# Assim não existe mais um Postgres "separado" em container que ficava vazio.
+#
+# Pré-requisito (uma vez): o banco precisa existir no seu Postgres local:
+#   psql -U postgres -c "CREATE DATABASE videos_em_massa;"
 
+services:
   backend:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/videos_em_massa
+      # Único banco, o do .env — igual ao dev.yml e ao local-db.yml.
+      DATABASE_URL: ${LOCAL_DATABASE_URL}
       STORAGE_DIR: /app/storage
       CORS_ORIGINS: http://localhost:8080
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -28,9 +18,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
     volumes:
       - storage:/app/storage
-    depends_on:
-      db:
-        condition: service_healthy
+    # permite o container enxergar o Postgres da máquina host (Docker Desktop e Linux)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # opcional: expõe a API direto (Swagger em http://localhost:8000/docs)
     ports:
       - "8000:8000"
@@ -40,5 +30,4 @@ services:
 # estático desatualizado.
 
 volumes:
-  pgdata:
   storage:
