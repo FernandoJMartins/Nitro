@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { deleteVideos, getHistory, videoDownloadUrl, type GeneratedVideo } from "./api";
+import { deleteVideos, downloadVideoZip, getHistory, videoDownloadUrl, type GeneratedVideo } from "./api";
 
 type LoteGroup = { lote: number | null; videos: GeneratedVideo[] };
 type DayGroup = { dia: string; total: number; lotes: LoteGroup[] };
@@ -194,6 +194,9 @@ export default function History() {
           <button className="btn primary sm" onClick={baixarSelecionados}>
             ⬇️ Baixar selecionados ({selected.size})
           </button>
+          <button className="btn sm" onClick={() => downloadVideoZip([...selected])}>
+            🗜️ ZIP ({selected.size})
+          </button>
           <button className="btn sm" onClick={() => setSelected(new Set())}>
             Limpar
           </button>
@@ -214,6 +217,17 @@ export default function History() {
                 ⬇️ Baixar todos ({g.total})
               </button>
               <button
+                className="btn sm"
+                onClick={() =>
+                  downloadVideoZip(
+                    g.lotes.flatMap((l) => l.videos).map((v) => v.id),
+                    `videos_${g.dia.replace(/\//g, "-")}.zip`
+                  )
+                }
+              >
+                🗜️ ZIP ({g.total})
+              </button>
+              <button
                 className="btn danger sm"
                 onClick={() => apagarGrupo(`dia ${g.dia}`, g.lotes.flatMap((l) => l.videos))}
               >
@@ -232,6 +246,17 @@ export default function History() {
                 <div className="day-actions">
                   <button className="btn sm" onClick={() => baixarVideos(lote.videos)}>
                     ⬇️ Baixar lote ({lote.videos.length})
+                  </button>
+                  <button
+                    className="btn sm"
+                    onClick={() =>
+                      downloadVideoZip(
+                        lote.videos.map((v) => v.id),
+                        lote.lote != null ? `videos_lote_${lote.lote}.zip` : "videos.zip"
+                      )
+                    }
+                  >
+                    🗜️ ZIP ({lote.videos.length})
                   </button>
                   <button
                     className="btn danger sm"
@@ -264,7 +289,7 @@ export default function History() {
                         {v.tipo_video && (
                           <>
                             {" "}
-                            · <span className="badge">{({ pause: "pause", imagem: "imagem", final: "final" } as Record<string, string>)[v.tipo_video] ?? v.tipo_video}</span>
+                            · <span className="badge">{({ pause: "pause", imagem: "imagem", final: "final", texto: "texto" } as Record<string, string>)[v.tipo_video] ?? v.tipo_video}</span>
                           </>
                         )}
                         {v.job_id && <> · lote #{v.job_id}</>}

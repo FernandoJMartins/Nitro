@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   bulkGenerate,
   downloadUrl,
+  downloadVideoZip,
   getHistory,
   getJob,
   listFolders,
@@ -356,6 +357,7 @@ export default function Create() {
   const [typePause, setTypePause] = useState(false);
   const [typeImagem, setTypeImagem] = useState(false);
   const [typeFinal, setTypeFinal] = useState(false);
+  const [typeTexto, setTypeTexto] = useState(false);
 
   // pool do "pause" (fotos hot)
   const [hotFolderId, setHotFolderId] = useState<number | null>(null);
@@ -387,6 +389,7 @@ export default function Create() {
   const [ptPause, setPtPause] = useState<number | null>(null);
   const [ptImagem, setPtImagem] = useState<number | null>(null);
   const [ptFinal, setPtFinal] = useState<number | null>(null);
+  const [ptTexto, setPtTexto] = useState<number | null>(null);
   const [fontId, setFontId] = useState<string | null>(null);
   const [useIaTexto, setUseIaTexto] = useState(false);
   const [legendaIa, setLegendaIa] = useState(false);
@@ -467,20 +470,29 @@ export default function Create() {
     if (typeImagem && ovIds.length === 0) return setError('Imagem estática: escolha as imagens (pasta ou itens).');
     if (typeImagem && ptImagem == null) return setError('Imagem estática exige um tipo de frase (escolha os textos dentro do tipo).');
     if (typeFinal && finIds.length === 0) return setError('Clipe final: escolha os clipes (pasta ou itens).');
+    if (typeTexto && ptTexto == null) return setError('Apenas texto exige um tipo de frase (escolha os textos).');
 
     // tipo de frase por tipo de vídeo (só dos tipos habilitados)
     const text_types: Record<string, number | null> = {};
     if (typePause) text_types.pause = ptPause;
     if (typeImagem) text_types.imagem = ptImagem;
     if (typeFinal) text_types.final = ptFinal;
+    if (typeTexto) text_types.texto = ptTexto;
 
-    if (useIaTexto && !(typePause && ptPause) && !(typeImagem && ptImagem) && !(typeFinal && ptFinal))
+    if (
+      useIaTexto &&
+      !(typePause && ptPause) &&
+      !(typeImagem && ptImagem) &&
+      !(typeFinal && ptFinal) &&
+      !(typeTexto && ptTexto)
+    )
       return setError("Para a IA de texto, escolha um tipo de frase em algum tipo de vídeo.");
 
     const video_types = [
       ...(typePause ? (["pause"] as const) : []),
       ...(typeImagem ? (["imagem"] as const) : []),
       ...(typeFinal ? (["final"] as const) : []),
+      ...(typeTexto ? (["texto"] as const) : []),
     ];
 
     setResults([]);
@@ -551,7 +563,7 @@ export default function Create() {
     );
   }
 
-  const TIPO_BADGE: Record<string, string> = { pause: "⏸️ pause", imagem: "🏷️ imagem", final: "🎞️ final" };
+  const TIPO_BADGE: Record<string, string> = { pause: "⏸️ pause", imagem: "🏷️ imagem", final: "🎞️ final", texto: "🔤 texto" };
 
   const pickFirst = (mode: "whole" | "items", items: Media[], sel: Set<number>) =>
     mode === "whole" ? items[0] : items.find((m) => sel.has(m.id));
@@ -698,6 +710,16 @@ export default function Create() {
               />
               <PhraseSelect types={types} value={ptFinal} onChange={setPtFinal} />
             </TypeCard>
+
+            <TypeCard
+              icon="🔤"
+              title="Apenas texto"
+              desc="Só o vídeo base com o texto por cima — sem foto hot, imagem ou clipe. Exige textos."
+              checked={typeTexto}
+              onToggle={setTypeTexto}
+            >
+              <PhraseSelect types={types} value={ptTexto} onChange={setPtTexto} required />
+            </TypeCard>
           </div>
         </div>
 
@@ -745,6 +767,9 @@ export default function Create() {
           <strong>{results.length} vídeo(s) gerado(s)</strong>
           <button className="btn primary" onClick={baixarTodos}>
             ⬇️ Baixar todos ({results.length})
+          </button>
+          <button className="btn" onClick={() => downloadVideoZip(results.map((v) => v.id))}>
+            🗜️ ZIP ({results.length})
           </button>
         </div>
       )}

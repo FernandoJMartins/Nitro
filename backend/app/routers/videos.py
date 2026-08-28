@@ -6,10 +6,12 @@ flash hot de 1 frame.
 """
 from __future__ import annotations
 
+import io
 import uuid
+import zipfile
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -145,7 +147,7 @@ def generate_bulk(
     tipos = list(dict.fromkeys(body.video_types))  # remove duplicatas, mantém ordem
     if body.use_flash and "pause" not in tipos:
         tipos.append("pause")
-    validos = {"pause", "imagem", "final"}
+    validos = {"pause", "imagem", "final", "texto"}
     invalidos = [t for t in tipos if t not in validos]
     if invalidos:
         raise HTTPException(status_code=400, detail=f"Tipos de vídeo inválidos: {invalidos}")
@@ -170,6 +172,8 @@ def generate_bulk(
             raise HTTPException(status_code=400, detail='O tipo "imagem estática" exige um tipo de frase (textos)')
     if "final" in tipos and not body.final_media_ids:
         raise HTTPException(status_code=400, detail='O tipo "clipe final" exige ao menos um clipe')
+    if "texto" in tipos and _pt_do_tipo("texto") is None:
+        raise HTTPException(status_code=400, detail='O tipo "apenas texto" exige um tipo de frase (textos)')
 
     def _clamp01(v: float) -> float:
         return max(0.0, min(1.0, v))
@@ -258,6 +262,53 @@ def delete_history_batch(body: DeleteBatch, db: Session = Depends(get_db), user:
             removidos += 1
     db.commit()
     return {"removidos": removidos}
+
+
+@router.get("/history/zip")
+def download_history_zip(
+    ids: str = Query(..., description="ids separados por vírgula, ex.: 1,2,3"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_user_for_file),
+):
+    """Empacota vários vídeos gerados em um único .zip para download.
+
+    GET (com ?token= na URL) para que o download possa ser disparado por um link
+    direto <a download>, igual aos downloads individuais — evita o bloqueio de
+    download programático via fetch/blob em alguns navegadores.
+    """
+    try:
+        id_list = [int(x) for x in ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids inválidos")
+
+    videos = []
+    for vid in id_list:
+        gv = db.get(GeneratedVideo, vid)
+        if gv and gv.user_id == user.id:
+            path = settings.storage_path / gv.caminho
+            if path.exists():
+                videos.append((gv, path))
+    if not videos:
+        raise HTTPException(status_code=404, detail="Nenhum vídeo encontrado")
+
+    buf = io.BytesIO()
+    usados: set[str] = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for gv, path in videos:
+            base = f"video_{gv.id}.mp4"
+            nome = base
+            n = 1
+            while nome in usados:  # evita colisão de nomes iguais no zip
+                nome = f"video_{gv.id}_{n}.mp4"
+                n += 1
+            usados.add(nome)
+            zf.write(path, arcname=nome)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="videos.zip"'},
+    )
 
 
 @router.get("/{video_id}/download")

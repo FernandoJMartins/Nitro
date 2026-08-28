@@ -239,7 +239,7 @@ export function generateVideo(body: GenerateBody): Promise<GenerateResult> {
   return apiSend(`${V1}/videos/generate`, "POST", body);
 }
 
-export type VideoType = "pause" | "imagem" | "final";
+export type VideoType = "pause" | "imagem" | "final" | "texto";
 
 export interface BulkBody {
   quantidade: number;
@@ -307,6 +307,21 @@ export function videoDownloadUrl(id: number): string {
 }
 export function deleteVideos(ids: number[]): Promise<{ removidos: number }> {
   return apiSend(`${V1}/videos/history/delete`, "POST", { ids });
+}
+
+export function videoZipUrl(ids: number[]): string {
+  return `${V1}/videos/history/zip?ids=${ids.join(",")}&token=${getToken() ?? ""}`;
+}
+
+// Dispara o download do ZIP com um link direto (GET), no mesmo gesto do clique —
+// assim o navegador não bloqueia como acontece com download via fetch/blob.
+export function downloadVideoZip(ids: number[], nome = "videos.zip"): void {
+  const a = document.createElement("a");
+  a.href = videoZipUrl(ids);
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 // ---------- Upscaling (utilitário) ----------
