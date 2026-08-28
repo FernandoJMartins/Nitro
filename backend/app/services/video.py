@@ -17,11 +17,14 @@ sistema) e qualquer .ttf/.otf solto em ``STORAGE_DIR/fonts`` também vira opçã
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import textwrap
 import uuid
 from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
 
 from ..config import settings
 
@@ -49,6 +52,24 @@ _FONT_CANDIDATES = [
     Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+]
+
+# Fonte de emoji COLORIDO (para o texto renderizado no vídeo não sair como quadrado).
+# Prioridade: emoji da Apple (iPhone) que o usuário soltar em storage/fonts — a fonte
+# da Apple é proprietária e NÃO pode ser empacotada, então precisa ser fornecida.
+# Depois cai no Noto Color Emoji (Linux/Docker) ou Segoe UI Emoji (Windows).
+# Nomes aceitos para o arquivo da Apple em storage/fonts (qualquer um serve):
+_APPLE_EMOJI_NAMES = [
+    "Apple Color Emoji.ttc",
+    "AppleColorEmoji.ttc",
+    "Apple Color Emoji.ttf",
+    "AppleColorEmoji.ttf",
+    "apple-emoji.ttf",
+    "apple-emoji.ttc",
+]
+_EMOJI_FONT_CANDIDATES = [
+    Path("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"),
+    Path("C:/Windows/Fonts/seguiemj.ttf"),
 ]
 
 # ---- Fontes curadas (id -> nome + caminhos candidatos Windows/Linux) ----
@@ -197,6 +218,123 @@ def wrap_text(text: str, width: int = 25) -> str:
     return "\n".join(linhas)
 
 
+# ===================== Renderização do texto (com emoji colorido) =====================
+# O drawtext do ffmpeg usa uma fonte só e emoji vira "quadrado" (glifo ausente).
+# Então renderizamos cada linha com o Pillow, combinando a fonte do texto com uma
+# fonte de emoji colorido, gerando um PNG transparente sobreposto no vídeo.
+
+FONTSIZE = 64
+STROKE = 3
+LINE_H = 90  # espaçamento vertical entre linhas
+
+# Um "pedaço" de emoji: caracteres de emoji, seletores de variação, ZWJ e tons de pele
+# juntos (para sequências como 👨‍👩‍👧 ou 👍🏽 ficarem no mesmo grupo).
+_EMOJI_RE = re.compile(
+    "(["
+    "\U0001F000-\U0001FAFF"
+    "\U00002600-\U000027BF"
+    "\U00002B00-\U00002BFF"
+    "\U0001F1E6-\U0001F1FF"
+    "\U0000FE00-\U0000FE0F"
+    "\U0000200D"
+    "]+)"
+)
+
+_emoji_font_cache: tuple[str, int] | None = None
+_emoji_font_resolved = False
+
+
+def _emoji_font() -> tuple[str, int] | None:
+    """Acha a fonte de emoji colorido e um tamanho de strike que o Pillow aceite.
+
+    A fonte da Apple (iPhone) tem prioridade se o usuário soltar o arquivo em
+    ``storage/fonts`` (ela é proprietária e não vem empacotada). Emoji da Apple usa
+    strikes maiores (160), por isso os tamanhos testados incluem esses valores.
+    """
+    global _emoji_font_cache, _emoji_font_resolved
+    if _emoji_font_resolved:
+        return _emoji_font_cache
+    _emoji_font_resolved = True
+    # 1º: Apple emoji fornecido pelo usuário; 2º: fontes do sistema.
+    candidates = [_fonts_dir() / name for name in _APPLE_EMOJI_NAMES] + _EMOJI_FONT_CANDIDATES
+    for cand in candidates:
+        if not cand.exists():
+            continue
+        for size in (160, 137, 128, 109, 96, 64, 20):
+            try:
+                ImageFont.truetype(cand.as_posix(), size)
+                _emoji_font_cache = (cand.as_posix(), size)
+                return _emoji_font_cache
+            except OSError:
+                continue
+    return None
+
+
+def _render_emoji_seg(seg: str, target_h: int) -> Image.Image | None:
+    info = _emoji_font()
+    if info is None:
+        return None
+    path, ns = info
+    try:
+        font = ImageFont.truetype(path, ns)
+        canvas = Image.new("RGBA", (ns * (len(seg) + 2), int(ns * 1.6)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(canvas)
+        d.text((0, 0), seg, font=font, embedded_color=True)
+        bbox = canvas.getbbox()
+        if not bbox:
+            return None
+        crop = canvas.crop(bbox)
+        scale = target_h / crop.height
+        return crop.resize((max(1, round(crop.width * scale)), target_h), Image.LANCZOS)
+    except Exception:
+        return None
+
+
+def _render_text_seg(seg: str, font: ImageFont.FreeTypeFont) -> Image.Image:
+    tmp = Image.new("RGBA", (1, 1))
+    d = ImageDraw.Draw(tmp)
+    x0, y0, x1, y1 = d.textbbox((0, 0), seg, font=font, stroke_width=STROKE)
+    w, h = max(1, x1 - x0), max(1, y1 - y0)
+    img = Image.new("RGBA", (w + 2 * STROKE, h + 2 * STROKE), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text(
+        (STROKE - x0, STROKE - y0), seg, font=font,
+        fill="white", stroke_width=STROKE, stroke_fill=(0, 0, 0, 230),
+    )
+    return img
+
+
+def _render_line_png(line: str, text_font_path: str, out_dir: Path) -> tuple[Path, int, int] | None:
+    """Renderiza uma linha (texto + emoji) num PNG transparente. Devolve (caminho, w, h)."""
+    try:
+        tfont = ImageFont.truetype(text_font_path, FONTSIZE)
+    except OSError:
+        return None
+    segs: list[Image.Image] = []
+    for chunk in _EMOJI_RE.split(line):
+        if not chunk:
+            continue
+        if _EMOJI_RE.fullmatch(chunk):
+            em = _render_emoji_seg(chunk, FONTSIZE)
+            if em is not None:
+                segs.append(em)
+            else:  # sem fonte de emoji: desenha como texto normal mesmo (fallback)
+                segs.append(_render_text_seg(chunk, tfont))
+        else:
+            segs.append(_render_text_seg(chunk, tfont))
+    if not segs:
+        return None
+    total_w = sum(s.width for s in segs)
+    max_h = max(s.height for s in segs)
+    canvas = Image.new("RGBA", (total_w, max_h), (0, 0, 0, 0))
+    x = 0
+    for s in segs:
+        canvas.alpha_composite(s, (x, (max_h - s.height) // 2))
+        x += s.width
+    png = out_dir / f".line_{uuid.uuid4().hex}.png"
+    canvas.save(png)
+    return png, total_w, max_h
+
+
 def _draw_text_chain(
     parts: list[str],
     cur: str,
@@ -212,28 +350,39 @@ def _draw_text_chain(
     text_y: float = 0.72,
     prefix: str = "txt",
 ) -> str:
-    """Desenha o texto linha a linha (cada linha é um drawtext) e devolve o label final.
+    """Desenha o texto linha a linha e devolve o label final do vídeo.
 
-    O bloco de texto é centrado no ponto (text_x, text_y) — frações da tela [0..1]
-    definidas no preview. Desenhar linha a linha evita bugs do drawtext com '\\n'.
+    Cada linha é renderizada com Pillow (fonte do texto + fonte de emoji colorido) num
+    PNG transparente, sobreposto via ``movie``. O bloco é centrado no ponto
+    (text_x, text_y) — frações da tela [0..1] definidas no preview. Se o Pillow falhar
+    numa linha, cai no ``drawtext`` do ffmpeg (sem emoji, mas sem quebrar).
     """
     if not text:
         return cur
+    raw_font = font.replace("\\:", ":")  # o `font` chega escapado p/ o ffmpeg
     lines = [ln for ln in wrap_text(text, wrap_width).split("\n") if ln.strip()]
-    line_h = 90  # altura de cada linha (fontsize 64 + espaçamento)
     cx = int(text_x * width)  # centro horizontal em px
-    y0 = height * text_y - (len(lines) * line_h) / 2  # bloco centrado no ponto escolhido
+    y0 = height * text_y - (len(lines) * LINE_H) / 2  # bloco centrado no ponto escolhido
     for i, line in enumerate(lines):
-        lf = out_dir / f".txt_{uuid.uuid4().hex}.txt"
-        lf.write_bytes(line.encode("utf-8"))
-        temp_files.append(lf)
-        y = int(y0 + i * line_h)
-        parts.append(
-            f"[{cur}]drawtext=fontfile='{font}':textfile='{_esc_filter_path(lf.as_posix())}':"
-            f"fontcolor=white:fontsize=64:borderw=3:bordercolor=black@0.9:"
-            f"x={cx}-text_w/2:y={y}[{prefix}{i}]"
-        )
-        cur = f"{prefix}{i}"
+        lbl = f"{prefix}{i}"
+        rendered = _render_line_png(line, raw_font, out_dir)
+        if rendered is not None:
+            png, _pw, ph = rendered
+            temp_files.append(png)
+            y = int(y0 + i * LINE_H + (LINE_H - ph) / 2)
+            parts.append(f"movie='{_esc_filter_path(png.as_posix())}'[{lbl}src]")
+            parts.append(f"[{cur}][{lbl}src]overlay=x={cx}-w/2:y={y}[{lbl}]")
+        else:  # fallback: drawtext (sem emoji)
+            lf = out_dir / f".txt_{uuid.uuid4().hex}.txt"
+            lf.write_bytes(line.encode("utf-8"))
+            temp_files.append(lf)
+            y = int(y0 + i * LINE_H)
+            parts.append(
+                f"[{cur}]drawtext=fontfile='{font}':textfile='{_esc_filter_path(lf.as_posix())}':"
+                f"fontcolor=white:fontsize={FONTSIZE}:borderw={STROKE}:bordercolor=black@0.9:"
+                f"x={cx}-text_w/2:y={y}[{lbl}]"
+            )
+        cur = lbl
     return cur
 
 

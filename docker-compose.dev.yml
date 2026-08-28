@@ -34,6 +34,8 @@ services:
       # Código montado ao vivo -> uvicorn --reload enxerga as mudanças.
       - ./backend/app:/app/app
       - storage:/app/storage
+      # fontes locais (ex.: emoji da Apple) — largue o arquivo em ./fonts.
+      - ./fonts:/app/storage/fonts
     # permite o container enxergar o Postgres da sua máquina (host.docker.internal).
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -1,0 +1,6 @@
+# Fontes locais (bind mount para o container).
+# A fonte de emoji da Apple é proprietaria: NAO commitar.
+*.ttc
+*.ttf
+*.otf
+!.gitkeep

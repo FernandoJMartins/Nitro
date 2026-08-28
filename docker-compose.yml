@@ -18,6 +18,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
     volumes:
       - storage:/app/storage
+      # fontes locais (ex.: emoji da Apple) — largue o .ttf/.ttc/.otf em ./fonts
+      # e ele aparece dentro do container. Sobrevive a rebuild; não some com o volume.
+      - ./fonts:/app/storage/fonts
     # permite o container enxergar o Postgres da máquina host (Docker Desktop e Linux)
     extra_hosts:
       - "host.docker.internal:host-gateway"
