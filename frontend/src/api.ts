@@ -262,6 +262,7 @@ export interface BulkBody {
   text_y: number;
   overlay_x: number;
   overlay_y: number;
+  overlay_scale: number; // multiplicador de tamanho da imagem estática
 }
 
 export interface Font {

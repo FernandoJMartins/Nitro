@@ -224,6 +224,7 @@ def generate_bulk(
         text_y=_clamp01(body.text_y),
         overlay_x=_clamp01(body.overlay_x),
         overlay_y=_clamp01(body.overlay_y),
+        overlay_scale=max(0.3, min(2.5, body.overlay_scale)),
     )
     background.add_task(bulk.run_bulk_job, job.id, cfg)
     return job

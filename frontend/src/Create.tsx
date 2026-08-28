@@ -184,6 +184,7 @@ function PreviewCanvas({
   overlayMedia,
   ovPos,
   setOvPos,
+  ovScale,
 }: {
   bg: Media | undefined;
   sampleText: string;
@@ -195,6 +196,7 @@ function PreviewCanvas({
   overlayMedia: Media | undefined;
   ovPos: Pos;
   setOvPos: (p: Pos) => void;
+  ovScale: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const textElRef = useRef<HTMLDivElement>(null);
@@ -208,10 +210,10 @@ function PreviewCanvas({
   // largura da imagem (fração da tela) reproduzindo o backend: cabe na caixa
   // 0.85 x 0.45 preservando o aspecto, ampliando no máximo OVERLAY_SCALE do nativo.
   const BOX_W = 0.85, BOX_H = 0.45, VW = 1080, VH = 1920, OVERLAY_SCALE = 1.75;
-  let ovW = 0.55; // fallback enquanto a imagem carrega
+  let ovW = 0.55 * ovScale; // fallback enquanto a imagem carrega
   if (ovNat && ovNat.w > 0 && ovNat.h > 0) {
     const nfw = ovNat.w / VW, nfh = ovNat.h / VH;
-    const scale = Math.min(BOX_W / nfw, BOX_H / nfh, OVERLAY_SCALE);
+    const scale = Math.min(BOX_W / nfw, BOX_H / nfh, OVERLAY_SCALE) * ovScale;
     ovW = nfw * scale;
   }
 
@@ -230,7 +232,7 @@ function PreviewCanvas({
     const fixed = avoidOverlap(textPos, sizeFrac(textElRef.current), ovPos, sizeFrac(ovElRef.current));
     if (fixed.x !== textPos.x || fixed.y !== textPos.y) setTextPos(fixed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [textPos, ovPos, ovNat, hasText, showOverlay]);
+  }, [textPos, ovPos, ovNat, hasText, showOverlay, ovScale]);
 
   useEffect(() => {
     function move(e: PointerEvent) {
@@ -374,6 +376,7 @@ export default function Create() {
   // posições (centro, fração 0..1) definidas arrastando no preview 9:16
   const [textPos, setTextPos] = useState({ x: 0.5, y: 0.72 });
   const [ovPos, setOvPos] = useState({ x: 0.5, y: 0.22 });
+  const [ovScale, setOvScale] = useState(1); // tamanho da imagem estática (multiplicador)
 
   // pool do "clipe final"
   const [finFolderId, setFinFolderId] = useState<number | null>(null);
@@ -516,6 +519,7 @@ export default function Create() {
         text_y: textPos.y,
         overlay_x: ovPos.x,
         overlay_y: ovPos.y,
+        overlay_scale: ovScale,
       });
       setJob(j);
       startPolling(j.id);
@@ -582,13 +586,19 @@ export default function Create() {
           bg={bgMedia}
           sampleText={sampleText}
           fontCss={selectedFontCss}
-          hasText={(typePause && ptPause != null) || (typeImagem && ptImagem != null) || (typeFinal && ptFinal != null)}
+          hasText={
+            (typePause && ptPause != null) ||
+            (typeImagem && ptImagem != null) ||
+            (typeFinal && ptFinal != null) ||
+            (typeTexto && ptTexto != null)
+          }
           textPos={textPos}
           setTextPos={setTextPos}
           showOverlay={typeImagem}
           overlayMedia={ovMedia}
           ovPos={ovPos}
           setOvPos={setOvPos}
+          ovScale={ovScale}
         />
 
       <div className="form create-form-col">
@@ -676,6 +686,17 @@ export default function Create() {
               onToggle={setTypeImagem}
             >
               <div className="hint">👉 Arraste a imagem no preview ao lado para escolher onde ela aparece.</div>
+              <label className="field">
+                <span>Tamanho da imagem: {Math.round(ovScale * 100)}%</span>
+                <input
+                  type="range"
+                  min={0.3}
+                  max={2.5}
+                  step={0.05}
+                  value={ovScale}
+                  onChange={(e) => setOvScale(Number(e.target.value))}
+                />
+              </label>
               <FolderPicker
                 label="Imagens estáticas (sorteadas por vídeo)"
                 folders={folders}

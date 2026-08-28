@@ -163,6 +163,7 @@ class BulkRequest(BaseModel):
     text_y: float = 0.72
     overlay_x: float = 0.5
     overlay_y: float = 0.22
+    overlay_scale: float = 1.0  # multiplicador de tamanho da imagem estática
 
     # compatibilidade: versão antiga mandava só use_flash (equivale a video_types=["pause"])
     use_flash: bool = False

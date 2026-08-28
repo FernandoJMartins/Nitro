@@ -262,6 +262,7 @@ def build_video(
     overlay_path: Path | None = None,
     overlay_x: float = 0.5,
     overlay_y: float = 0.22,
+    overlay_scale: float = 1.0,
     # tipo "final" (clipe final concatenado)
     final_path: Path | None = None,
     final_duration: float = FINAL_PHOTO_SECONDS,
@@ -392,10 +393,12 @@ def build_video(
     # Cabe numa caixa (0.85 largura x 0.45 altura) preservando o aspecto. Amplia no
     # máximo OVERLAY_SCALE vezes o nativo (leve boost p/ prints pequenos), sem estourar a caixa.
     if ov_idx is not None:
-        ow = int(width * 0.85)
-        oh = int(height * 0.45)
+        s = max(0.3, min(2.5, overlay_scale))  # multiplicador de tamanho escolhido pelo usuário
+        ow = int(width * 0.85 * s)
+        oh = int(height * 0.45 * s)
+        cap = OVERLAY_SCALE * s
         parts.append(
-            f"[{ov_idx}:v]scale=w='min(iw*{OVERLAY_SCALE},{ow})':h='min(ih*{OVERLAY_SCALE},{oh})':"
+            f"[{ov_idx}:v]scale=w='min(iw*{cap},{ow})':h='min(ih*{cap},{oh})':"
             f"force_original_aspect_ratio=decrease[ovs]"
         )
         parts.append(

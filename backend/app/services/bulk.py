@@ -50,6 +50,7 @@ class BulkConfig:
     text_y: float
     overlay_x: float
     overlay_y: float
+    overlay_scale: float = 1.0
 
 
 def _eff_phrase_type(cfg: BulkConfig, modo: str | None) -> int | None:
@@ -143,6 +144,7 @@ def run_bulk_job(job_id: int, cfg: BulkConfig) -> None:
                     kwargs["overlay_path"] = _rand_path(cfg.overlay_media_ids)
                     kwargs["overlay_x"] = cfg.overlay_x
                     kwargs["overlay_y"] = cfg.overlay_y
+                    kwargs["overlay_scale"] = cfg.overlay_scale
                 elif modo == "final":
                     fp = _rand_path(cfg.final_media_ids)
                     kwargs["final_path"] = fp
