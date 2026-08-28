@@ -12,6 +12,7 @@
 services:
   backend:
     build: ./backend
+    restart: unless-stopped
     environment:
       # URL do SEU Postgres local (definida no .env). host.docker.internal = sua máquina.
       DATABASE_URL: ${LOCAL_DATABASE_URL}

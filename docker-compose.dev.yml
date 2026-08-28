@@ -17,6 +17,7 @@
 services:
   backend:
     build: ./backend
+    restart: unless-stopped
     # --reload reinicia o uvicorn a cada mudança no código.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
     environment:
@@ -44,6 +45,7 @@ services:
 
   frontend:
     image: node:20-alpine
+    restart: unless-stopped
     working_dir: /app
     # Instala deps (se preciso) e sobe o Vite com HMR.
     command: sh -c "npm install && npm run dev -- --host"

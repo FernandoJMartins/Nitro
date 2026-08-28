@@ -8,6 +8,9 @@
 services:
   backend:
     build: ./backend
+    # volta a subir sozinho no boot do servidor / se crashar (mas fica parado se
+    # você parar de propósito com `docker compose stop`).
+    restart: unless-stopped
     environment:
       # Único banco, o do .env — igual ao dev.yml e ao local-db.yml.
       DATABASE_URL: ${LOCAL_DATABASE_URL}
