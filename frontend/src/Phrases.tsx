@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ConfirmDialog, Modal, NameDialog } from "./Dialog";
 import {
   bulkSavePhrases,
   createPhrase,
@@ -14,11 +15,61 @@ import {
   type PhraseType,
 } from "./api";
 
+/* Modal que mostra o código de compartilhamento com botão de copiar. */
+function ShareDialog({
+  nome,
+  slug,
+  total,
+  onClose,
+}: {
+  nome: string;
+  slug: string;
+  total: number;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  async function copiar() {
+    try {
+      await navigator.clipboard?.writeText(slug);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
+  return (
+    <Modal title={`Compartilhar “${nome}”`} onClose={onClose}>
+      <p className="modal-text">
+        Envie este código para outra pessoa importar as {total} frase(s) deste tipo:
+      </p>
+      <div className="share-code">
+        <code>{slug}</code>
+        <button className="btn sm primary" onClick={copiar}>
+          {copied ? "✓ Copiado" : "Copiar"}
+        </button>
+      </div>
+      <div className="modal-actions">
+        <button type="button" className="btn ghost" onClick={onClose}>
+          Fechar
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+type Dialog =
+  | { kind: "novo" }
+  | { kind: "importar" }
+  | { kind: "apagar"; tipo: PhraseType }
+  | { kind: "share"; nome: string; slug: string; total: number }
+  | null;
+
 export default function Phrases() {
   const [types, setTypes] = useState<PhraseType[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [phrases, setPhrases] = useState<Phrase[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<Dialog>(null);
 
   const [newPhrase, setNewPhrase] = useState("");
 
@@ -64,12 +115,11 @@ export default function Phrases() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
-  async function novoTipo() {
-    const nome = window.prompt("Nome do novo tipo de frase (ex.: FLIRT, SARCASMIC):");
-    if (!nome?.trim()) return;
+  async function novoTipo(nome: string) {
     setError(null);
     try {
-      const t = await createPhraseType(nome.trim().toUpperCase());
+      const t = await createPhraseType(nome.toUpperCase());
+      setDialog(null);
       await loadTypes(t.id);
     } catch (e) {
       setError(String(e));
@@ -77,34 +127,32 @@ export default function Phrases() {
   }
 
   async function removerTipo(t: PhraseType) {
-    if (!window.confirm(`Excluir o tipo "${t.nome}" e todas as suas frases?`)) return;
-    await deletePhraseType(t.id);
-    setSelected(null);
-    setTypes([]);
-    await loadTypes();
+    try {
+      await deletePhraseType(t.id);
+      setDialog(null);
+      setSelected(null);
+      setTypes([]);
+      await loadTypes();
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   async function compartilhar(t: PhraseType) {
     setError(null);
     try {
       const res = await sharePhraseType(t.id);
-      await navigator.clipboard?.writeText(res.slug).catch(() => {});
-      window.prompt(
-        `Código para compartilhar o tipo "${t.nome}" (${res.total_frases} frase(s)).\n` +
-          `Copiado! Envie este código para o outro usuário importar:`,
-        res.slug
-      );
+      setDialog({ kind: "share", nome: t.nome, slug: res.slug, total: res.total_frases });
     } catch (e) {
       setError(String(e));
     }
   }
 
-  async function importar() {
-    const slug = window.prompt("Cole o código do tipo de frase compartilhado:");
-    if (!slug?.trim()) return;
+  async function importar(slug: string) {
     setError(null);
     try {
-      const t = await importPhraseType(slug.trim());
+      const t = await importPhraseType(slug);
+      setDialog(null);
       await loadTypes(t.id);
     } catch (e) {
       setError(String(e));
@@ -169,25 +217,37 @@ export default function Phrases() {
         Frases que aparecem <strong>dentro</strong> do vídeo. Escolha um tipo para gerenciar suas frases.
       </p>
 
-      {/* tipos como chips + botão de criar */}
-      <div className="folderbar">
+      {/* tipos como chips + ações no hover */}
+      <div className="typebar">
         {types.map((t) => (
-          <span key={t.id} className={t.id === selected ? "fchip active" : "fchip"}>
-            <button className="fchip-name" onClick={() => setSelected(t.id)}>
+          <span key={t.id} className={t.id === selected ? "tchip active" : "tchip"}>
+            <button className="tchip-name" onClick={() => setSelected(t.id)}>
               {t.nome}
             </button>
-            <button className="fchip-share" title="Compartilhar / exportar este tipo" onClick={() => compartilhar(t)}>
-              🔗 Compartilhar
-            </button>
-            <button className="fchip-x" title="Excluir tipo" onClick={() => removerTipo(t)}>
-              ×
-            </button>
+            <span className="tchip-acts">
+              <button
+                className="tchip-act"
+                title="Compartilhar / exportar este tipo"
+                aria-label={`Compartilhar ${t.nome}`}
+                onClick={() => compartilhar(t)}
+              >
+                🔗
+              </button>
+              <button
+                className="tchip-act danger"
+                title="Excluir tipo"
+                aria-label={`Excluir ${t.nome}`}
+                onClick={() => setDialog({ kind: "apagar", tipo: t })}
+              >
+                🗑️
+              </button>
+            </span>
           </span>
         ))}
-        <button className="fchip new" onClick={novoTipo}>
-          + Novo tipo
+        <button className="tchip new" onClick={() => setDialog({ kind: "novo" })}>
+          ＋ Novo tipo
         </button>
-        <button className="fchip new" onClick={importar}>
+        <button className="tchip new" onClick={() => setDialog({ kind: "importar" })}>
           ⬇ Importar
         </button>
       </div>
@@ -195,34 +255,43 @@ export default function Phrases() {
       {error && <div className="error">⚠️ {error}</div>}
 
       {types.length === 0 && (
-        <div className="empty">Crie um tipo de frase para começar (botão “+ Novo tipo”).</div>
+        <div className="empty-state">
+          <div className="empty-state-icon">💬</div>
+          <p>Nenhum tipo de frase ainda.</p>
+          <button className="btn primary" onClick={() => setDialog({ kind: "novo" })}>
+            ＋ Criar primeiro tipo
+          </button>
+        </div>
       )}
 
       {selected != null && tipoAtual && (
         <>
           {/* adicionar frase manual */}
-          <div className="uploader" style={{ flexDirection: "row", alignItems: "center" }}>
+          <div className="addbar">
             <input
+              className="addbar-input"
               placeholder={`Escreva uma frase de ${tipoAtual.nome} e tecle Enter…`}
               value={newPhrase}
               onChange={(e) => setNewPhrase(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onAddPhrase()}
-              style={{ flex: 1 }}
             />
-            <button className="btn" onClick={onAddPhrase}>
-              + Frase
+            <button className="btn primary" onClick={onAddPhrase} disabled={!newPhrase.trim()}>
+              ＋ Frase
             </button>
           </div>
 
           {/* IA recolhida por padrão */}
           {!aiOpen ? (
-            <button className="btn" style={{ marginBottom: 16 }} onClick={() => setAiOpen(true)}>
+            <button className="btn ai-toggle" onClick={() => setAiOpen(true)}>
               🤖 Gerar frases com IA (opcional)
             </button>
           ) : (
             <div className="ai-box">
               <div className="ai-head">
-                🤖 Gerar com IA <button className="fchip-x" onClick={() => setAiOpen(false)}>×</button>
+                <span>🤖 Gerar com IA</span>
+                <button className="modal-close" aria-label="Fechar" onClick={() => setAiOpen(false)}>
+                  ×
+                </button>
               </div>
               <div className="ai-controls">
                 <label>
@@ -290,6 +359,52 @@ export default function Phrases() {
             {phrases.length === 0 && <li className="empty">Nenhuma frase neste tipo ainda.</li>}
           </ul>
         </>
+      )}
+
+      {/* ---------- Modais ---------- */}
+      {dialog?.kind === "novo" && (
+        <NameDialog
+          title="Novo tipo de frase"
+          initial=""
+          confirmLabel="Criar tipo"
+          placeholder="Ex.: FLIRT, SARCASMIC…"
+          taken={types.map((t) => t.nome)}
+          transform={(s) => s.toUpperCase()}
+          onConfirm={novoTipo}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "importar" && (
+        <NameDialog
+          title="Importar tipo de frase"
+          initial=""
+          confirmLabel="Importar"
+          placeholder="Cole o código compartilhado…"
+          onConfirm={importar}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "apagar" && (
+        <ConfirmDialog
+          title="Excluir tipo"
+          confirmLabel="Excluir tipo"
+          message={
+            <>
+              Excluir o tipo <strong>{dialog.tipo.nome}</strong> e <strong>todas</strong> as suas
+              frases? Esta ação não pode ser desfeita.
+            </>
+          }
+          onConfirm={() => removerTipo(dialog.tipo)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "share" && (
+        <ShareDialog
+          nome={dialog.nome}
+          slug={dialog.slug}
+          total={dialog.total}
+          onClose={() => setDialog(null)}
+        />
       )}
     </>
   );

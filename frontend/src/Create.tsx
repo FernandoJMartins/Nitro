@@ -38,6 +38,7 @@ function FolderPicker({
   items,
   sel,
   toggle,
+  setSel,
 }: {
   label: string;
   folders: Folder[];
@@ -48,12 +49,20 @@ function FolderPicker({
   items: Media[];
   sel: Set<number>;
   toggle: (id: number) => void;
+  setSel: React.Dispatch<React.SetStateAction<Set<number>>>;
 }) {
+  const selCount = items.filter((m) => sel.has(m.id)).length;
+  const chosen = folders.find((f) => f.id === folderId);
+
   return (
-    <div className="field">
-      <span>{label}</span>
-      <select value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : null)}>
-        <option value="">— escolha uma pasta —</option>
+    <div className="picker">
+      <div className="picker-label">{label}</div>
+      <select
+        className="picker-select"
+        value={folderId ?? ""}
+        onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">📁 Escolha uma pasta…</option>
         {folders.map((f) => (
           <option key={f.id} value={f.id}>
             📁 {f.nome}
@@ -63,26 +72,68 @@ function FolderPicker({
 
       {folderId != null && (
         <>
-          <div className="mode-row">
-            <label className={mode === "whole" ? "moderb active" : "moderb"}>
-              <input type="radio" checked={mode === "whole"} onChange={() => setMode("whole")} /> Pasta inteira ({items.length})
-            </label>
-            <label className={mode === "items" ? "moderb active" : "moderb"}>
-              <input type="radio" checked={mode === "items"} onChange={() => setMode("items")} /> Escolher itens
-            </label>
+          {/* controle segmentado: usar tudo x escolher a dedo */}
+          <div className="seg">
+            <button
+              type="button"
+              className={mode === "whole" ? "seg-btn active" : "seg-btn"}
+              onClick={() => setMode("whole")}
+            >
+              Usar pasta inteira
+              <span className="seg-count">{items.length}</span>
+            </button>
+            <button
+              type="button"
+              className={mode === "items" ? "seg-btn active" : "seg-btn"}
+              onClick={() => setMode("items")}
+            >
+              Escolher itens
+              {mode === "items" && selCount > 0 && <span className="seg-count">{selCount}</span>}
+            </button>
           </div>
 
-          {mode === "items" && (
-            <div className="checklist items-grid">
-              {items.map((m) => (
-                <label key={m.id} className={sel.has(m.id) ? "chk picked" : "chk"}>
-                  <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggle(m.id)} />
-                  <ItemThumb m={m} />
-                  <span className="chk-name">{m.nome_original}</span>
-                </label>
-              ))}
-              {items.length === 0 && <div className="hint">Pasta vazia deste tipo.</div>}
+          {mode === "whole" && (
+            <div className="picker-note">
+              {items.length > 0
+                ? `Todos os ${items.length} itens de ${chosen?.nome ?? "esta pasta"} serão sorteados por vídeo.`
+                : "Esta pasta está vazia deste tipo. Envie mídias em Mídias → Pastas."}
             </div>
+          )}
+
+          {mode === "items" && (
+            <>
+              {items.length > 0 && (
+                <div className="picker-toolbar">
+                  <span>
+                    {selCount} de {items.length} selecionada(s)
+                  </span>
+                  <div className="picker-toolbar-actions">
+                    <button
+                      type="button"
+                      className="linkbtn"
+                      onClick={() => setSel(new Set(items.map((m) => m.id)))}
+                    >
+                      Selecionar todas
+                    </button>
+                    <button type="button" className="linkbtn" onClick={() => setSel(new Set())}>
+                      Limpar
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="checklist items-grid">
+                {items.map((m) => (
+                  <label key={m.id} className={sel.has(m.id) ? "chk picked" : "chk"}>
+                    <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggle(m.id)} />
+                    <ItemThumb m={m} />
+                    <span className="chk-name">{m.nome_original}</span>
+                  </label>
+                ))}
+                {items.length === 0 && (
+                  <div className="picker-note">Pasta vazia deste tipo. Envie mídias em Mídias → Pastas.</div>
+                )}
+              </div>
+            </>
           )}
         </>
       )}
@@ -612,6 +663,7 @@ export default function Create() {
           items={baseItems}
           sel={baseSel}
           toggle={toggler(setBaseSel)}
+          setSel={setBaseSel}
         />
 
         <label className="field">
@@ -674,6 +726,7 @@ export default function Create() {
                 items={hotItems}
                 sel={hotSel}
                 toggle={toggler(setHotSel)}
+                setSel={setHotSel}
               />
               <PhraseSelect types={types} value={ptPause} onChange={setPtPause} />
             </TypeCard>
@@ -707,6 +760,7 @@ export default function Create() {
                 items={ovItems}
                 sel={ovSel}
                 toggle={toggler(setOvSel)}
+                setSel={setOvSel}
               />
               <PhraseSelect types={types} value={ptImagem} onChange={setPtImagem} required />
             </TypeCard>
@@ -728,6 +782,7 @@ export default function Create() {
                 items={finItems}
                 sel={finSel}
                 toggle={toggler(setFinSel)}
+                setSel={setFinSel}
               />
               <PhraseSelect types={types} value={ptFinal} onChange={setPtFinal} />
             </TypeCard>
