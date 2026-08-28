@@ -94,6 +94,9 @@ class PhraseType(Base):
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     nome: Mapped[str] = mapped_column(String(64), index=True)
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # slug aleatório para compartilhar/importar este tipo para outro usuário.
+    # Null enquanto não compartilhado. Único quando definido.
+    share_slug: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True, index=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     phrases: Mapped[list["Phrase"]] = relationship(

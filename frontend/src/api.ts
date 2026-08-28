@@ -187,6 +187,16 @@ export function createPhraseType(nome: string, descricao?: string): Promise<Phra
 export function deletePhraseType(id: number): Promise<void> {
   return apiSend(`${V1}/phrase-types/${id}`, "DELETE");
 }
+export interface PhraseTypeShare {
+  slug: string;
+  total_frases: number;
+}
+export function sharePhraseType(id: number): Promise<PhraseTypeShare> {
+  return apiSend(`${V1}/phrase-types/${id}/share`, "POST");
+}
+export function importPhraseType(slug: string): Promise<PhraseType> {
+  return apiSend(`${V1}/phrase-types/import`, "POST", { slug });
+}
 export function listPhrases(tipoId: number): Promise<Phrase[]> {
   return apiGetAsync(`${V1}/phrases?tipo_id=${tipoId}`);
 }

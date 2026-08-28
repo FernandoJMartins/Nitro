@@ -6,8 +6,10 @@ import {
   deletePhrase,
   deletePhraseType,
   generateAI,
+  importPhraseType,
   listPhraseTypes,
   listPhrases,
+  sharePhraseType,
   type Phrase,
   type PhraseType,
 } from "./api";
@@ -82,6 +84,33 @@ export default function Phrases() {
     await loadTypes();
   }
 
+  async function compartilhar(t: PhraseType) {
+    setError(null);
+    try {
+      const res = await sharePhraseType(t.id);
+      await navigator.clipboard?.writeText(res.slug).catch(() => {});
+      window.prompt(
+        `Código para compartilhar o tipo "${t.nome}" (${res.total_frases} frase(s)).\n` +
+          `Copiado! Envie este código para o outro usuário importar:`,
+        res.slug
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function importar() {
+    const slug = window.prompt("Cole o código do tipo de frase compartilhado:");
+    if (!slug?.trim()) return;
+    setError(null);
+    try {
+      const t = await importPhraseType(slug.trim());
+      await loadTypes(t.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function onAddPhrase() {
     if (!newPhrase.trim() || selected == null) return;
     setError(null);
@@ -147,6 +176,9 @@ export default function Phrases() {
             <button className="fchip-name" onClick={() => setSelected(t.id)}>
               {t.nome}
             </button>
+            <button className="fchip-share" title="Compartilhar / exportar este tipo" onClick={() => compartilhar(t)}>
+              🔗 Compartilhar
+            </button>
             <button className="fchip-x" title="Excluir tipo" onClick={() => removerTipo(t)}>
               ×
             </button>
@@ -154,6 +186,9 @@ export default function Phrases() {
         ))}
         <button className="fchip new" onClick={novoTipo}>
           + Novo tipo
+        </button>
+        <button className="fchip new" onClick={importar}>
+          ⬇ Importar
         </button>
       </div>
 

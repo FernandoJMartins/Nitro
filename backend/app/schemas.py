@@ -89,6 +89,17 @@ class PhraseTypeOut(BaseModel):
     criado_em: datetime
 
 
+class PhraseTypeShareOut(BaseModel):
+    """Retorno do compartilhamento: o slug para o outro usuário importar."""
+
+    slug: str
+    total_frases: int
+
+
+class PhraseTypeImport(BaseModel):
+    slug: str
+
+
 # ---------- Frases ----------
 class PhraseCreate(BaseModel):
     phrase_type_id: int

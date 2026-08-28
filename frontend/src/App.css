@@ -625,6 +625,22 @@ code {
 .fchip-name { background: none; border: none; color: inherit; cursor: pointer; font-size: 13px; padding: 0; font-weight: 600; }
 .fchip-x { background: none; border: none; color: inherit; cursor: pointer; opacity: 0.6; font-size: 15px; line-height: 1; padding: 0 2px; }
 .fchip-x:hover { opacity: 1; }
+.fchip-share {
+  background: var(--accent, #2563eb);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.fchip.active .fchip-share { background: var(--bg); color: var(--text); }
+.fchip-share:hover { filter: brightness(1.1); }
 
 .folder-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .folder-card {

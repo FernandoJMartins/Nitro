@@ -1,6 +1,8 @@
 """Rotas de tipos de frase e frases (módulo 4). Frases aparecem DENTRO do vídeo."""
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,7 +17,9 @@ from ..schemas import (
     PhraseCreate,
     PhraseOut,
     PhraseTypeCreate,
+    PhraseTypeImport,
     PhraseTypeOut,
+    PhraseTypeShareOut,
 )
 from ..services import ai
 
@@ -58,6 +62,46 @@ def delete_phrase_type(type_id: int, db: Session = Depends(get_db), user: User =
     pt = _owned_type(db, type_id, user.id)
     db.delete(pt)  # cascade remove as frases do tipo
     db.commit()
+
+
+@router.post("/phrase-types/{type_id}/share", response_model=PhraseTypeShareOut)
+def share_phrase_type(type_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Gera (ou reaproveita) um slug aleatório para outro usuário importar este tipo."""
+    pt = _owned_type(db, type_id, user.id)
+    if not pt.share_slug:
+        pt.share_slug = secrets.token_urlsafe(9)  # ~12 chars, aleatório
+        db.commit()
+    total = len(list(db.scalars(select(Phrase.id).where(Phrase.phrase_type_id == pt.id))))
+    return PhraseTypeShareOut(slug=pt.share_slug, total_frases=total)
+
+
+@router.post("/phrase-types/import", response_model=PhraseTypeOut)
+def import_phrase_type(body: PhraseTypeImport, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Importa uma cópia de um tipo compartilhado (via slug) para o usuário atual."""
+    slug = body.slug.strip()
+    origem = db.scalar(select(PhraseType).where(PhraseType.share_slug == slug))
+    if not origem:
+        raise HTTPException(status_code=404, detail="Slug inválido ou tipo não encontrado")
+
+    # Evita nome duplicado para o usuário: acrescenta sufixo se já existir.
+    nome = origem.nome
+    if db.scalar(select(PhraseType).where(PhraseType.user_id == user.id, PhraseType.nome == nome)):
+        nome = f"{origem.nome} (importado)"
+        i = 2
+        while db.scalar(select(PhraseType).where(PhraseType.user_id == user.id, PhraseType.nome == nome)):
+            nome = f"{origem.nome} (importado {i})"
+            i += 1
+
+    novo = PhraseType(user_id=user.id, nome=nome, descricao=origem.descricao)
+    db.add(novo)
+    db.flush()  # garante novo.id
+
+    for p in db.scalars(select(Phrase).where(Phrase.phrase_type_id == origem.id)):
+        db.add(Phrase(user_id=user.id, phrase_type_id=novo.id, texto=p.texto, origem=p.origem))
+
+    db.commit()
+    db.refresh(novo)
+    return novo
 
 
 # ---------- Frases ----------

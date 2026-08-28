@@ -27,6 +27,7 @@ def _ensure_column(table: str, column: str, ddl_type: str) -> None:
 
 
 _ensure_column("generated_videos", "tipo_video", "VARCHAR(16)")
+_ensure_column("phrase_types", "share_slug", "VARCHAR(32)")
 
 app = FastAPI(title="Vídeos em Massa API", version="0.1.0")
 
