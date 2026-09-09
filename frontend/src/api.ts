@@ -257,6 +257,7 @@ export interface BulkBody {
   overlay_media_ids: number[];
   final_media_ids: number[];
   font_id: string | null;
+  font_sizes: Record<string, number>;             // tamanho da fonte (px) por tipo de vídeo
   // posições (centro do elemento) em fração da tela [0..1], vindas do preview 9:16
   text_x: number;
   text_y: number;

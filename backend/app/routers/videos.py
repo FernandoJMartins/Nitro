@@ -220,6 +220,7 @@ def generate_bulk(
         overlay_media_ids=body.overlay_media_ids,
         final_media_ids=body.final_media_ids,
         font_id=body.font_id,
+        font_sizes={k: max(16, min(160, v)) for k, v in body.font_sizes.items() if v},
         text_x=_clamp01(body.text_x),
         text_y=_clamp01(body.text_y),
         overlay_x=_clamp01(body.overlay_x),

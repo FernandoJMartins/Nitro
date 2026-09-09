@@ -157,6 +157,8 @@ class BulkRequest(BaseModel):
     overlay_media_ids: list[int] = []   # pool do tipo "imagem"
     final_media_ids: list[int] = []     # pool do tipo "final"
     font_id: str | None = None          # fonte do texto (ver GET /videos/fonts)
+    # tamanho da fonte (px) POR tipo de vídeo, ex.: {"pause": 64, "imagem": 80}
+    font_sizes: dict[str, int] = {}
 
     # posições (centro do elemento) em fração da tela [0..1]. Definidas no preview 9:16.
     text_x: float = 0.5

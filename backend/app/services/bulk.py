@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import random
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import select
@@ -51,6 +51,8 @@ class BulkConfig:
     overlay_x: float
     overlay_y: float
     overlay_scale: float = 1.0
+    # tamanho da fonte (px) por tipo de vídeo (ex.: {"pause": 64, "imagem": 80})
+    font_sizes: dict[str, int] = field(default_factory=dict)
 
 
 def _eff_phrase_type(cfg: BulkConfig, modo: str | None) -> int | None:
@@ -160,6 +162,8 @@ def run_bulk_job(job_id: int, cfg: BulkConfig) -> None:
                 lo, hi = sorted((cfg.duration_min, cfg.duration_max))
                 dur = round(random.uniform(lo, hi), 2)
 
+                font_size = cfg.font_sizes.get(modo, video.DEFAULT_FONTSIZE) if modo else video.DEFAULT_FONTSIZE
+
                 token = uuid.uuid4().hex
                 out_path = gen_dir / f"{token}.mp4"
                 video.build_video(
@@ -168,6 +172,7 @@ def run_bulk_job(job_id: int, cfg: BulkConfig) -> None:
                     text=texto,
                     music_path=music_path,
                     font_path=font_path,
+                    font_size=font_size,
                     text_x=cfg.text_x,
                     text_y=cfg.text_y,
                     **kwargs,

@@ -198,6 +198,40 @@ function PhraseSelect({
   );
 }
 
+// Controle de tamanho da fonte (aumentar/diminuir) — usado dentro de cada tipo de vídeo.
+const FONT_MIN = 24;
+const FONT_MAX = 140;
+const FONT_STEP = 4;
+
+function FontSizeControl({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="field">
+      <span>Tamanho da fonte do texto: {value}px</span>
+      <div className="fontsize-row">
+        <button
+          type="button"
+          className="btn sm"
+          onClick={() => onChange(Math.max(FONT_MIN, value - FONT_STEP))}
+          disabled={value <= FONT_MIN}
+          aria-label="Diminuir fonte"
+        >
+          A−
+        </button>
+        <span className="fontsize-value">{value}px</span>
+        <button
+          type="button"
+          className="btn sm"
+          onClick={() => onChange(Math.min(FONT_MAX, value + FONT_STEP))}
+          disabled={value >= FONT_MAX}
+          aria-label="Aumentar fonte"
+        >
+          A+
+        </button>
+      </div>
+    </label>
+  );
+}
+
 type Pos = { x: number; y: number };
 type Size = { w: number; h: number };
 
@@ -228,6 +262,7 @@ function PreviewCanvas({
   bg,
   sampleText,
   fontCss,
+  fontSize,
   hasText,
   textPos,
   setTextPos,
@@ -240,6 +275,7 @@ function PreviewCanvas({
   bg: Media | undefined;
   sampleText: string;
   fontCss: string;
+  fontSize: number;
   hasText: boolean;
   textPos: Pos;
   setTextPos: (p: Pos) => void;
@@ -381,7 +417,7 @@ function PreviewCanvas({
             style={{ left: `${textPos.x * 100}%`, top: `${textPos.y * 100}%` }}
             onPointerDown={start("text")}
           >
-            <span style={{ fontFamily: fontCss }}>{sampleText}</span>
+            <span style={{ fontFamily: fontCss, fontSize: `${13 * (fontSize / 64)}px` }}>{sampleText}</span>
           </div>
         )}
       </div>
@@ -445,6 +481,11 @@ export default function Create() {
   const [ptFinal, setPtFinal] = useState<number | null>(null);
   const [ptTexto, setPtTexto] = useState<number | null>(null);
   const [fontId, setFontId] = useState<string | null>(null);
+  // tamanho da fonte (px) POR tipo de vídeo
+  const [fsPause, setFsPause] = useState(64);
+  const [fsImagem, setFsImagem] = useState(64);
+  const [fsFinal, setFsFinal] = useState(64);
+  const [fsTexto, setFsTexto] = useState(64);
   const [useIaTexto, setUseIaTexto] = useState(false);
   const [legendaIa, setLegendaIa] = useState(false);
 
@@ -542,6 +583,13 @@ export default function Create() {
     )
       return setError("Para a IA de texto, escolha um tipo de frase em algum tipo de vídeo.");
 
+    // tamanho da fonte por tipo de vídeo (só dos tipos habilitados)
+    const font_sizes: Record<string, number> = {};
+    if (typePause) font_sizes.pause = fsPause;
+    if (typeImagem) font_sizes.imagem = fsImagem;
+    if (typeFinal) font_sizes.final = fsFinal;
+    if (typeTexto) font_sizes.texto = fsTexto;
+
     const video_types = [
       ...(typePause ? (["pause"] as const) : []),
       ...(typeImagem ? (["imagem"] as const) : []),
@@ -566,6 +614,7 @@ export default function Create() {
         overlay_media_ids: ovIds,
         final_media_ids: finIds,
         font_id: fontId,
+        font_sizes,
         text_x: textPos.x,
         text_y: textPos.y,
         overlay_x: ovPos.x,
@@ -626,6 +675,13 @@ export default function Create() {
   const ovMedia = pickFirst(ovMode, ovItems, ovSel);
   const sampleText = "Seu texto aparece aqui";
   const selectedFontCss = fonts.find((f) => f.id === fontId)?.css || "inherit";
+  // tamanho da fonte do tipo ativo (o primeiro habilitado com texto) para refletir no preview
+  const activeFontSize =
+    (typePause && ptPause != null) ? fsPause :
+    (typeImagem && ptImagem != null) ? fsImagem :
+    (typeFinal && ptFinal != null) ? fsFinal :
+    (typeTexto && ptTexto != null) ? fsTexto :
+    64;
 
   return (
     <>
@@ -637,6 +693,7 @@ export default function Create() {
           bg={bgMedia}
           sampleText={sampleText}
           fontCss={selectedFontCss}
+          fontSize={activeFontSize}
           hasText={
             (typePause && ptPause != null) ||
             (typeImagem && ptImagem != null) ||
@@ -729,6 +786,7 @@ export default function Create() {
                 setSel={setHotSel}
               />
               <PhraseSelect types={types} value={ptPause} onChange={setPtPause} />
+              <FontSizeControl value={fsPause} onChange={setFsPause} />
             </TypeCard>
 
             <TypeCard
@@ -763,6 +821,7 @@ export default function Create() {
                 setSel={setOvSel}
               />
               <PhraseSelect types={types} value={ptImagem} onChange={setPtImagem} required />
+              <FontSizeControl value={fsImagem} onChange={setFsImagem} />
             </TypeCard>
 
             <TypeCard
@@ -785,6 +844,7 @@ export default function Create() {
                 setSel={setFinSel}
               />
               <PhraseSelect types={types} value={ptFinal} onChange={setPtFinal} />
+              <FontSizeControl value={fsFinal} onChange={setFsFinal} />
             </TypeCard>
 
             <TypeCard
@@ -795,6 +855,7 @@ export default function Create() {
               onToggle={setTypeTexto}
             >
               <PhraseSelect types={types} value={ptTexto} onChange={setPtTexto} required />
+              <FontSizeControl value={fsTexto} onChange={setFsTexto} />
             </TypeCard>
           </div>
         </div>

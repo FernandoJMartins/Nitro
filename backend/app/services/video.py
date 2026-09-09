@@ -223,9 +223,10 @@ def wrap_text(text: str, width: int = 25) -> str:
 # Então renderizamos cada linha com o Pillow, combinando a fonte do texto com uma
 # fonte de emoji colorido, gerando um PNG transparente sobreposto no vídeo.
 
-FONTSIZE = 64
+DEFAULT_FONTSIZE = 64
 STROKE = 3
-LINE_H = 90  # espaçamento vertical entre linhas
+LINE_H = 90  # espaçamento vertical entre linhas (para o tamanho de fonte padrão)
+LINE_H_RATIO = LINE_H / DEFAULT_FONTSIZE  # espaçamento escala junto com o tamanho da fonte escolhido
 
 # Um "pedaço" de emoji: caracteres de emoji, seletores de variação, ZWJ e tons de pele
 # juntos (para sequências como 👨‍👩‍👧 ou 👍🏽 ficarem no mesmo grupo).
@@ -303,10 +304,12 @@ def _render_text_seg(seg: str, font: ImageFont.FreeTypeFont) -> Image.Image:
     return img
 
 
-def _render_line_png(line: str, text_font_path: str, out_dir: Path) -> tuple[Path, int, int] | None:
+def _render_line_png(
+    line: str, text_font_path: str, out_dir: Path, font_size: int = DEFAULT_FONTSIZE
+) -> tuple[Path, int, int] | None:
     """Renderiza uma linha (texto + emoji) num PNG transparente. Devolve (caminho, w, h)."""
     try:
-        tfont = ImageFont.truetype(text_font_path, FONTSIZE)
+        tfont = ImageFont.truetype(text_font_path, font_size)
     except OSError:
         return None
     segs: list[Image.Image] = []
@@ -314,7 +317,7 @@ def _render_line_png(line: str, text_font_path: str, out_dir: Path) -> tuple[Pat
         if not chunk:
             continue
         if _EMOJI_RE.fullmatch(chunk):
-            em = _render_emoji_seg(chunk, FONTSIZE)
+            em = _render_emoji_seg(chunk, font_size)
             if em is not None:
                 segs.append(em)
             else:  # sem fonte de emoji: desenha como texto normal mesmo (fallback)
@@ -348,6 +351,7 @@ def _draw_text_chain(
     temp_files: list[Path],
     text_x: float = 0.5,
     text_y: float = 0.72,
+    font_size: int = DEFAULT_FONTSIZE,
     prefix: str = "txt",
 ) -> str:
     """Desenha o texto linha a linha e devolve o label final do vídeo.
@@ -361,25 +365,26 @@ def _draw_text_chain(
         return cur
     raw_font = font.replace("\\:", ":")  # o `font` chega escapado p/ o ffmpeg
     lines = [ln for ln in wrap_text(text, wrap_width).split("\n") if ln.strip()]
+    line_h = round(font_size * LINE_H_RATIO)  # espaçamento acompanha o tamanho escolhido
     cx = int(text_x * width)  # centro horizontal em px
-    y0 = height * text_y - (len(lines) * LINE_H) / 2  # bloco centrado no ponto escolhido
+    y0 = height * text_y - (len(lines) * line_h) / 2  # bloco centrado no ponto escolhido
     for i, line in enumerate(lines):
         lbl = f"{prefix}{i}"
-        rendered = _render_line_png(line, raw_font, out_dir)
+        rendered = _render_line_png(line, raw_font, out_dir, font_size)
         if rendered is not None:
             png, _pw, ph = rendered
             temp_files.append(png)
-            y = int(y0 + i * LINE_H + (LINE_H - ph) / 2)
+            y = int(y0 + i * line_h + (line_h - ph) / 2)
             parts.append(f"movie='{_esc_filter_path(png.as_posix())}'[{lbl}src]")
             parts.append(f"[{cur}][{lbl}src]overlay=x={cx}-w/2:y={y}[{lbl}]")
         else:  # fallback: drawtext (sem emoji)
             lf = out_dir / f".txt_{uuid.uuid4().hex}.txt"
             lf.write_bytes(line.encode("utf-8"))
             temp_files.append(lf)
-            y = int(y0 + i * LINE_H)
+            y = int(y0 + i * line_h)
             parts.append(
                 f"[{cur}]drawtext=fontfile='{font}':textfile='{_esc_filter_path(lf.as_posix())}':"
-                f"fontcolor=white:fontsize={FONTSIZE}:borderw={STROKE}:bordercolor=black@0.9:"
+                f"fontcolor=white:fontsize={font_size}:borderw={STROKE}:bordercolor=black@0.9:"
                 f"x={cx}-text_w/2:y={y}[{lbl}]"
             )
         cur = lbl
@@ -417,6 +422,7 @@ def build_video(
     final_duration: float = FINAL_PHOTO_SECONDS,
     # aparência / posição do texto (centro em frações [0..1])
     font_path: str | None = None,
+    font_size: int = DEFAULT_FONTSIZE,
     text_x: float = 0.5,
     text_y: float = 0.72,
     fps: int = 30,
@@ -477,7 +483,7 @@ def build_video(
         )
         a = _draw_text_chain(parts, "a0", text, font=font, width=width, height=height,
                              wrap_width=wrap_width, out_dir=out_dir, temp_files=temp_files,
-                             text_x=text_x, text_y=text_y, prefix="at")
+                             text_x=text_x, text_y=text_y, font_size=font_size, prefix="at")
         # segmento B: o clipe final, cortado na duração dele.
         # SEM texto: quando o clipe final começa, o texto principal some.
         parts.append(
@@ -558,7 +564,7 @@ def build_video(
     # texto (por cima da base/imagem), no ponto (text_x, text_y)
     cur = _draw_text_chain(parts, cur, text, font=font, width=width, height=height,
                            wrap_width=wrap_width, out_dir=out_dir, temp_files=temp_files,
-                           text_x=text_x, text_y=text_y, prefix="txt")
+                           text_x=text_x, text_y=text_y, font_size=font_size, prefix="txt")
 
     # flash hot subliminar no meio
     if hot_idx is not None:
