@@ -33,13 +33,28 @@ import {
 const PROXY_DOT: Record<string, string> = { verde: "🟢", amarelo: "🟡", vermelho: "🔴", cinza: "⚪" };
 
 /**
- * Converte uma URL de proxy numa linha só ("socks5://usuario:senha@host:porta")
- * nos campos que o backend espera. Sem protocolo assume socks5; sem porta assume 1080.
+ * Converte uma URL de proxy numa linha só nos campos que o backend espera.
+ * Aceita dois formatos:
+ *   - URL:        "socks5://usuario:senha@host:porta" (protocolo opcional, porta opcional = 1080)
+ *   - Provider:   "host:porta:usuario:senha"  (ex.: server.sixproxy.com:24654:user:pass)
  */
 function parseProxyUrl(raw: string): { protocolo: string; host: string; porta: number; usuario?: string; senha?: string } | null {
   let value = raw.trim();
   if (!value) return null;
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) value = `socks5://${value}`;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
+    // formato de provider: host:porta:usuario:senha (senha pode conter ":")
+    const parts = value.split(":");
+    if (parts.length >= 4 && /^\d+$/.test(parts[1])) {
+      return {
+        protocolo: "socks5",
+        host: parts[0],
+        porta: Number(parts[1]),
+        ...(parts[2] ? { usuario: parts[2] } : {}),
+        ...(parts.slice(3).join(":") ? { senha: parts.slice(3).join(":") } : {}),
+      };
+    }
+    value = `socks5://${value}`;
+  }
   try {
     const u = new URL(value);
     if (!u.hostname) return null;
@@ -124,7 +139,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
             {error && <div className="error">⚠️ {error}</div>}
             <div className="checkrow" style={{ gap: 8 }}>
               <input
-                placeholder="socks5://usuario:senha@host:porta"
+                placeholder="socks5://usuario:senha@host:porta — ou — host:porta:usuario:senha"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 style={{ flex: 1 }}
@@ -135,7 +150,8 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
               </button>
             </div>
             <div className="hint" style={{ marginTop: 6 }}>
-              Uma linha só: protocolo opcional (padrão socks5://) e porta opcional (padrão 1080).
+              Uma linha só. Formatos aceitos: <code>socks5://usuario:senha@host:porta</code> ou o formato de
+              provider <code>host:porta:usuario:senha</code> (protocolo e porta opcionais — padrão socks5 e 1080).
             </div>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setOpen(false)}>
