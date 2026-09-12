@@ -8,3 +8,8 @@ Pillow==11.1.0
 openai>=1.55,<2
 bcrypt==4.2.1
 pyjwt==2.10.1
+requests==2.32.3
+PySocks==1.7.1
+# automação não-oficial do Instagram (sessão real, proxy SOCKS5) — NÃO é a Graph API oficial da Meta
+instagrapi>=2.1.0,<3
+cryptography==43.0.3

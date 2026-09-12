@@ -1,12 +1,14 @@
-"""Segurança: hash de senha, JWT e chaves de API."""
+"""Segurança: hash de senha, JWT, chaves de API e criptografia simétrica de segredos."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
+from cryptography.fernet import Fernet, InvalidToken
 
 from .config import settings
 
@@ -60,3 +62,22 @@ def hash_api_key(raw: str) -> str:
 
 def is_api_key(token: str) -> bool:
     return token.startswith(API_KEY_PREFIX)
+
+
+# ---------- criptografia simétrica (credenciais de contas de publicação) ----------
+def _fernet() -> Fernet:
+    # Deriva uma chave de 32 bytes do SECRET_KEY existente — evita exigir mais uma
+    # variável de ambiente só pra isso. Trocar o SECRET_KEY invalida os segredos salvos.
+    key = hashlib.sha256(settings.secret_key.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def encrypt_secret(value: str) -> str:
+    return _fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_secret(token: str) -> str | None:
+    try:
+        return _fernet().decrypt(token.encode("utf-8")).decode("utf-8")
+    except InvalidToken:
+        return None

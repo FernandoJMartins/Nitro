@@ -5,10 +5,12 @@ export function Modal({
   title,
   children,
   onClose,
+  wide,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
+  wide?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -20,7 +22,7 @@ export function Modal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
+      <div className={wide ? "modal wide" : "modal"} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="modal-close" aria-label="Fechar" onClick={onClose}>

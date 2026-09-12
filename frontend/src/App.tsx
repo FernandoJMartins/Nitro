@@ -7,8 +7,9 @@ import Create from "./Create";
 import History from "./History";
 import ApiKeys from "./ApiKeys";
 import Utils from "./Utils";
+import Publishing from "./Publishing";
 
-type Section = "midias" | "frases" | "criar" | "historico" | "utilitarios" | "api";
+type Section = "midias" | "frases" | "criar" | "historico" | "publicacao" | "utilitarios" | "api";
 
 /* ícones de linha, no estilo Instagram (stroke fino, 24px) */
 function Icon({ name, active }: { name: Section; active: boolean }) {
@@ -55,6 +56,13 @@ function Icon({ name, active }: { name: Section; active: boolean }) {
           <path d="M10.5 11.5v4l3.5-2-3.5-2Z" fill={active ? "currentColor" : "none"} />
         </svg>
       );
+    case "publicacao": // enviar / avião de papel
+      return (
+        <svg {...common}>
+          <line x1="22" y1="2" x2="11" y2="13" />
+          <polygon points="22 2 15 22 11 13 2 9 22 2" fill={active ? "currentColor" : "none"} />
+        </svg>
+      );
     case "utilitarios": // ferramentas / chave inglesa
       return (
         <svg {...common} fill={active ? "currentColor" : "none"}>
@@ -76,6 +84,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "frases", label: "Frases" },
   { id: "criar", label: "Criar" },
   { id: "historico", label: "Histórico" },
+  { id: "publicacao", label: "Publicação" },
   { id: "utilitarios", label: "Utilitários" },
   { id: "api", label: "API" },
 ];
@@ -85,6 +94,7 @@ const TITLES: Record<Section, string> = {
   frases: "Frases",
   criar: "Criar",
   historico: "Histórico",
+  publicacao: "Publicação",
   utilitarios: "Utilitários",
   api: "API",
 };
@@ -160,6 +170,7 @@ export default function App() {
         {section === "frases" && <Phrases />}
         {section === "criar" && <Create />}
         {section === "historico" && <History />}
+        {section === "publicacao" && <Publishing />}
         {section === "utilitarios" && <Utils />}
         {section === "api" && <ApiKeys />}
       </main>

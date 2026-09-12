@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog, NameDialog } from "./Dialog";
 import {
+  collectTrendingAudio,
   createFolder,
   deleteFolder,
   deleteMedia,
   downloadUrl,
+  listAudio,
   listFolders,
   listMedia,
   renameFolder,
@@ -12,6 +14,7 @@ import {
   type Folder,
   type Media,
   type MediaType,
+  type TrendingAudio,
 } from "./api";
 
 // tipos de mídia que vivem DENTRO de uma pasta
@@ -140,6 +143,29 @@ export default function MediaLibrary() {
   const [busca, setBusca] = useState("");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [counts, setCounts] = useState<Partial<Record<MediaType, number>>>({});
+
+  // áudios em alta (Top Brasil) — coletados de fonte externa real
+  const [trending, setTrending] = useState<TrendingAudio[]>([]);
+  const [trendBusy, setTrendBusy] = useState(false);
+  const [trendMsg, setTrendMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (view === "musicas") listAudio().then(setTrending).catch(() => {});
+  }, [view]);
+
+  async function coletarTrending() {
+    setTrendBusy(true);
+    setTrendMsg(null);
+    try {
+      const novos = await collectTrendingAudio();
+      setTrendMsg(`Top Brasil consultado: ${novos.length} áudio(s) em alta atualizado(s).`);
+      setTrending(await listAudio());
+    } catch (e) {
+      setTrendMsg(`⚠ ${String(e)}`);
+    } finally {
+      setTrendBusy(false);
+    }
+  }
 
   async function loadFolders() {
     try {
@@ -300,6 +326,41 @@ export default function MediaLibrary() {
             ))}
             {!loading && items.length === 0 && <li className="empty">Nenhuma música ainda.</li>}
           </ul>
+
+          <div className="card" style={{ marginTop: 24 }}>
+            <div className="card-main" style={{ width: "100%" }}>
+              <strong>🔥 Áudios em alta — Top Brasil</strong>
+              <p className="hint">
+                Fonte externa real (Apple Music “mais tocadas no Brasil” — Top 100, com filtro de música
+                brasileira). Alimenta o modo de áudio automático das contas de publicação, que sorteiam entre eles
+                com viés de popularidade. O catálogo acumula a cada coleta.
+              </p>
+              {trendMsg && <div className={trendMsg.startsWith("⚠") ? "error" : "hint"}>{trendMsg}</div>}
+              <button className="btn sm" style={{ margin: "8px 0" }} onClick={coletarTrending} disabled={trendBusy}>
+                {trendBusy ? "Consultando Top Brasil…" : "↻ Coletar agora"}
+              </button>
+              <ul className="list" style={{ maxHeight: 480, overflowY: "auto" }}>
+                {trending
+                  .filter((a) => a.provider === "trending")
+                  .sort((a, b) => (a.popularidade ?? 999) - (b.popularidade ?? 999))
+                  .map((a) => (
+                    <li key={a.id} className="card">
+                      <div className="card-main">
+                        <strong>
+                          {a.popularidade != null && <span className="badge">#{a.popularidade}</span>} 🎵 {a.nome}
+                        </strong>
+                        <div className="meta">
+                          coletado em {new Date(a.coletado_em).toLocaleString("pt-BR")}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                {trending.filter((a) => a.provider === "trending").length === 0 && (
+                  <li className="empty">Nada coletado ainda — clique em “Coletar agora”.</li>
+                )}
+              </ul>
+            </div>
+          </div>
         </>
       )}
 

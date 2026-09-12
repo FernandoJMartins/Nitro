@@ -13,6 +13,18 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"  # a opção mais barata da OpenAI para texto
 
+    # fonte externa de áudios em alta (tendências) para o módulo de publicação
+    trending_source: str = "apple_music"
+    trending_country: str = "br"  # chart brasileiro (mais tocadas no Brasil)
+    trending_limit: int = 100  # máximo suportado pelo feed Apple RSS (200 devolve HTTP 500)
+    trending_brasileiras_only: bool = True  # filtra por gêneros de música brasileira
+    trending_min_brasileiras: int = 20  # se o filtro sobrar menos que isso, usa o chart completo
+    trending_refresh_hours: int = 24
+
+    # quantas contas podem executar publicações em paralelo (cada conta = 1 slot,
+    # sempre serializada dentro de si mesma — fila própria por conta)
+    publishing_concurrency: int = 4
+
     # segredo para assinar os tokens JWT — TROQUE em produção (via .env)
     secret_key: str = "dev-secret-troque-em-producao"
     jwt_expire_hours: int = 720  # 30 dias

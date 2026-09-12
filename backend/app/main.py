@@ -5,7 +5,9 @@ from sqlalchemy import inspect, text
 
 from .config import settings
 from .database import Base, engine
-from .routers import auth, folders, media, phrases, upscale, videos
+from .publishing import models as pub_models  # noqa: F401 — registra as tabelas em Base.metadata
+from .publishing.core.workers import start_background_scheduler
+from .routers import auth, folders, media, phrases, pub_accounts, pub_content, pub_dashboard, upscale, videos
 
 # Cria as tabelas que ainda não existem. (Em produção, trocar por migrations/Alembic.)
 Base.metadata.create_all(bind=engine)
@@ -28,6 +30,11 @@ def _ensure_column(table: str, column: str, ddl_type: str) -> None:
 
 _ensure_column("generated_videos", "tipo_video", "VARCHAR(16)")
 _ensure_column("phrase_types", "share_slug", "VARCHAR(32)")
+_ensure_column("pub_accounts", "senha_enc", "TEXT")
+_ensure_column("pub_accounts", "ultimo_erro_em", "TIMESTAMP")
+_ensure_column("pub_contents", "link", "TEXT")
+_ensure_column("pub_defaults", "trending_enabled", "BOOLEAN")
+_ensure_column("pub_defaults", "ultima_coleta_em", "TIMESTAMP")
 
 app = FastAPI(title="Vídeos em Massa API", version="0.1.0")
 
@@ -45,6 +52,14 @@ app.include_router(media.router)
 app.include_router(phrases.router)
 app.include_router(upscale.router)
 app.include_router(videos.router)
+app.include_router(pub_accounts.router)
+app.include_router(pub_content.router)
+app.include_router(pub_dashboard.router)
+
+
+@app.on_event("startup")
+def _start_publishing_scheduler() -> None:
+    start_background_scheduler()
 
 
 @app.get("/health", tags=["infra"])
