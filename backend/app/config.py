@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # sempre serializada dentro de si mesma — fila própria por conta)
     publishing_concurrency: int = 4
 
+    # timeout (segundos) de cada tentativa da checagem de proxy
+    proxy_check_timeout_seconds: int = 8
+
     # segredo para assinar os tokens JWT — TROQUE em produção (via .env)
     secret_key: str = "dev-secret-troque-em-producao"
     jwt_expire_hours: int = 720  # 30 dias
