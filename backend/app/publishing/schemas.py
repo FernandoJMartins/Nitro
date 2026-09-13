@@ -225,6 +225,19 @@ class StoryPlanOut(BaseModel):
     ultima_geracao_em: datetime | None
 
 
+class StoryHistoryOut(BaseModel):
+    """Uma publicação de story de uma conta, com status e legenda — histórico."""
+
+    id: int
+    content_id: int
+    status: str
+    scheduled_at: datetime
+    confirmado_em: datetime | None
+    erro: str | None
+    legenda: str | None
+    link: str | None
+
+
 class StoryConfigOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  cancelPublications,
   downloadUrl,
   getStoryConfig,
   listAccounts,
   listFolders,
   listMedia,
+  listStoryHistory,
   updateStoryConfig,
   type Folder,
   type Media,
   type PubAccount,
+  type StoryHistory,
 } from "./api";
 
 /**
@@ -27,6 +30,16 @@ const LINK_POSICOES = [
 ];
 
 const VIDEO_RE = /\.(mp4|mov|mkv|webm|avi)$/i;
+
+const STORY_STATUS_ICON: Record<string, string> = {
+  PENDING: "⏰",
+  UPLOADING: "⏳",
+  PROCESSING: "⏳",
+  PUBLISHED: "✓",
+  FAILED: "⚠",
+  RETRYING: "↻",
+  CANCELLED: "✕",
+};
 
 interface Modelo {
   key: number;
@@ -98,6 +111,7 @@ export default function Stories() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [historico, setHistorico] = useState<StoryHistory[]>([]);
 
   // carrega contas, pastas e TODAS as imagens do banco uma vez (a busca/pasta filtram em memória)
   useEffect(() => {
@@ -115,9 +129,11 @@ export default function Stories() {
     if (accountId === "") {
       setModelos([]);
       setTarget(0);
+      setHistorico([]);
       return;
     }
     setMsg(null);
+    listStoryHistory(accountId).then(setHistorico).catch(() => {});
     getStoryConfig(accountId)
       .then((cfg) => {
         let carregados: Modelo[] = (cfg.plans ?? []).map((p) => ({
@@ -210,6 +226,32 @@ export default function Stories() {
         return { ...m, frames };
       })
     );
+  }
+
+  function atualizarHistorico() {
+    if (accountId !== "") listStoryHistory(accountId).then(setHistorico).catch(() => {});
+  }
+
+  async function cancelarStory(id: number) {
+    if (!confirm("Cancelar este story? Ele sai do histórico e não será postado.")) return;
+    try {
+      await cancelPublications([id]);
+      atualizarHistorico();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function cancelarTodosStories() {
+    const ids = historico.filter((h) => h.status !== "PUBLISHED").map((h) => h.id);
+    if (ids.length === 0) return;
+    if (!confirm(`Cancelar ${ids.length} story(s) ainda não postados?`)) return;
+    try {
+      await cancelPublications(ids);
+      atualizarHistorico();
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   async function salvar() {
@@ -482,6 +524,54 @@ export default function Stories() {
                 </button>
                 {msg && <span className="hint">{msg}</span>}
               </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop: 12 }}>
+            <div className="card-main" style={{ width: "100%" }}>
+              <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+                <strong>📖 Histórico de stories — @{acc.username}</strong>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn sm" onClick={atualizarHistorico}>
+                    ↻ Atualizar
+                  </button>
+                  <button className="btn danger sm" onClick={cancelarTodosStories} disabled={!historico.some((h) => h.status !== "PUBLISHED")}>
+                    ✕ Cancelar todos
+                  </button>
+                </div>
+              </div>
+              <ul className="list" style={{ marginTop: 10, maxHeight: 480, overflowY: "auto" }}>
+                {historico.map((h) => (
+                  <li key={h.id} className="card" style={{ padding: 10 }}>
+                    <div className="card-main" style={{ width: "100%" }}>
+                      <strong>
+                        {STORY_STATUS_ICON[h.status] ?? "·"} {new Date(h.scheduled_at).toLocaleString("pt-BR")}
+                        <span className="badge" style={{ marginLeft: 8 }}>
+                          {h.status}
+                        </span>
+                      </strong>
+                      {h.legenda && <div className="meta">💬 {h.legenda}</div>}
+                      {h.link && <div className="meta">🔗 {h.link}</div>}
+                      {h.confirmado_em && (
+                        <div className="meta">
+                          Postado e confirmado em {new Date(h.confirmado_em).toLocaleString("pt-BR")}
+                        </div>
+                      )}
+                      {h.erro && <div className="error" style={{ marginTop: 4 }}>{h.erro}</div>}
+                    </div>
+                    {h.status !== "PUBLISHED" && (
+                      <button className="btn danger sm" onClick={() => cancelarStory(h.id)} title="Cancelar story">
+                        ✕
+                      </button>
+                    )}
+                  </li>
+                ))}
+                {historico.length === 0 && (
+                  <li className="empty">
+                    Nenhum story gerado ainda — os stories do dia aparecem aqui depois de gerados pelo scheduler.
+                  </li>
+                )}
+              </ul>
             </div>
           </div>
         </>

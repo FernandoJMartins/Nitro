@@ -1,6 +1,10 @@
 """Stories automáticos (Seção 15): um StoryConfig pode ter VÁRIOS StoryPlans por
 dia, cada um com uma sequência de imagens (StoryFrame). Cada plan gera 1 Content
 (kind='story') por dia, no horário do plan — nada de "1 imagem = 1 story = 1/dia".
+
+Horários dos plans são interpretados no TIMEZONE DA CONTA (não UTC) — o usuário
+marca 23:22 e o story sai às 23:22 no relógio dele. A deduplicação do dia é pelo
+`ultima_geracao_em` do plan comparado com o dia LOCAL da conta.
 """
 from __future__ import annotations
 
@@ -11,12 +15,14 @@ from sqlalchemy.orm import Session
 
 from ...models import Media
 from ..models import Account, Content, ContentMedia, Publication, StoryConfig, StoryFrame, StoryPlan
-from .scheduling import _parse_hhmm
+from .scheduling import _aware, _parse_hhmm, _window_tz
 
 
-def _scheduled_for(today: date, horario: str) -> datetime:
+def _scheduled_for(today: date, horario: str, tz) -> datetime:
+    """Horário do plan no dia LOCAL da conta, convertido para UTC. Se o horário
+    já passou, agenda para daqui a 2 minutos (o usuário quer ver o story sair)."""
     agora = datetime.now(timezone.utc)
-    alvo = datetime.combine(today, _parse_hhmm(horario), tzinfo=timezone.utc)
+    alvo = datetime.combine(today, _parse_hhmm(horario), tzinfo=tz).astimezone(timezone.utc)
     if alvo < agora:
         alvo = agora + timedelta(minutes=2)
     return alvo
@@ -30,11 +36,12 @@ def _create_story_content(
     texto: str | None,
     link: str | None,
     today: date,
+    tz,
     *,
     link_posicao: str | None = None,
     texto_extra: str | None = None,
 ) -> Content:
-    scheduled_at = _scheduled_for(today, horario)
+    scheduled_at = _scheduled_for(today, horario, tz)
     content = Content(
         user_id=account.user_id,
         kind="story",
@@ -71,14 +78,24 @@ def _frames_of_plan(db: Session, plan: StoryPlan) -> list[tuple[str, str | None,
     return resolved
 
 
+def _ja_gerado_hoje(marcador: datetime | None, tz, today: date) -> bool:
+    """Dedup do dia: o marcador (UTC) cai no MESMO dia local da conta?"""
+    if marcador is None:
+        return False
+    return _aware(marcador).astimezone(tz).date() == today
+
+
 def ensure_daily_stories(db: Session, account: Account, *, today: date | None = None) -> list[Content]:
     """Gera os stories do dia para a conta: um Content por StoryPlan com horário ainda
-    não executado hoje. Idempotente — chamar de novo no mesmo dia não duplica nada."""
+    não executado hoje (dia LOCAL da conta). Idempotente — chamar de novo no mesmo
+    dia não duplica nada (o `ultima_geracao_em` do plan sobrevive a saves: a API de
+    story-config atualiza os plans no lugar, sem recriá-los)."""
     cfg = db.scalar(select(StoryConfig).where(StoryConfig.account_id == account.id, StoryConfig.enabled.is_(True)))
     if cfg is None:
         return []
 
-    today = today or datetime.now(timezone.utc).date()
+    tz = _window_tz(db, account)
+    today = today or datetime.now(timezone.utc).astimezone(tz).date()
     agora = datetime.now(timezone.utc)
     created: list[Content] = []
 
@@ -87,19 +104,19 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
     )
     if not plans:
         # modo legado: config antiga com 1 imagem / 1 horário — comporta-se como um plano único
-        if cfg.ultima_geracao_em and cfg.ultima_geracao_em.date() == today:
+        if _ja_gerado_hoje(cfg.ultima_geracao_em, tz, today):
             return []
         if not cfg.imagem_media_id:
             return []
         media = db.get(Media, cfg.imagem_media_id)
         if media is None:
             return []
-        content = _create_story_content(db, account, [media.caminho], cfg.horario, cfg.texto, cfg.link, today)
+        content = _create_story_content(db, account, [media.caminho], cfg.horario, cfg.texto, cfg.link, today, tz)
         created.append(content)
         cfg.ultima_geracao_em = agora
     else:
         for plan in plans:
-            if plan.ultima_geracao_em and plan.ultima_geracao_em.date() == today:
+            if _ja_gerado_hoje(plan.ultima_geracao_em, tz, today):
                 continue
             frames = _frames_of_plan(db, plan)
             if not frames:
@@ -117,6 +134,7 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
                 texto,
                 link,
                 today,
+                tz,
                 link_posicao=plan.link_posicao,
                 texto_extra=plan.texto_extra,
             )

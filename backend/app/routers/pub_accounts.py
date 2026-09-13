@@ -17,7 +17,9 @@ from ..publishing.models import (
     Account,
     AudioAsset,
     CaptionTemplate,
+    Content,
     Proxy,
+    Publication,
     PublishingDefaults,
     StoryConfig,
     StoryFrame,
@@ -39,6 +41,7 @@ from ..publishing.schemas import (
     ProxyUpdate,
     PublishingDefaultsOut,
     PublishingDefaultsUpdate,
+    StoryHistoryOut,
     StoryConfigOut,
     StoryConfigUpdate,
     StoryPlanOut,
@@ -474,25 +477,14 @@ def update_story_config(
         cfg.horario = body.horario
 
     if body.plans is not None:
-        # substitui a sequência de stories do dia (vários horários x várias imagens)
-        existing = list(db.scalars(select(StoryPlan).where(StoryPlan.story_config_id == cfg.id)))
-        for plan in existing:
-            frames = list(db.scalars(select(StoryFrame).where(StoryFrame.story_plan_id == plan.id)))
-            for frame in frames:
+        # reconcilia os plans NO LUGAR (por posição): preserva o id e o
+        # ultima_geracao_em de cada plan — recriar do zero zerava o marcador e o
+        # scheduler regenerava os stories do dia a cada save (duplicados).
+        existing = list(db.scalars(select(StoryPlan).where(StoryPlan.story_config_id == cfg.id).order_by(StoryPlan.ordem)))
+
+        def _substitui_frames(plan: StoryPlan, plano) -> None:
+            for frame in list(db.scalars(select(StoryFrame).where(StoryFrame.story_plan_id == plan.id))):
                 db.delete(frame)
-            db.delete(plan)
-        db.flush()
-        for ordem, plano in enumerate(body.plans):
-            plan = StoryPlan(
-                story_config_id=cfg.id,
-                horario=plano.horario,
-                ordem=ordem,
-                texto=plano.texto,
-                link=plano.link,
-                link_posicao=plano.link_posicao,
-                texto_extra=plano.texto_extra,
-            )
-            db.add(plan)
             db.flush()
             for f_ordem, frame in enumerate(plano.frames):
                 db.add(
@@ -505,8 +497,70 @@ def update_story_config(
                     )
                 )
 
+        for ordem, plano in enumerate(body.plans):
+            if ordem < len(existing):
+                plan = existing[ordem]
+                plan.horario = plano.horario
+                plan.texto = plano.texto
+                plan.link = plano.link
+                plan.link_posicao = plano.link_posicao
+                plan.texto_extra = plano.texto_extra
+                _substitui_frames(plan, plano)
+            else:
+                plan = StoryPlan(
+                    story_config_id=cfg.id,
+                    horario=plano.horario,
+                    ordem=ordem,
+                    texto=plano.texto,
+                    link=plano.link,
+                    link_posicao=plano.link_posicao,
+                    texto_extra=plano.texto_extra,
+                )
+                db.add(plan)
+                db.flush()
+                _substitui_frames(plan, plano)
+        # sobras (o usuário removeu models): apaga plan e frames
+        for plan in existing[len(body.plans):]:
+            for frame in list(db.scalars(select(StoryFrame).where(StoryFrame.story_plan_id == plan.id))):
+                db.delete(frame)
+            db.delete(plan)
+
     db.commit()
     db.refresh(cfg)
     out = StoryConfigOut.model_validate(cfg)
     out.plans = _plans_out(db, cfg)
     return out
+
+
+@router.get("/accounts/{account_id}/stories", response_model=list[StoryHistoryOut])
+def list_story_history(
+    account_id: int,
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Histórico de stories da conta: uma linha por publicação (status, horário,
+    legenda, link, erro), mais recente primeiro."""
+    account = _get_account(db, user, account_id)
+    pubs = list(
+        db.scalars(
+            select(Publication)
+            .join(Content, Publication.content_id == Content.id)
+            .where(Publication.account_id == account.id, Content.kind == "story")
+            .order_by(Publication.scheduled_at.desc())
+            .limit(max(1, min(limit, 200)))
+        )
+    )
+    return [
+        StoryHistoryOut(
+            id=p.id,
+            content_id=p.content.id,
+            status=p.status,
+            scheduled_at=p.scheduled_at,
+            confirmado_em=p.confirmado_em,
+            erro=p.erro,
+            legenda=p.content.legenda,
+            link=p.content.link,
+        )
+        for p in pubs
+    ]

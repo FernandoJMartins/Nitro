@@ -267,7 +267,12 @@ def cancel_publications(
         outras = any(x.id != p.id and x.status != "CANCELLED" for x in content.publications)
         db.delete(p)
         cancelados += 1
-        if not outras:
+        if content.kind == "story":
+            # story cancelado some do histórico; o plano NÃO regenera hoje
+            # (o ultima_geracao_em do plan continua marcando o dia local)
+            if not outras:
+                db.delete(content)
+        elif not outras:
             content.approval_status = "pendente"
             content.scheduled_at = None
             content.schedule_mode = "automatico"

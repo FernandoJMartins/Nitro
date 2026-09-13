@@ -584,6 +584,20 @@ export interface StoryPlanOut {
 export function getStoryConfig(accountId: number): Promise<StoryConfig> {
   return apiGetAsync(`${PUB}/accounts/${accountId}/story-config`);
 }
+
+export interface StoryHistory {
+  id: number;
+  content_id: number;
+  status: string;
+  scheduled_at: string;
+  confirmado_em: string | null;
+  erro: string | null;
+  legenda: string | null;
+  link: string | null;
+}
+export function listStoryHistory(accountId: number, limit = 50): Promise<StoryHistory[]> {
+  return apiGetAsync(`${PUB}/accounts/${accountId}/stories?limit=${limit}`);
+}
 export function updateStoryConfig(
   accountId: number,
   body: {
