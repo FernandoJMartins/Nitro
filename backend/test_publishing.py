@@ -27,7 +27,7 @@ from app.publishing.core.publications import execute_publication  # noqa: E402
 from app.publishing.core.scheduling import build_schedule_for_account  # noqa: E402
 from app.publishing.core.stories import ensure_daily_stories  # noqa: E402
 from app.publishing.core.workers import run_cycle  # noqa: E402
-from app.publishing.models import Account, ContentMedia, Publication, Proxy  # noqa: E402
+from app.publishing.models import Account, ContentMedia, Publication, Proxy, StoryPlan  # noqa: E402
 from app.publishing.platforms.base import PlatformAdapter, PublishContext, PublishResult, ThrottledError  # noqa: E402
 
 
@@ -362,6 +362,41 @@ assert r.status_code == 200
 r = client.post(f"/api/v1/publishing/accounts/{acc_c['id']}/connect")
 assert r.status_code == 400 and "Proxy indisponível" in r.text, (r.status_code, r.text)
 print("connect: conta com proxy offline bloqueada com erro claro ok")
+
+# ---------- postar agora (botão da lista de stories) ----------
+plan_id = client.get(f"/api/v1/publishing/accounts/{acc_a['id']}/story-config").json()["plans"][0]["id"]
+r = client.post(f"/api/v1/publishing/accounts/{acc_a['id']}/stories/{plan_id}/post-now")
+assert r.status_code == 200, r.text
+dados = r.json()
+assert dados["status"] == "PUBLISHED", dados
+assert dados["legenda"] == "Título do story"
+assert dados["link"] == "https://exemplo.com/link"
+print("post-now: story do modelo publicado na hora ok")
+
+# conta B: plano novo → marcador começa vazio e o post-now marca como gerado hoje
+r = client.put(
+    f"/api/v1/publishing/accounts/{acc_b['id']}/story-config",
+    json={
+        "enabled": True,
+        "plans": [
+            {"horario": "23:59", "texto": "Agora!", "link": "https://b.com", "frames": [{"media_id": media_id_1}]}
+        ],
+    },
+)
+assert r.status_code == 200, r.text
+plan_b_id = r.json()["plans"][0]["id"]
+db = SessionLocal()
+assert db.get(StoryPlan, plan_b_id).ultima_geracao_em is None
+db.close()
+r = client.post(f"/api/v1/publishing/accounts/{acc_b['id']}/stories/{plan_b_id}/post-now")
+assert r.status_code == 200 and r.json()["status"] == "PUBLISHED", r.text
+db = SessionLocal()
+assert db.get(StoryPlan, plan_b_id).ultima_geracao_em is not None, "post-now deve marcar o plano como gerado hoje"
+db.close()
+# modelo de outra conta / inexistente → 404
+r = client.post(f"/api/v1/publishing/accounts/{acc_a['id']}/stories/{plan_b_id}/post-now")
+assert r.status_code == 404
+print("post-now: marca o plano como gerado hoje e valida posse do modelo ok")
 
 # conta sem senha nem sessão não pode conectar
 r = client.post("/api/v1/publishing/accounts", json={"nome_interno": "D", "username": "perfil04", **WIDE_WINDOW})

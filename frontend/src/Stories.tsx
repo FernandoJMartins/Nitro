@@ -7,10 +7,12 @@ import {
   listFolders,
   listMedia,
   listStoryHistory,
+  postStoryNow,
   updateStoryConfig,
   type Folder,
   type Media,
   type PubAccount,
+  type StoryConfig,
   type StoryHistory,
 } from "./api";
 
@@ -43,6 +45,7 @@ const STORY_STATUS_ICON: Record<string, string> = {
 
 interface Modelo {
   key: number;
+  planId?: number; // id no servidor (presente após salvar/carregar) — habilita "Postar agora"
   horario: string;
   texto: string;
   link: string;
@@ -111,6 +114,7 @@ export default function Stories() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [postando, setPostando] = useState<number | null>(null);
   const [historico, setHistorico] = useState<StoryHistory[]>([]);
 
   // carrega contas, pastas e TODAS as imagens do banco uma vez (a busca/pasta filtram em memória)
@@ -124,6 +128,35 @@ export default function Stories() {
 
   const acc = accountId === "" ? undefined : accounts.find((a) => a.id === accountId);
 
+  function mapearConfig(cfg: StoryConfig): Modelo[] {
+    let carregados: Modelo[] = (cfg.plans ?? []).map((p) => ({
+      key: p.id,
+      planId: p.id,
+      horario: p.horario,
+      texto: p.texto ?? "",
+      link: p.link ?? "",
+      link_posicao: p.link_posicao ?? "inferior",
+      texto_extra: p.texto_extra ?? "",
+      frames: p.media_ids,
+    }));
+    // config legada (1 imagem / 1 horário) vira um modelo com 1 imagem
+    if (carregados.length === 0 && cfg.imagem_media_id) {
+      carregados = [
+        {
+          key: Date.now(),
+          horario: cfg.horario ?? "18:00",
+          texto: cfg.texto ?? "",
+          link: cfg.link ?? "",
+          link_posicao: "inferior",
+          texto_extra: "",
+          frames: [cfg.imagem_media_id],
+        },
+      ];
+    }
+    if (carregados.length === 0) carregados = [novoModelo()];
+    return carregados;
+  }
+
   // ao trocar de conta, carrega a configuração de stories dela
   useEffect(() => {
     if (accountId === "") {
@@ -136,31 +169,7 @@ export default function Stories() {
     listStoryHistory(accountId).then(setHistorico).catch(() => {});
     getStoryConfig(accountId)
       .then((cfg) => {
-        let carregados: Modelo[] = (cfg.plans ?? []).map((p) => ({
-          key: p.id,
-          horario: p.horario,
-          texto: p.texto ?? "",
-          link: p.link ?? "",
-          link_posicao: p.link_posicao ?? "inferior",
-          texto_extra: p.texto_extra ?? "",
-          frames: p.media_ids,
-        }));
-        // config legada (1 imagem / 1 horário) vira um modelo com 1 imagem
-        if (carregados.length === 0 && cfg.imagem_media_id) {
-          carregados = [
-            {
-              key: Date.now(),
-              horario: cfg.horario ?? "18:00",
-              texto: cfg.texto ?? "",
-              link: cfg.link ?? "",
-              link_posicao: "inferior",
-              texto_extra: "",
-              frames: [cfg.imagem_media_id],
-            },
-          ];
-        }
-        if (carregados.length === 0) carregados = [novoModelo()];
-        setModelos(carregados);
+        setModelos(mapearConfig(cfg));
         setTarget(0);
         setSelected(new Set());
       })
@@ -260,7 +269,7 @@ export default function Stories() {
     setMsg(null);
     setSaving(true);
     try {
-      await updateStoryConfig(acc.id, {
+      const cfg = await updateStoryConfig(acc.id, {
         // o check em Contas controla a automação; aqui só a configuração é salva
         enabled: acc.stories_enabled,
         plans: modelos
@@ -274,11 +283,36 @@ export default function Stories() {
             frames: m.frames.map((id) => ({ media_id: id })),
           })),
       });
+      // remapeia com os ids devolvidos pelo servidor — habilita "Postar agora"
+      setModelos(mapearConfig(cfg));
       setMsg("Stories da conta salvos.");
     } catch (e) {
       setError(String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function postarAgora(m: Modelo) {
+    if (accountId === "" || m.planId == null || !acc) return;
+    if (!confirm(`Publicar este story agora na @${acc.username}?`)) return;
+    setError(null);
+    setMsg(null);
+    setPostando(m.planId);
+    try {
+      const r = await postStoryNow(acc.id, m.planId);
+      if (r.status === "PUBLISHED") {
+        setMsg("Story publicado e confirmado ✓");
+      } else if (r.status === "RETRYING") {
+        setMsg(`Story em nova tentativa (${r.erro ?? "falha temporária"})`);
+      } else {
+        setMsg(`Story não publicado (${r.status})${r.erro ? `: ${r.erro}` : ""}`);
+      }
+      atualizarHistorico();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPostando(null);
     }
   }
 
@@ -505,6 +539,16 @@ export default function Stories() {
                       )}
                     </div>
                     <div className="card-actions">
+                      {m.planId != null && (
+                        <button
+                          className="btn primary sm"
+                          onClick={() => postarAgora(m)}
+                          disabled={postando === m.planId}
+                          title="Publica este story imediatamente"
+                        >
+                          {postando === m.planId ? "Publicando…" : "▶ Postar agora"}
+                        </button>
+                      )}
                       <button className="btn danger sm" onClick={() => removerModelo(i)}>
                         Excluir modelo
                       </button>

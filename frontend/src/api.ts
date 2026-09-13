@@ -598,6 +598,9 @@ export interface StoryHistory {
 export function listStoryHistory(accountId: number, limit = 50): Promise<StoryHistory[]> {
   return apiGetAsync(`${PUB}/accounts/${accountId}/stories?limit=${limit}`);
 }
+export function postStoryNow(accountId: number, planId: number): Promise<StoryHistory> {
+  return apiSend(`${PUB}/accounts/${accountId}/stories/${planId}/post-now`, "POST");
+}
 export function updateStoryConfig(
   accountId: number,
   body: {

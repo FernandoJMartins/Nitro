@@ -70,7 +70,7 @@ class StubClient:
         self.proxy = proxy
         self.settings: dict = {"cookies": {"sessionid": "abc"}}
         self.uploads: list[tuple[str, str]] = []
-        self.stories: list[tuple[str, str, list | None]] = []
+        self.stories: list[tuple[str, str, list | None, list | None]] = []
 
     def get_settings(self):
         return dict(self.settings)
@@ -100,8 +100,8 @@ class StubClient:
         self.uploads.append((path, caption))
         return StubMedia("pk-reel-1")
 
-    def photo_upload_to_story(self, path, caption="", links=None):
-        self.stories.append((path, caption, links))
+    def photo_upload_to_story(self, path, caption="", links=None, stickers=None):
+        self.stories.append((path, caption, links, stickers))
         return StubMedia(f"pk-story-{len(self.stories)}")
 
     def media_info(self, pk):
@@ -130,6 +130,25 @@ def _tmp_video():
     f.write(b"\x00" * 128)
     f.close()
     return f.name
+
+
+def _tmp_imagem():
+    """Imagem real (JPEG) — o renderizador da pílula abre o arquivo com Pillow."""
+    from PIL import Image
+
+    f = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+    f.close()
+    Image.new("RGB", (540, 960), (40, 70, 130)).save(f.name, "JPEG")
+    return f.name
+
+
+def _tem_pixel(im, x0, y0, w, h, pred) -> bool:
+    """Existe pelo menos um pixel na região que satisfaz o predicado?"""
+    for px in range(max(0, x0), min(im.width, x0 + w), 2):
+        for py in range(max(0, y0), min(im.height, y0 + h), 2):
+            if pred(*im.getpixel((px, py))):
+                return True
+    return False
 
 
 def test_build_proxy_url():
@@ -246,7 +265,7 @@ def test_create_reel_com_arquivo_inexistente_falha():
 
 
 def test_story_com_multiplas_imagens_em_sequencia():
-    a, b = _tmp_video(), _tmp_video()
+    a, b = _tmp_imagem(), _tmp_imagem()
     try:
         adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
         ctx = _ctx(
@@ -264,9 +283,13 @@ def test_story_com_multiplas_imagens_em_sequencia():
         result = adapter.publish(ctx)
         assert result.external_id == "pk-story-1,pk-story-2"
         assert len(adapter._client.stories) == 2
-        _, caption, links = adapter._client.stories[0]
-        assert caption == "Sequência"
-        assert links == [{"webUri": "https://exemplo.com"}]
+        path0, caption, links, stickers = adapter._client.stories[0]
+        assert path0 != a  # imagem renderizada com a pílula (temporária)
+        assert caption == ""  # o texto virou o rótulo do botão
+        assert links is None
+        assert stickers is not None and stickers[0]["type"] == "story_link"
+        assert stickers[0]["extra"]["url"] == "https://exemplo.com"
+        assert os.path.exists(path0) is False  # temporário limpo após o upload
         assert adapter.confirm_publication(ctx, result) is True
     finally:
         os.unlink(a)
@@ -274,7 +297,7 @@ def test_story_com_multiplas_imagens_em_sequencia():
 
 
 def test_story_link_posicionado_e_texto_extra():
-    a = _tmp_video()
+    a = _tmp_imagem()
     try:
         adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
         ctx = _ctx(
@@ -292,15 +315,19 @@ def test_story_link_posicionado_e_texto_extra():
         adapter.attach_link(ctx)
         result = adapter.publish(ctx)
         assert len(adapter._client.stories) == 1
-        _, caption, links = adapter._client.stories[0]
-        assert caption == "Chama no link\n\nOferta só hoje!"
-        assert links == [{"webUri": "https://exemplo.com", "x": 0.5, "y": 0.14}]
+        path0, caption, links, stickers = adapter._client.stories[0]
+        assert caption == ""  # "Chama no link / Oferta só hoje!" foi para a pílula
+        assert links is None
+        assert stickers[0]["x"] == pytest.approx(0.5, abs=0.02)
+        assert stickers[0]["y"] == pytest.approx(0.14, abs=0.06)
+        assert stickers[0]["extra"]["url"] == "https://exemplo.com"
+        assert os.path.exists(path0) is False
     finally:
         os.unlink(a)
 
 
-def test_story_link_sem_posicao_nao_leva_coordenadas():
-    a = _tmp_video()
+def test_story_link_sem_posicao_cai_na_inferior():
+    a = _tmp_imagem()
     try:
         adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
         ctx = _ctx(kind="story", media_path=a, story_link="https://exemplo.com")
@@ -309,9 +336,78 @@ def test_story_link_sem_posicao_nao_leva_coordenadas():
         ctx.session_data = session
         adapter.create_story(ctx)
         adapter.publish(ctx)
-        _, caption, links = adapter._client.stories[0]
+        path0, caption, links, stickers = adapter._client.stories[0]
         assert caption == ""
-        assert links == [{"webUri": "https://exemplo.com"}]
+        assert links is None
+        assert stickers[0]["y"] == pytest.approx(0.86, abs=0.06)
+        assert os.path.exists(path0) is False
+    finally:
+        os.unlink(a)
+
+
+def test_story_sem_link_mantem_legenda_nativa():
+    a = _tmp_imagem()
+    try:
+        adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
+        ctx = _ctx(kind="story", media_path=a, story_text="Sem link")
+        adapter.open()
+        session = adapter.login(ctx)
+        ctx.session_data = session
+        adapter.create_story(ctx)
+        adapter.publish(ctx)
+        path0, caption, links, stickers = adapter._client.stories[0]
+        assert path0 == a  # mídia original, sem renderização
+        assert caption == "Sem link"
+        assert links is None and stickers is None
+    finally:
+        os.unlink(a)
+
+
+def test_render_story_pill_desenha_pilula_branca_com_texto_preto():
+    """A pílula é desenhada na imagem: fundo branco, texto preto e o sticker
+    cobrindo exatamente a pílula (frações da tela)."""
+    from PIL import Image
+
+    from app.publishing.platforms.instagram import _render_story_pill
+
+    a = _tmp_imagem()
+    try:
+        caminho, sticker = _render_story_pill(a, "🔥 Chama no link", "https://exemplo.com", "inferior")
+        try:
+            assert sticker["type"] == "story_link"
+            assert sticker["extra"]["url"] == "https://exemplo.com"
+            assert 0 < sticker["width"] < 1 and 0 < sticker["height"] < 1
+            with Image.open(caminho) as im:
+                assert im.size == (720, 1280)
+                x0 = round(sticker["x"] * 720)
+                y0 = round(sticker["y"] * 1280)
+                pw = round(sticker["width"] * 720)
+                ph = round(sticker["height"] * 1280)
+                # área interna esquerda da pílula: branca
+                assert im.getpixel((x0 - pw // 2 + 14, y0)) == (255, 255, 255)
+                # há texto preto e (quando a fonte existe) emoji colorido — varre
+                # só a faixa do texto, sem cantos/borda da pílula
+                from app.publishing.platforms.instagram import _PILL_PAD_X, _PILL_PAD_Y
+
+                banda = (
+                    x0 - pw // 2 + _PILL_PAD_X,
+                    y0 - ph // 2 + _PILL_PAD_Y,
+                    pw - 2 * _PILL_PAD_X,
+                    ph - 2 * _PILL_PAD_Y,
+                )
+                assert _tem_pixel(
+                    im, *banda,
+                    lambda r, g, b: r < 80 and g < 80 and b < 80,
+                )
+                from app.services.video import _emoji_font
+
+                if _emoji_font() is not None:
+                    assert _tem_pixel(
+                        im, *banda,
+                        lambda r, g, b: max(r, g, b) - min(r, g, b) > 40,
+                    )
+        finally:
+            os.unlink(caminho)
     finally:
         os.unlink(a)
 

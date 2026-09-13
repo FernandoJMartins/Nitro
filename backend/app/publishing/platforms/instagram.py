@@ -30,8 +30,14 @@ import json
 import logging
 import os
 import re
+import tempfile
+from pathlib import Path
+from urllib.parse import urlparse
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from ...config import settings
+from ...services.video import _EMOJI_RE, _render_emoji_seg
 
 from .base import (
     AdapterError,
@@ -407,6 +413,175 @@ def fetch_audio_por_link(
     }
 
 
+# ===================== pílula de link desenhada na mídia do story =====================
+# O configure de story do fork envia o link só como `tap_models` (a área de toque);
+# o `static_models` (o DESENHO do sticker) nunca é preenchido — então link via API
+# fica funcional mas invisível. Solução (mesma ideia do StoryBuilder do fork, mas
+# com Pillow, que já vem instalado): desenhar a pílula branca com o texto do story
+# DENTRO da imagem e posicionar a área de toque do sticker exatamente sobre ela.
+# O texto do story vira o rótulo do botão; emoji colorido usa a fonte da Apple/Noto.
+
+_STORY_W, _STORY_H = 720, 1280
+
+# Posição do link/sticker no story (fração da tela 0..1). A pílula fica no centro
+# horizontal; 'inferior' é o comportamento padrão do app.
+_STORY_LINK_Y = {"superior": 0.14, "meio": 0.5, "inferior": 0.86}
+
+_PILL_FONT_SIZES = (46, 40, 34, 28)  # reduz quando o texto não cabe
+_PILL_MAX_TEXT_W = 560
+_PILL_PAD_X = 44
+_PILL_PAD_Y = 20
+_PILL_TEXT_COLOR = (12, 12, 12, 255)
+_PILL_BG = (255, 255, 255, 255)
+_PILL_BORDER = (0, 0, 0, 45)  # traço sutil para a pílula não sumir em foto clara
+_PILL_FONT_PATHS = [
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+]
+
+
+def _pill_font_path() -> str:
+    for p in _PILL_FONT_PATHS:
+        if os.path.isfile(p):
+            return p
+    return _PILL_FONT_PATHS[-1]  # DejaVu vem no fonts-dejavu-core (Dockerfile)
+
+
+def _wrap_by_pixels(texto: str, font, max_w: int) -> list[str]:
+    """Quebra o texto em linhas medindo em PIXELS (não em caracteres)."""
+    linhas: list[str] = []
+    atual = ""
+    for palavra in texto.split():
+        candidato = f"{atual} {palavra}".strip() if atual else palavra
+        if font.getlength(candidato) <= max_w or not atual:
+            atual = candidato
+        else:
+            linhas.append(atual)
+            atual = palavra
+    if atual:
+        linhas.append(atual)
+    return linhas
+
+
+def _truncate_by_pixels(texto: str, font, max_w: int) -> str:
+    if font.getlength(texto) <= max_w:
+        return texto
+    while texto and font.getlength(texto + "…") > max_w:
+        texto = texto[:-1]
+    return (texto + "…").strip()
+
+
+def _pill_text_seg(seg: str, font) -> Image.Image:
+    """Segmento de TEXTO (preto) em RGBA transparente, sem contorno."""
+    tmp = Image.new("RGBA", (1, 1))
+    x0, y0, x1, y1 = ImageDraw.Draw(tmp).textbbox((0, 0), seg, font=font)
+    w, h = max(1, x1 - x0), max(1, y1 - y0)
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text((-x0, -y0), seg, font=font, fill=_PILL_TEXT_COLOR)
+    return img
+
+
+def _pill_line(linha: str, font, font_size: int) -> Image.Image:
+    """Uma linha do rótulo: texto preto + emoji colorido (fonte da Apple/Noto)."""
+    segs: list[Image.Image] = []
+    for chunk in _EMOJI_RE.split(linha):
+        if not chunk:
+            continue
+        if _EMOJI_RE.fullmatch(chunk):
+            em = _render_emoji_seg(chunk, round(font_size * 1.15))
+            segs.append(em if em is not None else _pill_text_seg(chunk, font))
+        else:
+            segs.append(_pill_text_seg(chunk, font))
+    if not segs:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    total_w = sum(s.width for s in segs)
+    max_h = max(s.height for s in segs)
+    canvas = Image.new("RGBA", (max(1, total_w), max_h), (0, 0, 0, 0))
+    x = 0
+    for s in segs:
+        canvas.alpha_composite(s, (x, (max_h - s.height) // 2))
+        x += s.width
+    return canvas
+
+
+def _render_story_pill(origem: str, texto: str, link: str, posicao: str | None) -> tuple[Path, dict]:
+    """Desenha a pílula do link na imagem do story (canvas 720x1280) e devolve
+    (arquivo renderizado, sticker). O dict segue o contrato do StorySticker do
+    instagrapi; x/y/width/height são frações da tela calculadas EXATAMENTE sobre
+    a pílula desenhada — a área de toque cobre o botão."""
+    rotulo = (texto or "").strip() or urlparse(link).netloc
+    try:
+        with Image.open(origem) as src:
+            src = ImageOps.exif_transpose(src).convert("RGB")
+            sw, sh = src.size
+            escala = max(_STORY_W / sw, _STORY_H / sh)
+            src = src.resize((round(sw * escala), round(sh * escala)), Image.LANCZOS)
+            sw, sh = src.size
+            esq, topo = (sw - _STORY_W) // 2, (sh - _STORY_H) // 2
+            canvas = src.crop((esq, topo, esq + _STORY_W, topo + _STORY_H))
+    except Exception as exc:  # noqa: BLE001 — mídia ilegível vira erro do adapter
+        raise AdapterError(f"não deu para renderizar a pílula do link: {exc}") from exc
+
+    font = None
+    linhas: list[str] = []
+    for size in _PILL_FONT_SIZES:
+        try:
+            font = ImageFont.truetype(_pill_font_path(), size)
+        except OSError:
+            continue
+        linhas = _wrap_by_pixels(rotulo, font, _PILL_MAX_TEXT_W)
+        if all(font.getlength(l) <= _PILL_MAX_TEXT_W for l in linhas):
+            break
+    if font is None:
+        raise AdapterError("nenhuma fonte disponível para desenhar a pílula do link")
+    # último recurso: palavra única maior que a largura máxima
+    linhas = [_truncate_by_pixels(l, font, _PILL_MAX_TEXT_W) for l in linhas]
+
+    imagens = [_pill_line(l, font, font.size) for l in linhas]
+    largura_texto = max(im.width for im in imagens)
+    altura_linha = max(im.height for im in imagens)
+    passo = round(altura_linha * 1.25)
+    pw = largura_texto + 2 * _PILL_PAD_X
+    ph = 2 * _PILL_PAD_Y + (len(imagens) - 1) * passo + altura_linha
+
+    x_centro = _STORY_W // 2
+    y_centro = round(_STORY_H * _STORY_LINK_Y.get(posicao or "", 0.86))
+    x0 = x_centro - pw // 2
+    y0 = max(8, min(y_centro - ph // 2, _STORY_H - ph - 8))
+
+    pill = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+    d = ImageDraw.Draw(pill)
+    d.rounded_rectangle(
+        (0, 0, pw - 1, ph - 1), radius=ph // 2, fill=_PILL_BG, outline=_PILL_BORDER, width=2
+    )
+    y = _PILL_PAD_Y
+    for im in imagens:
+        pill.alpha_composite(im, ((pw - im.width) // 2, y))
+        y += passo
+
+    fundo = canvas.convert("RGBA")
+    fundo.alpha_composite(pill, (x0, y0))
+    fd, nome = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        fundo.convert("RGB").save(nome, "JPEG", quality=95)
+    except Exception as exc:  # noqa: BLE001
+        Path(nome).unlink(missing_ok=True)
+        raise AdapterError(f"não deu para salvar a pílula do link: {exc}") from exc
+
+    sticker = {
+        "type": "story_link",
+        "x": round((x0 + pw / 2) / _STORY_W, 7),
+        "y": round((y0 + ph / 2) / _STORY_H, 7),
+        "z": 0,
+        "width": round(pw / _STORY_W, 7),
+        "height": round(ph / _STORY_H, 7),
+        "rotation": 0.0,
+        "extra": {"link_type": "web", "url": link, "tap_state_str_id": "link_sticker_default"},
+    }
+    return Path(nome), sticker
+
+
 class InstagramAdapter(PlatformAdapter):
     name = "instagram"
 
@@ -660,24 +835,35 @@ class InstagramAdapter(PlatformAdapter):
             logger.warning("não deu para gerar thumbnail do reel: %s", exc)
             return None
 
-    # posição do link/sticker no story (fração da tela 0..1). O sticker do link
-    # fica no centro horizontal; 'inferior' é o comportamento padrão do app.
-    _LINK_Y = {"superior": 0.14, "meio": 0.5, "inferior": 0.86}
-
     def _upload_story(self, ctx: PublishContext) -> list[str]:
+        """Upload de cada imagem do story. Com link: a pílula branca é desenhada
+        na mídia e o texto do story vira o rótulo do botão — a área de toque do
+        sticker cobre exatamente a pílula. Sem link: o texto segue como legenda
+        nativa do story (comportamento anterior)."""
         ids: list[str] = []
         paths = self._media_paths(ctx)
         if not paths:
             raise AdapterError("story sem mídia para enviar")
-        links = self._prepare_story_links(self._story_links(ctx))
-        for path in paths:
-            media = self._client.photo_upload_to_story(
-                path,
-                caption=self._story_caption(ctx),
-                links=links,
-            )
-            ids.append(str(media.pk))
-            self._uploaded_media_ids.append(str(media.pk))
+        temp_files: list[Path] = []
+        try:
+            for path in paths:
+                destino = path
+                caption = self._story_caption(ctx) or ""
+                stickers = None
+                if ctx.story_link:
+                    renderizado, sticker = _render_story_pill(
+                        path, caption, ctx.story_link, ctx.story_link_posicao
+                    )
+                    temp_files.append(renderizado)
+                    destino = str(renderizado)
+                    stickers = self._prepare_story_stickers([sticker])
+                    caption = ""  # o texto agora vive DENTRO da pílula (rótulo do botão)
+                media = self._client.photo_upload_to_story(destino, caption=caption, stickers=stickers)
+                ids.append(str(media.pk))
+                self._uploaded_media_ids.append(str(media.pk))
+        finally:
+            for arquivo in temp_files:
+                arquivo.unlink(missing_ok=True)
         return ids
 
     def _story_caption(self, ctx: PublishContext) -> str:
@@ -688,33 +874,21 @@ class InstagramAdapter(PlatformAdapter):
             return f"{base}\n\n{extra}"
         return base or extra
 
-    def _story_links(self, ctx: PublishContext) -> list[dict] | None:
-        """Link do story no contrato do núcleo: dict com webUri (e x/y quando a
-        posição foi definida na configuração)."""
-        if not ctx.story_link:
-            return None
-        link: dict = {"webUri": ctx.story_link}
-        y = self._LINK_Y.get(ctx.story_link_posicao or "")
-        if y is not None:
-            link["x"] = 0.5
-            link["y"] = y
-        return [link]
-
-    def _prepare_story_links(self, links: list[dict] | None):
-        """O instagrapi 2.x espera objetos StoryLink (pydantic) no configure do
+    def _prepare_story_stickers(self, stickers: list[dict] | None):
+        """O instagrapi espera objetos StorySticker (pydantic) no configure do
         story — dicts crus quebram com AttributeError. A conversão só acontece
         quando o cliente REAL (instagrapi.Client) está em uso; stubs de teste e
         outros transportes seguem recebendo o contrato em dicts."""
-        if not links:
+        if not stickers:
             return None
         try:
             from instagrapi import Client as IgClient  # noqa: PLC0415
-            from instagrapi.types import StoryLink  # noqa: PLC0415
+            from instagrapi.types import StorySticker  # noqa: PLC0415
         except ImportError:  # pragma: no cover - ambiente sem instagrapi
-            return links
+            return stickers
         if isinstance(self._client, IgClient):
-            return [StoryLink(**link) for link in links]
-        return links
+            return [StorySticker(**s) for s in stickers]
+        return stickers
 
     def create_story(self, ctx: PublishContext) -> None:
         """Stories: a sequência de imagens (media_paths) é enviada em publish()."""
@@ -723,7 +897,7 @@ class InstagramAdapter(PlatformAdapter):
                 raise AdapterError(f"mídia do story não encontrada: {path or '(vazio)'}")
 
     def attach_link(self, ctx: PublishContext) -> None:
-        """Link do story é aplicado junto do upload (parâmetro links). Nada extra a fazer."""
+        """Link do story é aplicado junto do upload (pílula renderizada + stickers). Nada extra a fazer."""
         return None
 
     def confirm_publication(self, ctx: PublishContext, result: PublishResult) -> bool:

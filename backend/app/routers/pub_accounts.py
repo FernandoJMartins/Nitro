@@ -12,12 +12,14 @@ from ..deps import get_current_user
 from ..models import User
 from .. import security
 from ..publishing.core.proxies import check_proxy
-from ..publishing.core.publications import _proxy_dict, adapter_for_platform
+from ..publishing.core.publications import _proxy_dict, adapter_for_platform, execute_publication
+from ..publishing.core.stories import _frames_of_plan
 from ..publishing.models import (
     Account,
     AudioAsset,
     CaptionTemplate,
     Content,
+    ContentMedia,
     Proxy,
     Publication,
     PublishingDefaults,
@@ -564,3 +566,77 @@ def list_story_history(
         )
         for p in pubs
     ]
+
+
+@router.post("/accounts/{account_id}/stories/{plan_id}/post-now", response_model=StoryHistoryOut)
+def post_story_now(account_id: int, plan_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Publica AGORA o story do modelo (botão "Postar agora" da lista de stories).
+
+    Cria o conteúdo + a publicação e executa o upload na hora (sincrono). Se o
+    processo cair entre a criação e a execução, a publicação fica PENDING e o
+    scheduler assume no ciclo seguinte. Se der certo, o plano conta como "já
+    gerado hoje" — o horário normal do dia não repete o story."""
+    account = _get_account(db, user, account_id)
+    if account.status != "pronta":
+        raise HTTPException(409, "Conta não está pronta para publicação — confira sessão/proxy em Contas.")
+
+    plan = db.scalar(
+        select(StoryPlan)
+        .join(StoryConfig, StoryConfig.id == StoryPlan.story_config_id)
+        .where(StoryPlan.id == plan_id, StoryConfig.account_id == account.id)
+    )
+    if plan is None:
+        raise HTTPException(404, "Modelo de story não encontrado.")
+    cfg = db.get(StoryConfig, plan.story_config_id)
+
+    frames = _frames_of_plan(db, plan)
+    if not frames:
+        raise HTTPException(400, "Modelo sem imagens — adicione imagens e salve antes de postar.")
+    paths = [caminho for caminho, _, _ in frames]
+    texto = plan.texto or " / ".join(t for _, t, _ in frames if t) or cfg.texto
+    link = plan.link or next((lnk for _, _, lnk in frames if lnk), None) or cfg.link
+
+    agora = datetime.now(timezone.utc)
+    content = Content(
+        user_id=account.user_id,
+        kind="story",
+        origem="manual",
+        caminho=paths[0],
+        legenda=texto,
+        link=link,
+        link_posicao=plan.link_posicao,
+        texto_extra=plan.texto_extra,
+        account_id=account.id,
+        approval_status="aprovado",
+        schedule_mode="especifico",
+        scheduled_at=agora,
+    )
+    db.add(content)
+    db.flush()
+    for ordem, caminho in enumerate(paths):
+        db.add(ContentMedia(content_id=content.id, caminho=caminho, ordem=ordem))
+    pub = Publication(content_id=content.id, account_id=account.id, status="PENDING", scheduled_at=agora)
+    db.add(pub)
+    db.commit()
+    db.refresh(pub)
+
+    # executa na hora. Se o scheduler já tiver pego esta publicação no meio-tempo
+    # (status ≠ PENDING), não executa de novo.
+    if pub.status == "PENDING":
+        execute_publication(db, pub)
+        db.refresh(pub)
+
+    if pub.status == "PUBLISHED":
+        plan.ultima_geracao_em = datetime.now(timezone.utc)
+        db.commit()
+
+    return StoryHistoryOut(
+        id=pub.id,
+        content_id=pub.content.id,
+        status=pub.status,
+        scheduled_at=pub.scheduled_at,
+        confirmado_em=pub.confirmado_em,
+        erro=pub.erro,
+        legenda=pub.content.legenda,
+        link=pub.content.link,
+    )
