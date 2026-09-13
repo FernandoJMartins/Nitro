@@ -30,11 +30,23 @@ def _ensure_column(table: str, column: str, ddl_type: str) -> None:
 
 _ensure_column("generated_videos", "tipo_video", "VARCHAR(16)")
 _ensure_column("phrase_types", "share_slug", "VARCHAR(32)")
+_ensure_column("pub_proxies", "nome_interno", "VARCHAR(100)")
+# bancos antigos: a coluna legada "nome" (host:porta) vira o nome interno inicial
+_insp = inspect(engine)
+if "pub_proxies" in _insp.get_table_names() and "nome" in {c["name"] for c in _insp.get_columns("pub_proxies")}:
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE pub_proxies SET nome_interno = nome WHERE nome_interno IS NULL OR nome_interno = ''"))
 _ensure_column("pub_accounts", "senha_enc", "TEXT")
+_ensure_column("pub_accounts", "sessionid_enc", "TEXT")
+_ensure_column("pub_accounts", "pending_login_data", "TEXT")
 _ensure_column("pub_accounts", "ultimo_erro_em", "TIMESTAMP")
 _ensure_column("pub_contents", "link", "TEXT")
-_ensure_column("pub_defaults", "trending_enabled", "BOOLEAN")
-_ensure_column("pub_defaults", "ultima_coleta_em", "TIMESTAMP")
+_ensure_column("pub_contents", "link_posicao", "VARCHAR(16)")
+_ensure_column("pub_contents", "texto_extra", "TEXT")
+_ensure_column("pub_story_plans", "texto", "TEXT")
+_ensure_column("pub_story_plans", "link", "TEXT")
+_ensure_column("pub_story_plans", "link_posicao", "VARCHAR(16)")
+_ensure_column("pub_story_plans", "texto_extra", "TEXT")
 
 app = FastAPI(title="Vídeos em Massa API", version="0.1.0")
 

@@ -19,6 +19,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
+      # versão de app para o login legado do Instagram (o fork do instagrapi só
+      # conhece versões antigas que o Instagram está rejeitando) — ver app/config.py
+      INSTAGRAM_APP_VERSION: ${INSTAGRAM_APP_VERSION:-446.0.0.49.77}
+      INSTAGRAM_APP_VERSION_CODE: ${INSTAGRAM_APP_VERSION_CODE:-1060018354}
     volumes:
       - storage:/app/storage
       # fontes locais (ex.: emoji da Apple) — largue o .ttf/.ttc/.otf em ./fonts

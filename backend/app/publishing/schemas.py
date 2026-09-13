@@ -8,10 +8,21 @@ from pydantic import BaseModel, ConfigDict
 
 # ---------- Proxies ----------
 class ProxyCreate(BaseModel):
-    nome: str
+    nome_interno: str | None = None  # vazio = padrão host:porta
     protocolo: str = "socks5"
     host: str
     porta: int
+    usuario: str | None = None
+    senha: str | None = None
+
+
+class ProxyUpdate(BaseModel):
+    """Edição de proxy: só os campos enviados mudam; senha em branco mantém a atual."""
+
+    nome_interno: str | None = None
+    protocolo: str | None = None
+    host: str | None = None
+    porta: int | None = None
     usuario: str | None = None
     senha: str | None = None
 
@@ -20,7 +31,7 @@ class ProxyOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    nome: str
+    nome_interno: str
     protocolo: str
     host: str
     porta: int
@@ -41,6 +52,9 @@ class AccountCreate(BaseModel):
     # senha em texto puro só nesta requisição — é criptografada antes de salvar
     # (ver security.encrypt_secret) e nunca é devolvida pela API.
     senha: str | None = None
+    # cookie de sessão do navegador — alternativa à senha que contorna o fluxo
+    # de login (senha/CAA) que o Instagram costuma responder com 429.
+    sessionid: str | None = None
     proxy_id: int | None = None
     posts_por_hora: int | None = None
     janela_inicio: str | None = None
@@ -56,6 +70,7 @@ class AccountUpdate(BaseModel):
     username: str | None = None
     status: str | None = None
     senha: str | None = None
+    sessionid: str | None = None
     proxy_id: int | None = None
     posts_por_hora: int | None = None
     janela_inicio: str | None = None
@@ -78,7 +93,7 @@ class ProxyOutBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    nome: str
+    nome_interno: str
     status: str
 
 
@@ -91,6 +106,7 @@ class AccountOut(BaseModel):
     platform: str
     status: str
     senha_configurada: bool
+    sessionid_configurada: bool
     session_configurada: bool
     proxy_id: int | None
     posts_por_hora: int | None
@@ -114,13 +130,10 @@ class PublishingDefaultsUpdate(BaseModel):
     janela_inicio: str
     janela_fim: str
     timezone: str
-    trending_enabled: bool | None = None
 
 
 class PublishingDefaultsOut(PublishingDefaultsUpdate):
     model_config = ConfigDict(from_attributes=True)
-
-    ultima_coleta_em: datetime | None = None
 
 
 # ---------- Legendas ----------
@@ -181,6 +194,11 @@ class StoryFrameUpdate(BaseModel):
 
 class StoryPlanUpdate(BaseModel):
     horario: str
+    # texto/link/posição do link/texto extra do story inteiro (1 story = 1 texto, 1 link)
+    texto: str | None = None
+    link: str | None = None
+    link_posicao: str | None = None  # 'superior' | 'meio' | 'inferior'
+    texto_extra: str | None = None
     frames: list[StoryFrameUpdate] = []
 
 
@@ -202,6 +220,8 @@ class StoryPlanOut(BaseModel):
     media_ids: list[int]
     texto: str | None
     link: str | None
+    link_posicao: str | None
+    texto_extra: str | None
     ultima_geracao_em: datetime | None
 
 

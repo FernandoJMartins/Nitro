@@ -8,8 +8,9 @@ import History from "./History";
 import ApiKeys from "./ApiKeys";
 import Utils from "./Utils";
 import Publishing from "./Publishing";
+import Stories from "./Stories";
 
-type Section = "midias" | "frases" | "criar" | "historico" | "publicacao" | "utilitarios" | "api";
+type Section = "midias" | "frases" | "criar" | "historico" | "publicacao" | "stories" | "utilitarios" | "api";
 
 /* ícones de linha, no estilo Instagram (stroke fino, 24px) */
 function Icon({ name, active }: { name: Section; active: boolean }) {
@@ -69,6 +70,14 @@ function Icon({ name, active }: { name: Section; active: boolean }) {
           <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8 6.2 21l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.3-.3-.3-2.3 2.6-2.6Z" />
         </svg>
       );
+    case "stories": // anel de story (círculo + plus)
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="8" x2="12" y2="16" />
+          <line x1="8" y1="12" x2="16" y2="12" />
+        </svg>
+      );
     case "api": // perfil / chave
       return (
         <svg {...common} fill={active ? "currentColor" : "none"}>
@@ -85,6 +94,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "criar", label: "Criar" },
   { id: "historico", label: "Histórico" },
   { id: "publicacao", label: "Publicação" },
+  { id: "stories", label: "Stories" },
   { id: "utilitarios", label: "Utilitários" },
   { id: "api", label: "API" },
 ];
@@ -95,6 +105,7 @@ const TITLES: Record<Section, string> = {
   criar: "Criar",
   historico: "Histórico",
   publicacao: "Publicação",
+  stories: "Stories",
   utilitarios: "Utilitários",
   api: "API",
 };
@@ -171,6 +182,7 @@ export default function App() {
         {section === "criar" && <Create />}
         {section === "historico" && <History />}
         {section === "publicacao" && <Publishing />}
+        {section === "stories" && <Stories />}
         {section === "utilitarios" && <Utils />}
         {section === "api" && <ApiKeys />}
       </main>

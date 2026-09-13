@@ -26,7 +26,7 @@ class Proxy(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, index=True)
-    nome: Mapped[str] = mapped_column(String(100))
+    nome_interno: Mapped[str] = mapped_column(String(100))  # rótulo amigável exibido na UI (padrão: host:porta)
     protocolo: Mapped[str] = mapped_column(String(16), default="socks5")
     host: Mapped[str] = mapped_column(String(255))
     porta: Mapped[int] = mapped_column(Integer)
@@ -64,11 +64,21 @@ class Account(Base):
     # blob opaco devolvido pelo PlatformAdapter (cookies/tokens/etc). Núcleo não interpreta.
     session_data: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # estado de um login CAA incompleto (device ids do desafio de código). O retry
+    # com o código de verificação reidrata esse blob para reusar o MESMO device —
+    # senão o Instagram emite um código novo e o código digitado não vale. Limpo
+    # quando o login conclui (com sucesso ou erro terminal).
+    pending_login_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     proxy_id: Mapped[int | None] = mapped_column(ForeignKey("pub_proxies.id", ondelete="SET NULL"), nullable=True)
 
     # senha da conta, criptografada em repouso (Fernet — ver app/security.py). Nunca
     # devolvida pela API em texto puro; guardada para quando existir um adapter real.
     senha_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # cookie de sessão (sessionid) colado pelo operador — criptografado em repouso
+    # como a senha. Permite conectar ignorando o fluxo de login (que leva 429).
+    sessionid_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # override do PublishingDefaults do usuário quando setado (null = usa o padrão global)
     posts_por_hora: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -97,6 +107,10 @@ class Account(Base):
         return bool(self.senha_enc)
 
     @property
+    def sessionid_configurada(self) -> bool:
+        return bool(self.sessionid_enc)
+
+    @property
     def session_configurada(self) -> bool:
         return bool(self.session_data)
 
@@ -112,9 +126,6 @@ class PublishingDefaults(Base):
     janela_inicio: Mapped[str] = mapped_column(String(5), default="08:00")
     janela_fim: Mapped[str] = mapped_column(String(5), default="23:00")
     timezone: Mapped[str] = mapped_column(String(64), default="America/Sao_Paulo")
-    # coleta de áudios em alta de uma fonte externa real (opt-in)
-    trending_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    ultima_coleta_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CaptionTemplate(Base):
@@ -172,7 +183,12 @@ class StoryConfig(Base):
 
 
 class StoryPlan(Base):
-    """Um story agendado dentro de um StoryConfig — vários por dia, cada um com sua janela."""
+    """Um story agendado dentro de um StoryConfig — vários por dia, cada um com sua janela.
+
+    Texto/link/posição do link/texto extra vivem AQUI (1 story = 1 texto, 1 link).
+    StoryFrame.texto/link seguem existindo por compatibilidade com bancos antigos
+    (quando o plano não tem valores próprios, a geração cai neles).
+    """
 
     __tablename__ = "pub_story_plans"
 
@@ -182,6 +198,11 @@ class StoryPlan(Base):
     )
     horario: Mapped[str] = mapped_column(String(5), default="18:00")  # "HH:MM"
     ordem: Mapped[int] = mapped_column(Integer, default=0)
+    texto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # posição do link/sticker do story: 'superior' | 'meio' | 'inferior' (padrão de envio: inferior)
+    link_posicao: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    texto_extra: Mapped[str | None] = mapped_column(Text, nullable=True)
     ultima_geracao_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -226,6 +247,9 @@ class Content(Base):
         ForeignKey("pub_accounts.id", ondelete="SET NULL"), nullable=True, index=True
     )
     link: Mapped[str | None] = mapped_column(String(512), nullable=True)  # link clicável (stories)
+    # posição do link do story ('superior' | 'meio' | 'inferior') — snapshot no momento da geração
+    link_posicao: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    texto_extra: Mapped[str | None] = mapped_column(Text, nullable=True)  # texto extra opcional do story
 
     approval_status: Mapped[str] = mapped_column(String(16), default="pendente", index=True)
     # 'pendente' | 'aprovado' | 'rejeitado'

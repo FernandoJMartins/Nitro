@@ -21,6 +21,11 @@ class SessionExpiredError(AdapterError):
     """A sessão da conta não é mais válida — precisa de reautenticação manual."""
 
 
+class ThrottledError(AdapterError):
+    """A plataforma limitou as tentativas (rate limit/429). Recuperável, mas exige
+    espera — re-tentar na hora só piora o bloqueio."""
+
+
 def build_proxy_url(proxy: dict | None) -> str | None:
     """Converte o dict de proxy do núcleo na URL de transporte esperada pela
     automação (ex.: 'socks5://usuario:senha@host:porta')."""
@@ -50,8 +55,17 @@ class PublishContext:
     kind: str  # 'reel' | 'story'
     story_text: str | None = None
     story_link: str | None = None
+    # posição do link/sticker do story: 'superior' | 'meio' | 'inferior' (None = padrão do adapter)
+    story_link_posicao: str | None = None
+    story_text_extra: str | None = None
     # código de verificação (2FA/desafio) informado pelo operador na hora do login
     verification_code: str | None = None
+    # cookie de sessão (sessionid) colado pelo operador — permite login sem o fluxo
+    # de senha/CAA, que é o que o Instagram costuma responder com 429.
+    sessionid: str | None = None
+    # estado de login pendente (device ids do desafio CAA anterior) — o retry com o
+    # código de verificação precisa reusar o MESMO device para o código valer.
+    pending_login_data: str | None = None
     # stories com várias imagens em sequência: todos os caminhos na ordem (media_path é o primeiro)
     media_paths: list[str] = field(default_factory=list)
 

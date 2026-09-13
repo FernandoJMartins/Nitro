@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog, NameDialog } from "./Dialog";
 import {
-  collectTrendingAudio,
   createFolder,
   deleteFolder,
   deleteMedia,
   downloadUrl,
-  listAudio,
+  importMusicLink,
   listFolders,
   listMedia,
   renameFolder,
@@ -14,7 +13,6 @@ import {
   type Folder,
   type Media,
   type MediaType,
-  type TrendingAudio,
 } from "./api";
 
 // tipos de mídia que vivem DENTRO de uma pasta
@@ -126,6 +124,36 @@ function MediaCard({ m, onDelete }: { m: Media; onDelete: () => void }) {
   );
 }
 
+function MusicRow({ m, onDelete }: { m: Media; onDelete: () => void }) {
+  return (
+    <li className="card music-row">
+      <div className="music-row-info">
+        <strong className="vtext" title={m.nome_original}>
+          {m.nome_original}
+        </strong>
+        <div className="meta">
+          {formatSize(m.tamanho_bytes)}
+          {m.duracao != null && <> · {m.duracao}s</>}
+        </div>
+      </div>
+      <audio controls preload="metadata" src={downloadUrl(m.id)} className="music-row-player" />
+      <div className="music-row-actions">
+        <a href={downloadUrl(m.id)} className="btn sm" download>
+          Baixar
+        </a>
+        <button
+          className="btn danger sm"
+          onClick={async () => {
+            if (confirm("Remover esta música?")) onDelete();
+          }}
+        >
+          Excluir
+        </button>
+      </div>
+    </li>
+  );
+}
+
 type Dialog =
   | { kind: "criar" }
   | { kind: "renomear"; folder: Folder }
@@ -144,26 +172,25 @@ export default function MediaLibrary() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [counts, setCounts] = useState<Partial<Record<MediaType, number>>>({});
 
-  // áudios em alta (Top Brasil) — coletados de fonte externa real
-  const [trending, setTrending] = useState<TrendingAudio[]>([]);
-  const [trendBusy, setTrendBusy] = useState(false);
-  const [trendMsg, setTrendMsg] = useState<string | null>(null);
+  // importação de áudio por link do Instagram
+  const [linkAudio, setLinkAudio] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkMsg, setLinkMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (view === "musicas") listAudio().then(setTrending).catch(() => {});
-  }, [view]);
-
-  async function coletarTrending() {
-    setTrendBusy(true);
-    setTrendMsg(null);
+  async function importarAudioPorLink() {
+    const url = linkAudio.trim();
+    if (!url) return;
+    setLinkBusy(true);
+    setLinkMsg(null);
     try {
-      const novos = await collectTrendingAudio();
-      setTrendMsg(`Top Brasil consultado: ${novos.length} áudio(s) em alta atualizado(s).`);
-      setTrending(await listAudio());
+      const media = await importMusicLink(url);
+      setLinkMsg(`✅ Importado: ${media.nome_original}`);
+      setLinkAudio("");
+      await loadItems();
     } catch (e) {
-      setTrendMsg(`⚠ ${String(e)}`);
+      setLinkMsg(`⚠ ${String(e)}`);
     } finally {
-      setTrendBusy(false);
+      setLinkBusy(false);
     }
   }
 
@@ -312,10 +339,38 @@ export default function MediaLibrary() {
         <>
           <p className="sub">Músicas ficam disponíveis para todos os vídeos. Metadados removidos no upload.</p>
           <Dropzone label="Enviar música (.mp3, .wav…)" accept="audio/*" onFiles={onFiles} />
+
+          <div className="card" style={{ marginTop: 12 }}>
+            <div className="card-main" style={{ width: "100%" }}>
+              <strong>🔗 Importar áudio do Instagram por link</strong>
+              <p className="hint">
+                Cole o link de um áudio de reels (ex.: instagram.com/reels/audio/…). Sons originais são
+                baixados completos; músicas licenciadas (Universal e afins) não têm arquivo liberado — só
+                metadados.
+              </p>
+              <div className="row" style={{ gap: 8 }}>
+                <input
+                  className="input"
+                  style={{ flex: 1 }}
+                  placeholder="https://www.instagram.com/reels/audio/…"
+                  value={linkAudio}
+                  onChange={(e) => setLinkAudio(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") importarAudioPorLink();
+                  }}
+                />
+                <button className="btn primary" onClick={importarAudioPorLink} disabled={linkBusy || !linkAudio.trim()}>
+                  {linkBusy ? "Importando…" : "Importar"}
+                </button>
+              </div>
+              {linkMsg && <div className={linkMsg.startsWith("✅") ? "hint" : "error"} style={{ marginTop: 8 }}>{linkMsg}</div>}
+            </div>
+          </div>
+
           {loading && <div className="loading">Processando…</div>}
-          <ul className="grid">
+          <ul className="list music-list">
             {items.map((m) => (
-              <MediaCard
+              <MusicRow
                 key={m.id}
                 m={m}
                 onDelete={async () => {
@@ -326,41 +381,6 @@ export default function MediaLibrary() {
             ))}
             {!loading && items.length === 0 && <li className="empty">Nenhuma música ainda.</li>}
           </ul>
-
-          <div className="card" style={{ marginTop: 24 }}>
-            <div className="card-main" style={{ width: "100%" }}>
-              <strong>🔥 Áudios em alta — Top Brasil</strong>
-              <p className="hint">
-                Fonte externa real (Apple Music “mais tocadas no Brasil” — Top 100, com filtro de música
-                brasileira). Alimenta o modo de áudio automático das contas de publicação, que sorteiam entre eles
-                com viés de popularidade. O catálogo acumula a cada coleta.
-              </p>
-              {trendMsg && <div className={trendMsg.startsWith("⚠") ? "error" : "hint"}>{trendMsg}</div>}
-              <button className="btn sm" style={{ margin: "8px 0" }} onClick={coletarTrending} disabled={trendBusy}>
-                {trendBusy ? "Consultando Top Brasil…" : "↻ Coletar agora"}
-              </button>
-              <ul className="list" style={{ maxHeight: 480, overflowY: "auto" }}>
-                {trending
-                  .filter((a) => a.provider === "trending")
-                  .sort((a, b) => (a.popularidade ?? 999) - (b.popularidade ?? 999))
-                  .map((a) => (
-                    <li key={a.id} className="card">
-                      <div className="card-main">
-                        <strong>
-                          {a.popularidade != null && <span className="badge">#{a.popularidade}</span>} 🎵 {a.nome}
-                        </strong>
-                        <div className="meta">
-                          coletado em {new Date(a.coletado_em).toLocaleString("pt-BR")}
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                {trending.filter((a) => a.provider === "trending").length === 0 && (
-                  <li className="empty">Nada coletado ainda — clique em “Coletar agora”.</li>
-                )}
-              </ul>
-            </div>
-          </div>
         </>
       )}
 

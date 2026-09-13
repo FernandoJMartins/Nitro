@@ -12,6 +12,9 @@ import json
 import os
 import tempfile
 
+import pytest
+
+from app.config import settings
 from app.publishing.platforms.base import AdapterError, PublishContext, SessionExpiredError, build_proxy_url
 from app.publishing.platforms.instagram import InstagramAdapter
 
@@ -24,6 +27,40 @@ class StubMedia:
 class BadPassword(Exception):
     """Mesmo nome da exceção real do instagrapi — o adapter mapeia por nome."""
     pass
+
+
+class ClientThrottledError(Exception):
+    """Mesmo nome da exceção real do instagrapi — o adapter mapeia por nome."""
+    pass
+
+
+class PleaseWaitFewMinutes(Exception):
+    """Mesmo nome da exceção real do instagrapi — o adapter mapeia por nome."""
+    pass
+
+
+class UnknownError(Exception):
+    """Mesmo nome da exceção real do instagrapi — o adapter mapeia por nome."""
+    pass
+
+
+class ClientError(Exception):
+    """Mesmo nome da exceção real do instagrapi — o adapter mapeia por nome."""
+    pass
+
+
+class ChallengeRequired(Exception):
+    """Mesmo nome da exceção real do instagrapi — o adapter mapeia por nome."""
+    pass
+
+
+@pytest.fixture(autouse=True)
+def _sem_versao_de_operador(monkeypatch):
+    """Partida determinística: sem INSTAGRAM_APP_VERSION vinda do ambiente, para
+    os testes do fallback enxergarem a lista completa do fork. Os testes da
+    versão do operador sobrescrevem o valor dentro do próprio teste."""
+    monkeypatch.setattr(settings, "instagram_app_version", "")
+    monkeypatch.setattr(settings, "instagram_app_version_code", "")
 
 
 class StubClient:
@@ -47,12 +84,17 @@ class StubClient:
         self.settings["authorization_data"] = {"ds_user_id": "1", "user": username}
         self.ultimo_codigo = verification_code
 
+    def login_by_sessionid(self, sessionid):
+        if len(sessionid) < 30 or not sessionid[0].isdigit():
+            raise RuntimeError("invalid sessionid")
+        self.settings["authorization_data"] = {"ds_user_id": sessionid.split("%")[0], "user": "perfil01"}
+
     def get_timeline_feed(self):
         if not self.settings.get("authorization_data"):
             raise RuntimeError("login required")
         return {"items": []}
 
-    def clip_upload(self, path, caption=""):
+    def clip_upload(self, path, caption="", thumbnail=None):
         if not self.settings.get("authorization_data"):
             raise RuntimeError("login required")
         self.uploads.append((path, caption))
@@ -231,11 +273,494 @@ def test_story_com_multiplas_imagens_em_sequencia():
         os.unlink(b)
 
 
+def test_story_link_posicionado_e_texto_extra():
+    a = _tmp_video()
+    try:
+        adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
+        ctx = _ctx(
+            kind="story",
+            media_path=a,
+            story_text="Chama no link",
+            story_link="https://exemplo.com",
+            story_link_posicao="superior",
+            story_text_extra="Oferta só hoje!",
+        )
+        adapter.open()
+        session = adapter.login(ctx)
+        ctx.session_data = session
+        adapter.create_story(ctx)
+        adapter.attach_link(ctx)
+        result = adapter.publish(ctx)
+        assert len(adapter._client.stories) == 1
+        _, caption, links = adapter._client.stories[0]
+        assert caption == "Chama no link\n\nOferta só hoje!"
+        assert links == [{"webUri": "https://exemplo.com", "x": 0.5, "y": 0.14}]
+    finally:
+        os.unlink(a)
+
+
+def test_story_link_sem_posicao_nao_leva_coordenadas():
+    a = _tmp_video()
+    try:
+        adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
+        ctx = _ctx(kind="story", media_path=a, story_link="https://exemplo.com")
+        adapter.open()
+        session = adapter.login(ctx)
+        ctx.session_data = session
+        adapter.create_story(ctx)
+        adapter.publish(ctx)
+        _, caption, links = adapter._client.stories[0]
+        assert caption == ""
+        assert links == [{"webUri": "https://exemplo.com"}]
+    finally:
+        os.unlink(a)
+
+
 def test_confirmacao_exige_midia_existente_na_plataforma():
     adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
     ctx = _ctx()
     assert adapter.confirm_publication(ctx, type("R", (), {"external_id": "pk-inexistente"})()) is False
     assert adapter.confirm_publication(ctx, type("R", (), {"external_id": None})()) is False
+
+
+def test_throttle_429_vira_adapter_error_com_instrucao():
+    from app.publishing.platforms.instagram import _error_from_exception
+
+    erro = _error_from_exception(ClientThrottledError("429"), "login")
+    assert isinstance(erro, AdapterError)
+    assert not isinstance(erro, SessionExpiredError)
+    assert "429" in str(erro)
+    assert "aguarde" in str(erro).lower()
+
+
+def test_please_wait_minutos_vira_throttle_nao_sessao_expirada():
+    from app.publishing.platforms.instagram import _error_from_exception
+
+    erro = _error_from_exception(PleaseWaitFewMinutes("wait"), "login")
+    assert isinstance(erro, AdapterError)
+    assert not isinstance(erro, SessionExpiredError)
+
+
+def test_default_client_nao_engole_throttle_do_login_caa():
+    """O fork do instagrapi engole o 429 do CAA e re-levanta o erro do login legado
+    (ex.: 'out of date'); o client padrão do adapter precisa propagar o throttle."""
+    try:
+        from instagrapi.exceptions import ClientThrottledError as RealThrottle  # noqa: PLC0415
+
+        from app.publishing.platforms.instagram import _default_client_factory  # noqa: PLC0415
+    except ImportError:
+        return  # ambiente sem instagrapi (ex.: host) — pulado
+
+    client = _default_client_factory(None)
+
+    def _bloks_429(verification_code=""):
+        raise RealThrottle("429")
+
+    client.bloks_caa_login = _bloks_429
+    try:
+        client._try_caa_login(RuntimeError("erro original do login legado"))
+        raise AssertionError("deveria ter propagado o throttle em vez de engolir")
+    except RealThrottle:
+        pass
+
+
+def test_login_com_sessionid_persiste_sessao():
+    client = StubClient()
+    adapter = InstagramAdapter(client_factory=lambda proxy: client)
+    session = adapter.login_with_sessionid(_ctx(sessionid="12345678901234567890%3Aabcd1234abcd1234"))
+    assert session is not None
+    data = json.loads(session)
+    assert data["authorization_data"]["user"] == "perfil01"
+
+
+def test_login_com_sessionid_invalido_e_recusado():
+    adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
+    try:
+        adapter.login_with_sessionid(_ctx(sessionid="curto"))
+        raise AssertionError("deveria ter levantado")
+    except SessionExpiredError as exc:
+        assert "sessionid" in str(exc)
+
+
+def _com_instagrapi() -> bool:
+    try:
+        import instagrapi  # noqa: PLC0415, F401
+        return True
+    except ImportError:
+        return False
+
+
+def _factory_legado(sucesso_na_versao=None, login_do_caa=None, erro_do_caa=None):
+    """Factory dos testes de login (roda só com instagrapi instalado): cria
+    clientes REAIS (init offline) com `login` (fluxo CAA do fork 3.x) e
+    `login_legacy` substituídos por fakes que decidem por versão de app — sem
+    tocar na rede."""
+    from app.publishing.platforms.instagram import _default_client_factory  # noqa: PLC0415
+
+    criados = []
+    set_settings_calls = []
+
+    def factory(proxy_url=None):
+        client = _default_client_factory(proxy_url)
+
+        original_set_settings = client.set_settings
+
+        def _set_settings(settings_dict):
+            set_settings_calls.append(settings_dict)
+            return original_set_settings(settings_dict)
+
+        client.set_settings = _set_settings
+
+        def _login_caa(username, password, **kwargs):
+            if erro_do_caa is not None:
+                raise erro_do_caa
+            if login_do_caa is None:
+                raise ClientError("CAA login did not return a session")
+            return login_do_caa(client, username, password)
+
+        def _login_legado(username, password, **kwargs):
+            if client.device_settings.get("app_version") == sucesso_na_versao:
+                # o fork serializa self.authorization_data (get_settings) — é o que o adapter persiste
+                client.authorization_data = {"ds_user_id": "1", "user": username}
+                return True
+            raise UnknownError("needs_upgrade")
+
+        client.login = _login_caa
+        client.login_legacy = _login_legado
+        criados.append(client)
+        return client
+
+    factory.set_settings_calls = set_settings_calls  # type: ignore[attr-defined]
+    return factory, criados
+
+
+def test_login_caa_primeiro_nao_toca_o_legado_quando_passa():
+    """CAA (login do fork 3.x) é o fluxo principal: quando passa, o login
+    legado NEM é tentado."""
+    if not _com_instagrapi():
+        return
+    caa_called = []
+
+    def login_do_caa(client, username, password):
+        caa_called.append(True)
+        client.authorization_data = {"ds_user_id": "1", "user": username}
+        return True
+
+    factory, criados = _factory_legado(sucesso_na_versao=None, login_do_caa=login_do_caa)
+    adapter = InstagramAdapter(client_factory=factory)
+    session = adapter.login(_ctx())
+    assert session is not None
+    assert json.loads(session)["authorization_data"]["user"] == "perfil01"
+    assert caa_called == [True]
+    # só o cliente inicial + o do CAA — nenhum cliente legado foi criado
+    assert len(criados) == 2
+
+
+def test_login_caa_falha_generica_cai_no_legado():
+    """CAA falhou com erro genérico → o adapter tenta as versões legadas do
+    fork (plano B) e conecta quando uma passa."""
+    if not _com_instagrapi():
+        return
+    factory, criados = _factory_legado(sucesso_na_versao="428.0.0.47.67")
+    adapter = InstagramAdapter(client_factory=factory)
+    session = adapter.login(_ctx())
+    assert session is not None
+    assert json.loads(session)["authorization_data"]["user"] == "perfil01"
+    # cliente inicial (vira a 1ª tentativa legada: 446 falha) + CAA + 428 ok
+    assert len(criados) == 3
+    assert not getattr(criados[1], "skip_caa_login", False)  # cliente do CAA
+    assert getattr(criados[0], "skip_caa_login")  # tentativas legadas
+    assert getattr(criados[2], "skip_caa_login")
+
+
+def test_login_caa_com_throttle_levanta_erro_sem_tocar_o_legado():
+    """429 no CAA: ThrottledError imediato — o legado não é queimado (não
+    conserta limite de tentativas)."""
+    if not _com_instagrapi():
+        return
+    factory, criados = _factory_legado(sucesso_na_versao=None, erro_do_caa=ClientThrottledError("429"))
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except AdapterError as exc:
+        assert "429" in str(exc)
+    assert len(criados) == 2  # inicial + CAA; nenhum cliente legado
+
+
+def test_login_caa_com_erro_de_conta_nao_tenta_o_legado():
+    """Senha errada no CAA: SessionExpiredError imediato — tentar o legado com
+    a mesma senha não muda o resultado."""
+    if not _com_instagrapi():
+        return
+    factory, criados = _factory_legado(sucesso_na_versao=None, erro_do_caa=BadPassword("senha errada"))
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except SessionExpiredError as exc:
+        assert "BadPassword" in str(exc)
+    assert len(criados) == 2
+
+
+def test_login_legado_todas_rejeitadas_erro_claro():
+    """CAA genérico falhou e TODAS as versões legadas foram rejeitadas
+    (needs_upgrade) → erro claro para o operador."""
+    if not _com_instagrapi():
+        return
+    factory, criados = _factory_legado(sucesso_na_versao=None)
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except AdapterError as exc:
+        assert "needs_upgrade" in str(exc)
+    assert len(criados) == 5  # inicial + CAA + 3 clientes das versões seguintes
+
+
+def test_login_caa_desafio_anexa_estado_pendente():
+    """Desafio (código por e-mail) no CAA: SessionExpiredError com o estado do
+    cliente anexado para o retry reusar os device ids."""
+    if not _com_instagrapi():
+        return
+    factory, criados = _factory_legado(sucesso_na_versao=None, erro_do_caa=ChallengeRequired("code required"))
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except SessionExpiredError as exc:
+        assert "código" in str(exc) or "verificação" in str(exc)
+        assert getattr(exc, "pending_login_data", None)
+        dados = json.loads(exc.pending_login_data)
+        assert "device_settings" in dados
+    assert len(criados) == 2  # inicial + CAA; sem legado
+
+
+def test_login_caa_code_entry_ausente_vira_desafio():
+    """A extração do code_entry falhou (formato novo do Instagram): mesmo erro
+    do desafio — pede o código e anexa o estado, sem cair no legado morto."""
+    if not _com_instagrapi():
+        return
+    factory, criados = _factory_legado(
+        sucesso_na_versao=None, erro_do_caa=ClientError("missing code_entry context_data")
+    )
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except SessionExpiredError as exc:
+        assert getattr(exc, "pending_login_data", None)
+    assert len(criados) == 2  # sem queimar as versões legadas
+
+
+def test_login_retry_com_codigo_reusa_device_ids():
+    """Retry com pending_login_data: o client do CAA reidrata o estado salvo
+    (mesmos device ids) antes de tentar de novo."""
+    if not _com_instagrapi():
+        return
+    from app.publishing.platforms.instagram import _default_client_factory  # noqa: PLC0415
+
+    def login_do_caa(client, username, password):
+        client.authorization_data = {"ds_user_id": "1", "user": username}
+        return True
+
+    factory, _ = _factory_legado(sucesso_na_versao=None, login_do_caa=login_do_caa)
+    # estado pendente: settings de um client real (device ids fixos)
+    c0 = _default_client_factory(None)
+    pending = json.dumps(c0.get_settings())
+
+    adapter = InstagramAdapter(client_factory=factory)
+    session = adapter.login(_ctx(pending_login_data=pending))
+    assert session is not None
+    assert json.loads(session)["authorization_data"]["user"] == "perfil01"
+    assert factory.set_settings_calls
+    assert json.loads(pending)["uuids"]["uuid"] == factory.set_settings_calls[0]["uuids"]["uuid"]
+
+
+def test_login_caa_throttle_nao_anexa_pendente():
+    """429 segue sendo throttle puro: sem estado pendente anexado."""
+    if not _com_instagrapi():
+        return
+    factory, _ = _factory_legado(sucesso_na_versao=None, erro_do_caa=ClientThrottledError("429"))
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except AdapterError as exc:
+        assert "429" in str(exc)
+        assert getattr(exc, "pending_login_data", None) is None
+
+
+def test_extract_context_tolerante_acha_mapa_antes_do_app_id():
+    """O formato novo do Instagram põe o app do code_entry DEPOIS do mapa f4i;
+    a extração tolerante acha o context_data mesmo assim (e a exata não)."""
+    if not _com_instagrapi():
+        return
+    from app.publishing.platforms.instagram import _default_client_factory  # noqa: PLC0415
+    from instagrapi.mixins.bloks import AP_2SV_CODE_ENTRY  # noqa: PLC0415
+
+    client = _default_client_factory(None)
+    blobs = {
+        "payload": (
+            '(f4i (dkc "chave" "context_data") (dkc "valor" "TOKEN_DO_DESAFIO_123")) '
+            '"com.bloks.www.ap.two_step_verification.code_entry"'
+        )
+    }
+    assert client._extract_context_tolerante(blobs) == "TOKEN_DO_DESAFIO_123"
+    assert not client.bloks_extract_context_data(blobs, AP_2SV_CODE_ENTRY)
+
+
+def test_extrair_audio_id_do_link():
+    from app.publishing.platforms.instagram import extrair_audio_id_do_link
+
+    assert extrair_audio_id_do_link("https://www.instagram.com/reels/audio/27428515753468092/") == "27428515753468092"
+    assert extrair_audio_id_do_link("https://www.instagram.com/reels/audio/27428515753468092") == "27428515753468092"
+    assert extrair_audio_id_do_link("instagram.com/reels/audio/123/") == "123"
+    assert extrair_audio_id_do_link("https://www.instagram.com/reel/ABC123/") is None
+    assert extrair_audio_id_do_link("") is None
+
+
+class StubTrackClient:
+    """Client fake só para fetch_audio_por_link: set_settings + track_info_by_id."""
+
+    def __init__(self, pagina):
+        self.pagina = pagina
+        self.settings = None
+
+    def set_settings(self, s):
+        self.settings = s
+
+    def track_info_by_id(self, track_id):
+        assert str(track_id) == "27428515753468092"
+        return self.pagina
+
+
+def _pagina_som_original():
+    return {
+        "metadata": {
+            "original_sound_info": {
+                "audio_asset_id": "27428515753468092",
+                "original_audio_title": "Original audio",
+                "duration_in_ms": 8543,
+                "progressive_download_url": "https://cdn.example/o1/v/t2/f2/m86/TOKEN",
+                "ig_artist": {"username": "luisguilherrrme", "profile_pic_url": "https://cdn.example/pic.jpg"},
+            }
+        }
+    }
+
+
+def test_fetch_audio_por_link_som_original():
+    from app.publishing.platforms.instagram import fetch_audio_por_link
+
+    dados = fetch_audio_por_link(
+        "https://www.instagram.com/reels/audio/27428515753468092/",
+        '{"x": 1}',
+        client_factory=lambda proxy: StubTrackClient(_pagina_som_original()),
+    )
+    assert dados["download_url"] == "https://cdn.example/o1/v/t2/f2/m86/TOKEN"
+    assert dados["original"] is True
+    assert dados["artista"] == "luisguilherrrme"
+    assert "luisguilherrrme" in dados["titulo"]  # título genérico vira @artista
+
+
+def test_fetch_audio_por_link_musica_licenciada():
+    from app.publishing.platforms.instagram import fetch_audio_por_link
+
+    pagina = {
+        "metadata": {
+            "music_info": {
+                "music_asset_info": {
+                    "title": "Música Viral",
+                    "display_artist": "Artista Universal",
+                    "duration_in_ms": 30000,
+                }
+            }
+        }
+    }
+    dados = fetch_audio_por_link(
+        "https://www.instagram.com/reels/audio/27428515753468092/",
+        "{}",
+        client_factory=lambda proxy: StubTrackClient(pagina),
+    )
+    assert dados["download_url"] is None
+    assert dados["original"] is False
+    assert dados["titulo"] == "Música Viral"
+    assert dados["artista"] == "Artista Universal"
+
+
+def test_fetch_audio_por_link_url_invalida():
+    from app.publishing.platforms.instagram import fetch_audio_por_link
+
+    try:
+        fetch_audio_por_link("https://www.instagram.com/reel/ABC/", "{}", client_factory=lambda p: None)
+        raise AssertionError("deveria ter levantado")
+    except AdapterError as exc:
+        assert "link inválido" in str(exc)
+
+
+def test_login_usa_versao_configurada_do_operador(monkeypatch):
+    """INSTAGRAM_APP_VERSION configurada: no plano B legado, o adapter registra
+    a versão no APP_SETTINGS do fork, tenta SÓ ela (sem queimar as versões
+    antigas) e monta o User-Agent com a versão/código do operador."""
+    if not _com_instagrapi():
+        return
+    import instagrapi.config as ig_config  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "instagram_app_version", "446.0.0.28.66")
+    monkeypatch.setattr(settings, "instagram_app_version_code", "1060018354")
+    try:
+        factory, criados = _factory_legado(sucesso_na_versao="446.0.0.28.66")
+        adapter = InstagramAdapter(client_factory=factory)
+        session = adapter.login(_ctx())
+        assert session is not None
+        assert json.loads(session)["authorization_data"]["user"] == "perfil01"
+        # inicial (reaproveitado no legado) + CAA — uma única tentativa legada
+        assert len(criados) == 2
+        assert getattr(criados[0], "skip_caa_login")
+        assert not getattr(criados[1], "skip_caa_login", False)
+        # User-Agent montado com a versão/código do operador
+        assert "446.0.0.28.66" in criados[0].user_agent
+        assert "1060018354" in criados[0].user_agent
+    finally:
+        monkeypatch.delitem(ig_config.APP_SETTINGS, "446.0.0.28.66", raising=False)
+
+
+def test_login_operador_rejeitada_e_caa_falhou_erro_claro(monkeypatch):
+    """Versão do operador também rejeitada no legado (com CAA já falho) → erro
+    claro, sem queimar as 4 versões antigas do fork."""
+    if not _com_instagrapi():
+        return
+    import instagrapi.config as ig_config  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "instagram_app_version", "446.0.0.28.66")
+    monkeypatch.setattr(settings, "instagram_app_version_code", "1060018354")
+    try:
+        factory, criados = _factory_legado(sucesso_na_versao=None)
+        adapter = InstagramAdapter(client_factory=factory)
+        try:
+            adapter.login(_ctx())
+            raise AssertionError("deveria ter levantado")
+        except AdapterError as exc:
+            assert "needs_upgrade" in str(exc)
+        # inicial (legado com a versão do operador) + CAA — sem as 4 antigas
+        assert len(criados) == 2
+    finally:
+        monkeypatch.delitem(ig_config.APP_SETTINGS, "446.0.0.28.66", raising=False)
+
+
+def test_login_ignora_versao_configurada_sem_code(monkeypatch):
+    """INSTAGRAM_APP_VERSION sem o _CODE: configuração incompleta é ignorada
+    (aviso no log) e o plano B usa a lista completa do fork."""
+    if not _com_instagrapi():
+        return
+    monkeypatch.setattr(settings, "instagram_app_version", "446.0.0.28.66")
+    monkeypatch.setattr(settings, "instagram_app_version_code", "")
+    factory, criados = _factory_legado(sucesso_na_versao="428.0.0.47.67")
+    adapter = InstagramAdapter(client_factory=factory)
+    session = adapter.login(_ctx())
+    assert session is not None
+    # inicial (446 falha) + CAA + 428 ok — lista completa do fork, sem override
+    assert len(criados) == 3
 
 
 if __name__ == "__main__":

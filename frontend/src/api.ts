@@ -135,6 +135,10 @@ export async function uploadMedia(tipo: MediaType, file: File, folderId?: number
   return jsonOrThrow(r);
 }
 
+export function importMusicLink(url: string, isTrending = false): Promise<Media> {
+  return apiSend(`${BASE}/music/importar-link`, "POST", { url, is_trending: isTrending });
+}
+
 export function moveMedia(id: number, folderId: number | null): Promise<Media> {
   return apiSend(`${BASE}/${id}/folder`, "PATCH", { folder_id: folderId });
 }
@@ -402,7 +406,7 @@ const PUB = `${V1}/publishing`;
 
 export interface Proxy {
   id: number;
-  nome: string;
+  nome_interno: string;
   protocolo: string;
   host: string;
   porta: number;
@@ -419,7 +423,7 @@ export function listProxies(): Promise<Proxy[]> {
   return apiGetAsync(`${PUB}/proxies`);
 }
 export function createProxy(body: {
-  nome: string;
+  nome_interno?: string;
   host: string;
   porta: number;
   protocolo?: string;
@@ -427,6 +431,19 @@ export function createProxy(body: {
   senha?: string;
 }): Promise<Proxy> {
   return apiSend(`${PUB}/proxies`, "POST", body);
+}
+export function updateProxy(
+  id: number,
+  body: {
+    nome_interno?: string;
+    protocolo?: string;
+    host?: string;
+    porta?: number;
+    usuario?: string | null;
+    senha?: string;
+  }
+): Promise<Proxy> {
+  return apiSend(`${PUB}/proxies/${id}`, "PATCH", body);
 }
 export function deleteProxy(id: number): Promise<void> {
   return apiSend(`${PUB}/proxies/${id}`, "DELETE");
@@ -444,6 +461,7 @@ export interface PubAccount {
   platform: string;
   status: AccountStatus;
   senha_configurada: boolean;
+  sessionid_configurada: boolean;
   session_configurada: boolean;
   proxy_id: number | null;
   posts_por_hora: number | null;
@@ -458,7 +476,7 @@ export interface PubAccount {
   ultimo_post_em: string | null;
   ultimo_erro: string | null;
   criado_em: string;
-  proxy: { id: number; nome: string; status: string } | null;
+  proxy: { id: number; nome_interno: string; status: string } | null;
 }
 
 export interface AccountBody {
@@ -467,6 +485,8 @@ export interface AccountBody {
   platform?: string;
   // texto puro só na ida — o backend criptografa antes de salvar e nunca devolve.
   senha?: string;
+  // cookie de sessão do navegador — contorna o fluxo de login (senha/CAA) que leva 429.
+  sessionid?: string;
   proxy_id?: number | null;
   posts_por_hora?: number | null;
   janela_inicio?: string | null;
@@ -510,8 +530,6 @@ export interface PublishingDefaults {
   janela_inicio: string;
   janela_fim: string;
   timezone: string;
-  trending_enabled?: boolean;
-  ultima_coleta_em?: string | null;
 }
 export function getPublishingDefaults(): Promise<PublishingDefaults> {
   return apiGetAsync(`${PUB}/defaults`);
@@ -559,6 +577,8 @@ export interface StoryPlanOut {
   media_ids: number[];
   texto: string | null;
   link: string | null;
+  link_posicao: string | null;
+  texto_extra: string | null;
   ultima_geracao_em: string | null;
 }
 export function getStoryConfig(accountId: number): Promise<StoryConfig> {
@@ -572,7 +592,14 @@ export function updateStoryConfig(
     texto?: string | null;
     link?: string | null;
     horario?: string;
-    plans?: { horario: string; frames: { media_id: number; texto?: string | null; link?: string | null }[] }[];
+    plans?: {
+      horario: string;
+      texto?: string | null;
+      link?: string | null;
+      link_posicao?: string | null;
+      texto_extra?: string | null;
+      frames: { media_id: number; texto?: string | null; link?: string | null }[];
+    }[];
   }
 ): Promise<StoryConfig> {
   return apiSend(`${PUB}/accounts/${accountId}/story-config`, "PUT", body);
@@ -687,6 +714,14 @@ export function reschedulePublication(id: number, scheduled_at: string): Promise
   return apiSend(`${PUB}/publications/${id}/reschedule`, "PATCH", { scheduled_at });
 }
 
+export function cancelPublications(ids: number[]): Promise<{ cancelados: number }> {
+  return apiSend(`${PUB}/publications/cancel`, "POST", { ids });
+}
+
+export function postNowPublications(ids: number[]): Promise<{ adiantadas: number }> {
+  return apiSend(`${PUB}/publications/post-now`, "POST", { ids });
+}
+
 export interface AccountErrorOut {
   account_id: number;
   username: string;
@@ -715,24 +750,6 @@ export interface PubDashboard {
 }
 export function getPubDashboard(): Promise<PubDashboard> {
   return apiGetAsync(`${PUB}/dashboard`);
-}
-
-export interface TrendingAudio {
-  id: number;
-  nome: string;
-  provider: string;
-  platform: string;
-  external_id: string | null;
-  referencia: string | null;
-  popularidade: number | null;
-  status: string;
-  coletado_em: string;
-}
-export function listAudio(): Promise<TrendingAudio[]> {
-  return apiGetAsync(`${PUB}/audio`);
-}
-export function collectTrendingAudio(): Promise<TrendingAudio[]> {
-  return apiSend(`${PUB}/audio/collect`, "POST");
 }
 
 export interface TimelineItem {

@@ -13,14 +13,13 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 
 from ...config import settings
 from ...database import SessionLocal
-from ..models import Account, Publication, PublishingDefaults
-from .audio import collect_trending_audio
+from ..models import Account, Publication
 from .publications import execute_publication, reconcile_stale_publications
 from .scheduling import build_schedule_for_account
 from .stories import ensure_daily_stories
@@ -59,27 +58,6 @@ def _run_account_queue(account_id: int, pub_ids: list[int]) -> None:
         db.close()
 
 
-def _maybe_collect_trending(db) -> None:
-    """Coleta áudios em alta da fonte externa para usuários com trending habilitado,
-    respeitando o intervalo de refresh. Nunca derruba o ciclo: erro fica no log."""
-    usuarios = list(
-        db.scalars(select(PublishingDefaults).where(PublishingDefaults.trending_enabled.is_(True)))
-    )
-    if not usuarios:
-        return
-    agora = datetime.now(timezone.utc)
-    for defaults in usuarios:
-        ultima = _aware(defaults.ultima_coleta_em) if defaults.ultima_coleta_em else None
-        if ultima and agora - ultima < timedelta(hours=settings.trending_refresh_hours):
-            continue
-        try:
-            collect_trending_audio(db, defaults.user_id)
-            defaults.ultima_coleta_em = agora
-            db.commit()
-        except Exception:  # noqa: BLE001 — fonte externa fora não pode parar o scheduler
-            logger.exception("Falha ao coletar áudios em alta (user %s)", defaults.user_id)
-
-
 def run_cycle() -> None:
     """1 ciclo do scheduler: reconcilia publicações presas, refaz o calendário de cada
     conta pronta, gera os stories do dia quando configurados, e executa o que estiver devido.
@@ -87,7 +65,6 @@ def run_cycle() -> None:
     db = SessionLocal()
     try:
         reconcile_stale_publications(db)
-        _maybe_collect_trending(db)
 
         accounts = list(db.scalars(select(Account).where(Account.status == "pronta")))
         for account in accounts:
@@ -101,14 +78,13 @@ def run_cycle() -> None:
                 logger.exception("Falha ao agendar conta %s", account.id)
 
         now = datetime.now(timezone.utc)
-        due = list(
-            db.scalars(
-                select(Publication.id, Publication.account_id).where(
-                    Publication.status.in_(("PENDING", "RETRYING")),
-                    Publication.scheduled_at <= now,
-                )
+        # execute() (não scalars!): duas colunas — scalars devolveria só a primeira
+        due = db.execute(
+            select(Publication.id, Publication.account_id).where(
+                Publication.status.in_(("PENDING", "RETRYING")),
+                Publication.scheduled_at <= now,
             )
-        )
+        ).all()
         # fila própria por conta: agrupa as publicações devidas e executa cada conta
         # numa thread (no máximo settings.publishing_concurrency contas em paralelo).
         grupos: dict[int, list[int]] = {}

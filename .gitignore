@@ -23,3 +23,9 @@ Thumbs.db
 
 # cache de build do TypeScript
 frontend/*.tsbuildinfo
+
+# artefatos de smoke test / testes locais
+backend/_smoke*.db
+backend/_smoke*/
+backend/_test_tmp/
+.codewhale/

@@ -86,6 +86,8 @@ def _build_context(db: Session, content: Content, account: Account) -> PublishCo
         kind=content.kind,
         story_text=content.legenda if content.kind == "story" else None,
         story_link=content.link,
+        story_link_posicao=content.link_posicao,
+        story_text_extra=content.texto_extra,
         media_paths=media_paths,
     )
 

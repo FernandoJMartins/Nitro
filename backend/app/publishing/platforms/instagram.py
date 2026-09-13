@@ -29,8 +29,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
-from .base import AdapterError, PlatformAdapter, PublishContext, PublishResult, SessionExpiredError, build_proxy_url
+from ...config import settings
+
+from .base import (
+    AdapterError,
+    PlatformAdapter,
+    PublishContext,
+    PublishResult,
+    SessionExpiredError,
+    ThrottledError,
+    build_proxy_url,
+)
 
 logger = logging.getLogger("nitro.publishing.instagram")
 
@@ -42,10 +53,79 @@ _SESSION_EXPIRED_NAMES = {
     "SelectContactPointRecoveryForm",
     "RecaptchaChallengeForm",
     "TwoFactorRequired",
-    "PleaseWaitFewMinutes",
     "LoginRequired",
     "UserNotFound",
 }
+
+# Nomes de exceção do instagrapi que significam "o Instagram está limitando as
+# tentativas AGORA" (rate limit/429). Diferente de sessão expirada: a conta pode
+# estar boa — o IP usado (proxy ou o do próprio servidor) é que está marcado.
+_THROTTLE_NAMES = {
+    "ClientThrottledError",
+    "PleaseWaitFewMinutes",
+}
+
+# Versões de app conhecidas do fork para o LOGIN LEGADO. O login legado é o
+# endpoint que NÃO sofre o 429 que atinge o CAA/bloks; o Instagram, porém, vem
+# rejeitando versões específicas com "needs_upgrade" — então o adapter roda o
+# legado em cada versão antes de desistir. A padrão vem primeiro; a lista é lida
+# do config do instagrapi quando a lib está instalada. Quando o operador define
+# INSTAGRAM_APP_VERSION (+ _CODE), só a versão dele é tentada (ver
+# _operator_app_version) — as demais são mais antigas e só queimam tentativas do IP.
+_LEGACY_APP_VERSIONS_FALLBACK = [
+    "446.0.0.49.77",
+    "428.0.0.47.67",
+    "385.0.0.47.74",
+    "364.0.0.35.86",
+]
+
+
+def _operator_app_version(config_module) -> str | None:
+    """Versão de app configurada pelo operador (INSTAGRAM_APP_VERSION +
+    INSTAGRAM_APP_VERSION_CODE), registrada no APP_SETTINGS do fork. O
+    `override_app_version` do fork NÃO serve para isso: o set_app desfaz a
+    versão dada e volta ao default — registrar a entrada no APP_SETTINGS é o
+    que faz o set_device montar o User-Agent com a versão desejada.
+
+    O bloks_versioning_id reaproveita o do default do fork (o mais novo
+    conhecido): o login legado não usa bloks, mas o header X-Bloks-Version-Id
+    é enviado em toda requisição privada e um valor plausível é melhor do que
+    o header ausente.
+    """
+    versao = (settings.instagram_app_version or "").strip()
+    if not versao:
+        return None
+    code = (settings.instagram_app_version_code or "").strip()
+    if not code:
+        logger.warning(
+            "INSTAGRAM_APP_VERSION definida sem INSTAGRAM_APP_VERSION_CODE — "
+            "versão configurada ignorada (usando as versões do fork)"
+        )
+        return None
+    bloks = config_module.APP_SETTINGS.get(config_module.DEFAULT_APP_VERSION, {}).get(
+        "bloks_versioning_id", ""
+    )
+    config_module.APP_SETTINGS[versao] = {
+        "app_version": versao,
+        "version_code": code,
+        "bloks_versioning_id": bloks,
+    }
+    return versao
+
+
+def _app_versions_do_fork() -> list[str]:
+    try:
+        from instagrapi import config  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - ambiente sem instagrapi
+        return list(_LEGACY_APP_VERSIONS_FALLBACK)
+    operador = _operator_app_version(config)
+    if operador:
+        # só a versão do operador: as demais são mais antigas e o Instagram as
+        # rejeita em bloco quando sobe o mínimo — tentá-las só queima o limite
+        # de tentativas do IP (429) antes de chegar ao CAA.
+        return [operador]
+    default = config.DEFAULT_APP_VERSION
+    return [default] + [v for v in config.APP_SETTINGS if v != default]
 
 
 def _default_client_factory(proxy_url: str | None):
@@ -53,21 +133,278 @@ def _default_client_factory(proxy_url: str | None):
     do sistema (e os testes) funciona sem a biblioteca instalada."""
     try:
         from instagrapi import Client  # noqa: PLC0415
+        from instagrapi.exceptions import (  # noqa: PLC0415
+            ChallengeError,
+            ClientError,
+            ClientThrottledError,
+            TwoFactorRequired,
+        )
     except ImportError as exc:  # pragma: no cover - depende do ambiente
         raise AdapterError(
             "biblioteca 'instagrapi' não instalada no backend (adicione em requirements.txt)"
         ) from exc
+
+    class _ThrottleAwareClient(Client):
+        """Client que NÃO engole o 429 do login CAA no fallback do legado.
+
+        O fork do instagrapi (fixado em requirements.txt) trata o throttle do
+        endpoint bloks/CAA dentro do `login_legacy` como "fallback falhou" —
+        só um warning no log — e re-levanta o erro do login legado (ex.: "Your
+        version of Instagram is out of date"), escondendo a causa real do
+        operador. Este override é o `_try_caa_login` do fork com DUAS
+        diferenças: ClientThrottledError é propagado para o adapter devolver a
+        mensagem correta, e o atributo `skip_caa_login` permite rodar só o
+        login legado (sem tocar no bloks). No fluxo principal (CAA via
+        `login`) o fork 3.x propaga o throttle sozinho — este override só
+        protege o plano B legado.
+        """
+
+        # Quando True, _try_caa_login desiste SEM tocar no endpoint bloks/CAA —
+        # usado pelo adapter para testar versões de app no login legado antes
+        # de queimar o limite de tentativas do CAA (que responde 429).
+        skip_caa_login = False
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # Sem TTY no backend, o handler padrão do fork chama input() e
+            # estoura (EOFError) no desafio. Devolver None faz o fork levantar
+            # ChallengeRequired — que o adapter converte no pedido de código
+            # para o operador.
+            self.challenge_code_handler = lambda username, choice=None: None
+
+        def _try_caa_login(self, exc: Exception, verification_code: str = "") -> bool:
+            if self.skip_caa_login:
+                return False
+            try:
+                outcome = self.bloks_caa_login(verification_code=verification_code)
+            except ClientThrottledError:
+                raise
+            except (ChallengeError, TwoFactorRequired):
+                raise
+            except ClientError as caa_exc:
+                self.logger.warning("CAA login fallback failed: %s", caa_exc)
+                return False
+            if outcome.get("logged_in"):
+                return True
+            context = str(outcome.get("two_step_verification_context") or "")
+            if not context:
+                return False
+            if not verification_code.strip():
+                raise TwoFactorRequired(
+                    f"{exc} (Instagram returned a Bloks two-factor context from the CAA login flow; "
+                    "provide verification_code for login)",
+                    response=getattr(exc, "response", None),
+                ) from exc
+            return self._login_with_bloks_two_factor(
+                verification_code,
+                {"two_step_verification_context": context},
+                exc,
+            )
+
+        # ---- desafio profile-code (código por e-mail): extração TOLERANTE ----
+
+        def bloks_caa_resolve_two_step_verification(
+            self, send_result: dict, verification_code: str = "", domain: str | None = None
+        ) -> dict:
+            """Resolve o desafio profile-code com extração de contexto mais
+            tolerante que a do fork.
+
+            O Instagram mudou o formato da tela de código: a extração exata do
+            fork (app id seguido imediatamente do mapa f4i) não acha mais o
+            context_data do code_entry — resultado: "missing code_entry
+            context_data". Esta versão tenta a extração do fork e, se falhar,
+            procura o token em qualquer mapa f4i da mesma string do app id,
+            antes ou depois dele. Em último caso, dumpa as respostas para
+            diagnóstico e devolve o mesmo motivo do fork.
+            """
+            from instagrapi.mixins.bloks import (  # noqa: PLC0415
+                AP_2SV_CODE_ENTRY,
+                AP_2SV_CODE_ENTRY_ASYNC,
+                AP_2SV_ENTRYPOINT,
+            )
+            from instagrapi.mixins.challenge import ChallengeChoice  # noqa: PLC0415
+
+            entry_context = self.bloks_extract_context_data(send_result, AP_2SV_ENTRYPOINT)
+            if not entry_context:
+                return {"logged_in": False, "reason": "missing entrypoint context_data"}
+            entry_result = self.bloks_ap_two_step_verification_entrypoint(entry_context, domain=domain)
+
+            code_context = self.bloks_extract_context_data(entry_result, AP_2SV_CODE_ENTRY)
+            if not code_context:
+                code_context = self._extract_context_tolerante(entry_result)
+            if not code_context:
+                self._dump_caa_debug(send_result, entry_result)
+                return {"logged_in": False, "reason": "missing code_entry context_data"}
+
+            code_result = self.bloks_ap_two_step_verification_code_entry(code_context, domain=domain)
+            submit_context = self.bloks_extract_context_data(code_result, AP_2SV_CODE_ENTRY_ASYNC)
+            if not submit_context:
+                submit_context = self._extract_context_tolerante(code_result)
+            if not submit_context:
+                self._dump_caa_debug(send_result, entry_result)
+                return {"logged_in": False, "reason": "missing code_entry_async context_data"}
+
+            code = verification_code or self.challenge_code_or_raised(ChallengeChoice.EMAIL)
+            try:
+                submit_result = self.bloks_ap_two_step_verification_submit_code(
+                    submit_context,
+                    code,
+                    domain=domain,
+                )
+            except ChallengeError:
+                raise
+            except ClientError as exc:
+                raise ChallengeError(
+                    f"CAA profile-code submission failed: {exc}",
+                    response=getattr(exc, "response", None),
+                ) from exc
+            return {
+                "logged_in": self.bloks_apply_login_response(submit_result),
+                "reason": "",
+                "result": submit_result,
+            }
+
+        def _extract_context_tolerante(self, result: dict) -> str:
+            """Procura context_data em QUALQUER mapa (f4i) numa string que
+            menciona o app do code_entry — independente da posição do app id."""
+            import re  # noqa: PLC0415
+
+            from instagrapi.mixins.bloks import (  # noqa: PLC0415
+                AP_2SV_CODE_ENTRY,
+                AP_2SV_CODE_ENTRY_ASYNC,
+            )
+
+            strings: list[str] = []
+            self._bloks_collect_strings(result, strings)
+            ids = (AP_2SV_CODE_ENTRY, AP_2SV_CODE_ENTRY_ASYNC)
+            for texto in strings:
+                if not any(app_id in texto for app_id in ids):
+                    continue
+                for match in re.finditer(r"\(f4i", texto):
+                    expression = self._bloks_parenthesized_expression(texto, match.start())
+                    if not expression:
+                        continue
+                    groups: list[list[str]] = []
+                    cursor = 0
+                    while True:
+                        group_start = expression.find("(dkc", cursor)
+                        if group_start < 0:
+                            break
+                        group = self._bloks_parenthesized_expression(expression, group_start)
+                        if not group:
+                            break
+                        groups.append(self._bloks_string_literals(group))
+                        cursor = group_start + len(group)
+                    for keys, values in zip(groups, groups[1:]):
+                        if "context_data" in keys:
+                            idx = keys.index("context_data")
+                            if idx < len(values) and values[idx]:
+                                return values[idx]
+            return ""
+
+        def _dump_caa_debug(self, send_result: dict, entry_result: dict) -> None:
+            """Diagnóstico best-effort: grava as respostas brutas do desafio para
+            análise (sem credenciais — só as árvores bloks)."""
+            import json as _json  # noqa: PLC0415
+            import os as _os  # noqa: PLC0415
+            import time as _time  # noqa: PLC0415
+
+            try:
+                diretorio = _os.environ.get("STORAGE_DIR", "/app/storage")
+                caminho = _os.path.join(diretorio, f"_debug_caa_{int(_time.time())}.json")
+                with open(caminho, "w", encoding="utf-8") as f:
+                    _json.dump({"send_result": send_result, "entry_result": entry_result}, f, default=str)
+                self.logger.warning("code_entry não extraído do desafio CAA — dump em %s", caminho)
+            except Exception as exc:  # pragma: no cover — diagnóstico best-effort
+                self.logger.warning("falha ao gravar diagnóstico do CAA: %s", exc)
+
     kwargs = {}
     if proxy_url:
         kwargs["proxy"] = proxy_url
-    return Client(**kwargs)
+    return _ThrottleAwareClient(**kwargs)
 
 
 def _error_from_exception(exc: Exception, etapa: str) -> AdapterError:
     """Mapeia exceções do transporte para o contrato do núcleo (AdapterError x SessionExpiredError)."""
+    if type(exc).__name__ in _THROTTLE_NAMES:
+        return ThrottledError(
+            f"{etapa}: Instagram limitou as tentativas desta conta/IP (429 Too Many Requests). "
+            "Aguarde alguns minutos antes de tentar de novo — tentativas repetidas pioram o bloqueio. "
+            "Se persistir (mesmo sem proxy), o IP usado está marcado: tente por outro IP/proxy "
+            "residencial ou aguarde mais tempo."
+        )
     if type(exc).__name__ in _SESSION_EXPIRED_NAMES:
         return SessionExpiredError(f"{etapa}: {type(exc).__name__} — {exc}")
     return AdapterError(f"{etapa}: {type(exc).__name__} — {exc}")
+
+
+# ---- importação de áudio por link (/reels/audio/{id}/) ----
+
+_AUDIO_LINK_RE = re.compile(r"/reels/audio/(\d+)/?")
+
+
+def extrair_audio_id_do_link(url: str | None) -> str | None:
+    """Extrai o id numérico de um link de áudio do Instagram
+    (https://www.instagram.com/reels/audio/{id}/)."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    match = _AUDIO_LINK_RE.search(url)
+    return match.group(1) if match else None
+
+
+def fetch_audio_por_link(
+    url: str,
+    session_data: str,
+    proxy_url: str | None = None,
+    client_factory=None,
+) -> dict:
+    """Busca metadados + URL de download do áudio de um link do Instagram.
+
+    Usa a sessão de uma conta conectada (track_info_by_id — a superfície da
+    página /reels/audio/). Som original tem `progressive_download_url` (arquivo
+    completo baixável); música licenciada só tem metadados (download_url None).
+    O transporte é injetável via client_factory para testes offline.
+    """
+    audio_id = extrair_audio_id_do_link(url)
+    if not audio_id:
+        raise AdapterError(
+            "link inválido — use o formato https://www.instagram.com/reels/audio/{id}/"
+        )
+    factory = client_factory or _default_client_factory
+    client = factory(proxy_url)
+    try:
+        client.set_settings(json.loads(session_data))
+    except (ValueError, TypeError) as exc:
+        raise SessionExpiredError(f"sessão persistida ilegível: {exc}") from exc
+    try:
+        pagina = client.track_info_by_id(audio_id)
+    except Exception as exc:  # noqa: BLE001 — mapeado para o contrato do núcleo
+        raise _error_from_exception(exc, "busca de áudio") from exc
+
+    metadata = (pagina or {}).get("metadata") or {}
+    som = metadata.get("original_sound_info") or {}
+    musica = metadata.get("music_info") or {}
+    asset = musica.get("music_asset_info") or {}
+
+    artista = (
+        (som.get("ig_artist") or {}).get("username")
+        or (asset.get("display_artist") or "").strip()
+        or None
+    )
+    titulo = (som.get("original_audio_title") or asset.get("title") or "").strip()
+    if titulo in ("", "Original audio"):
+        titulo = ""
+    return {
+        "audio_id": audio_id,
+        "titulo": titulo or (f"áudio original de @{artista}" if artista else "áudio original"),
+        "artista": artista,
+        "duracao_ms": som.get("duration_in_ms") or asset.get("duration_in_ms"),
+        "capa_url": (som.get("ig_artist") or {}).get("profile_pic_url")
+        or asset.get("cover_artwork_thumbnail_uri"),
+        "download_url": som.get("progressive_download_url") or None,
+        "original": bool(som),
+    }
 
 
 class InstagramAdapter(PlatformAdapter):
@@ -107,19 +444,122 @@ class InstagramAdapter(PlatformAdapter):
         self._ensure_client()
 
     def login(self, ctx: PublishContext) -> str | None:
-        """Autentica com usuário/senha reais e devolve a sessão serializada para persistência."""
+        """Autentica com usuário/senha reais e devolve a sessão serializada para persistência.
+
+        Estratégia (clientes reais): fluxo CAA/bloks PRIMEIRO — é o login atual
+        do app, e no fork 3.x roda com transporte curl_cffi (HTTP/2 + TLS
+        híbrido) que não leva o 429 do transporte requests antigo. Se o CAA
+        falhar por erro genérico (não credencial/2FA nem throttle), tenta o
+        login LEGADO em cada versão conhecida do fork como plano B — o
+        Instagram vem respondendo "needs_upgrade" para todas as versões
+        legadas, então esse caminho só existe como última alternativa.
+        """
         self._ensure_client()
         if not ctx.account_username:
             raise SessionExpiredError("username ausente — não é possível autenticar")
         if not ctx.account_password:
             raise SessionExpiredError("senha ausente — configure a senha da conta para autenticar")
+        kwargs = {"verification_code": ctx.verification_code} if ctx.verification_code else {}
+
+        if not hasattr(self._client, "set_device"):
+            # transporte de teste (stub): mantém o comportamento original
+            try:
+                self._client.login(ctx.account_username, ctx.account_password, **kwargs)
+            except Exception as exc:  # noqa: BLE001 — mapeado para o contrato do núcleo
+                raise _error_from_exception(exc, "login") from exc
+            return self._serialize_session(self._client)
+
+        # 1) CAA/bloks — fluxo atual. Throttle (429) e erro de conta (senha,
+        # 2FA, desafio) param aqui: nada disso se resolve no login legado. O
+        # desafio de código vira SessionExpiredError com o estado do cliente
+        # anexado (pending_login_data) para o retry reusar os MESMOS device ids
+        # — senão o Instagram emite um código novo e o código digitado não vale.
+        caa = self._client_factory(build_proxy_url(self._proxy))
+        if ctx.pending_login_data:
+            # retry do desafio: reidrata o estado salvo da tentativa anterior
+            # (o fork recomenda "retry login after saving client settings").
+            try:
+                caa.set_settings(json.loads(ctx.pending_login_data))
+                logger.info("login CAA: reusando estado do desafio anterior")
+            except Exception as exc:  # noqa: BLE001 — blob ilegível: segue com client novo
+                logger.warning("estado pendente de login ilegível: %s", exc)
         try:
-            kwargs = {}
-            if ctx.verification_code:
-                kwargs["verification_code"] = ctx.verification_code
-            self._client.login(ctx.account_username, ctx.account_password, **kwargs)
+            caa.login(ctx.account_username, ctx.account_password, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — mapeado por nome
+            nome = type(exc).__name__
+            if nome in _THROTTLE_NAMES:
+                raise _error_from_exception(exc, "login CAA") from exc
+            desafiou = (
+                nome in {"ChallengeRequired", "TwoFactorRequired"}
+                or "code_entry" in str(exc)
+                or (ctx.pending_login_data and nome not in _SESSION_EXPIRED_NAMES)
+            )
+            if desafiou:
+                erro = SessionExpiredError(
+                    "login CAA: Instagram pediu um código de verificação "
+                    "(enviado para o e-mail/telefone da conta). Informe o código "
+                    "ao conectar de novo."
+                )
+                erro.pending_login_data = self._serialize_session(caa)
+                raise erro from exc
+            if nome in _SESSION_EXPIRED_NAMES:
+                raise _error_from_exception(exc, "login CAA") from exc
+            logger.warning("login CAA falhou (%s): %s — tentando o login legado", nome, exc)
+        else:
+            self._client = caa
+            logger.info("login CAA OK")
+            return self._serialize_session(caa)
+
+        # 2) Login legado (plano B). No fork 3.x o método é `login_legacy` —
+        # `login` é o CAA. skip_caa_login impede o fallback interno de tocar no
+        # CAA de novo a cada versão tentada.
+        versoes = _app_versions_do_fork()
+        for i, versao in enumerate(versoes):
+            cliente = self._client if i == 0 else self._client_factory(build_proxy_url(self._proxy))
+            setattr(cliente, "skip_caa_login", True)  # só login legado nesta rodada
+            try:
+                cliente.set_device({"app_version": versao}, hydrate_app_profile=True)
+            except Exception as exc:  # noqa: BLE001 — versão fora do APP_SETTINGS do fork
+                logger.warning("app %s indisponível no fork: %s", versao, exc)
+                continue
+            try:
+                cliente.login_legacy(ctx.account_username, ctx.account_password, **kwargs)
+            except Exception as exc:  # noqa: BLE001 — mapeado por nome
+                nome = type(exc).__name__
+                if nome in _THROTTLE_NAMES or nome in _SESSION_EXPIRED_NAMES:
+                    raise _error_from_exception(exc, "login legado") from exc
+                if nome != "UnknownError":
+                    raise _error_from_exception(exc, "login legado") from exc
+                logger.warning("login legado (app %s) rejeitado: %s — %s", versao, nome, exc)
+                continue
+            self._client = cliente
+            logger.info("login legado OK (app %s)", versao)
+            return self._serialize_session(cliente)
+
+        raise AdapterError(
+            "login: o fluxo CAA/bloks falhou e todas as versões de app foram "
+            "rejeitadas pelo login legado (needs_upgrade) — o login legado foi "
+            "descontinuado pelo Instagram; use a senha pelo fluxo CAA ou o cookie sessionid"
+        )
+
+    def login_with_sessionid(self, ctx: PublishContext) -> str | None:
+        """Login via cookie de sessão (sessionid) colado do navegador.
+
+        Contorna por completo o fluxo de login (senha/CAA) — é o caminho quando
+        o Instagram está limitando as tentativas (429). O operador pega o cookie
+        `sessionid` de uma sessão já aberta no navegador e cola na conta.
+        """
+        self._ensure_client()
+        sessionid = (ctx.sessionid or "").strip()
+        if len(sessionid) < 30 or not re.search(r"^\d+", sessionid):
+            raise SessionExpiredError(
+                "sessionid inválido — cole o cookie 'sessionid' completo do navegador "
+                "(o valor começa com o id numérico do usuário)"
+            )
+        try:
+            self._client.login_by_sessionid(sessionid)
         except Exception as exc:  # noqa: BLE001 — mapeado para o contrato do núcleo
-            raise _error_from_exception(exc, "login") from exc
+            raise _error_from_exception(exc, "login via sessionid") from exc
         return self._serialize_session(self._client)
 
     def check_session(self, ctx: PublishContext) -> bool:
@@ -155,15 +595,21 @@ class InstagramAdapter(PlatformAdapter):
         if not ctx.audio_reference:
             return
         self._ensure_client()
-        search = getattr(self._client, "music_search", None)
+        # instagrapi renomeou a busca de música entre versões (music_search → search_music).
+        search = getattr(self._client, "music_search", None) or getattr(self._client, "search_music", None)
         if search is None:
             logger.warning("Transporte não expõe busca de música — publicando sem áudio em alta")
             return
         try:
             resultados = search(ctx.audio_reference)
-            if resultados:
-                track = resultados[0].get("track") if isinstance(resultados[0], dict) else None
+            if not resultados:
+                return
+            primeiro = resultados[0]
+            if isinstance(primeiro, dict):
+                track = primeiro.get("track")
                 self._audio_ref = track.get("id") if isinstance(track, dict) else ctx.audio_reference
+            else:
+                self._audio_ref = getattr(primeiro, "id", None) or getattr(primeiro, "pk", None) or ctx.audio_reference
         except Exception as exc:  # noqa: BLE001 — áudio é best-effort
             logger.warning("Falha ao resolver áudio '%s': %s", ctx.audio_reference, exc)
 
@@ -175,26 +621,100 @@ class InstagramAdapter(PlatformAdapter):
             if ctx.kind == "story":
                 ids = self._upload_story(ctx)
                 return PublishResult(external_id=",".join(ids) if len(ids) > 1 else (ids[0] if ids else None), confirmed=False)
-            media = self._client.clip_upload(ctx.media_path, caption=self._caption or "")
+            thumb = self._gerar_thumbnail(ctx.media_path)
+            try:
+                media = self._client.clip_upload(ctx.media_path, caption=self._caption or "", thumbnail=thumb)
+            finally:
+                if thumb is not None:
+                    thumb.unlink(missing_ok=True)
             self._uploaded_media_ids.append(str(media.pk))
             return PublishResult(external_id=str(media.pk), confirmed=False)
         except Exception as exc:  # noqa: BLE001 — mapeado para o contrato do núcleo
             raise _error_from_exception(exc, "publicação") from exc
+
+    @staticmethod
+    def _gerar_thumbnail(video_path: str):
+        """O fork 3.x EXIGE thumbnail no clip_upload (o MoviePy que gerava
+        sozinho não está instalado no backend). Extrai 1 frame do próprio vídeo
+        com ffmpeg; se não der, devolve None e o fork levanta o erro dele."""
+        import subprocess  # noqa: PLC0415
+        import tempfile  # noqa: PLC0415
+        from pathlib import Path  # noqa: PLC0415
+
+        try:
+            fd, nome = tempfile.mkstemp(suffix=".jpg")
+            os.close(fd)
+            alvo = Path(nome)
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-i", str(video_path),
+                 "-frames:v", "1", "-vf", "scale=720:-2", str(alvo)],
+                capture_output=True,
+                timeout=60,
+                check=True,
+            )
+            if alvo.stat().st_size == 0:
+                alvo.unlink(missing_ok=True)
+                return None
+            return alvo
+        except Exception as exc:  # noqa: BLE001 — best-effort; sem thumb o fork reporta
+            logger.warning("não deu para gerar thumbnail do reel: %s", exc)
+            return None
+
+    # posição do link/sticker no story (fração da tela 0..1). O sticker do link
+    # fica no centro horizontal; 'inferior' é o comportamento padrão do app.
+    _LINK_Y = {"superior": 0.14, "meio": 0.5, "inferior": 0.86}
 
     def _upload_story(self, ctx: PublishContext) -> list[str]:
         ids: list[str] = []
         paths = self._media_paths(ctx)
         if not paths:
             raise AdapterError("story sem mídia para enviar")
+        links = self._prepare_story_links(self._story_links(ctx))
         for path in paths:
             media = self._client.photo_upload_to_story(
                 path,
-                caption=ctx.story_text or "",
-                links=[{"webUri": ctx.story_link}] if ctx.story_link else None,
+                caption=self._story_caption(ctx),
+                links=links,
             )
             ids.append(str(media.pk))
             self._uploaded_media_ids.append(str(media.pk))
         return ids
+
+    def _story_caption(self, ctx: PublishContext) -> str:
+        """Texto do story + texto extra opcional (blocos separados)."""
+        base = ctx.story_text or ""
+        extra = ctx.story_text_extra or ""
+        if base and extra:
+            return f"{base}\n\n{extra}"
+        return base or extra
+
+    def _story_links(self, ctx: PublishContext) -> list[dict] | None:
+        """Link do story no contrato do núcleo: dict com webUri (e x/y quando a
+        posição foi definida na configuração)."""
+        if not ctx.story_link:
+            return None
+        link: dict = {"webUri": ctx.story_link}
+        y = self._LINK_Y.get(ctx.story_link_posicao or "")
+        if y is not None:
+            link["x"] = 0.5
+            link["y"] = y
+        return [link]
+
+    def _prepare_story_links(self, links: list[dict] | None):
+        """O instagrapi 2.x espera objetos StoryLink (pydantic) no configure do
+        story — dicts crus quebram com AttributeError. A conversão só acontece
+        quando o cliente REAL (instagrapi.Client) está em uso; stubs de teste e
+        outros transportes seguem recebendo o contrato em dicts."""
+        if not links:
+            return None
+        try:
+            from instagrapi import Client as IgClient  # noqa: PLC0415
+            from instagrapi.types import StoryLink  # noqa: PLC0415
+        except ImportError:  # pragma: no cover - ambiente sem instagrapi
+            return links
+        if isinstance(self._client, IgClient):
+            return [StoryLink(**link) for link in links]
+        return links
 
     def create_story(self, ctx: PublishContext) -> None:
         """Stories: a sequência de imagens (media_paths) é enviada em publish()."""

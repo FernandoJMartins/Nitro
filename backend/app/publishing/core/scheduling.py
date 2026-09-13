@@ -37,9 +37,30 @@ def effective_window(db: Session, account: Account) -> tuple[int, time, time]:
     return posts_hora, inicio, fim
 
 
-def _existing_slots(db: Session, account_id: int, day: date) -> list[datetime]:
-    start = datetime.combine(day, time.min, tzinfo=timezone.utc)
-    end = start + timedelta(days=1)
+def _window_tz(db: Session, account: Account):
+    """Timezone da conta (ou do padrão global) para interpretar a janela. Fallback: UTC."""
+    defaults = db.scalar(select(PublishingDefaults).where(PublishingDefaults.user_id == account.user_id))
+    nome = (account.timezone or (defaults.timezone if defaults else None) or "UTC").strip() or "UTC"
+    try:
+        from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+        return ZoneInfo(nome)
+    except Exception:  # noqa: BLE001 — nome inválido: interpreta como UTC
+        return timezone.utc
+
+
+def _window_bounds_utc(day: date, inicio: time, fim: time, tz) -> tuple[datetime, datetime]:
+    """Janela do dia em UTC. Fim <= início atravessa a meia-noite (ex.: 08:00–00:00
+    = das 8h até meia-noite do mesmo dia) — sem isso, o agendamento escapa para
+    o dia seguinte a cada lote."""
+    start_local = datetime.combine(day, inicio, tzinfo=tz)
+    end_local = datetime.combine(day, fim, tzinfo=tz)
+    if fim <= inicio:
+        end_local += timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _existing_slots(db: Session, account_id: int, start: datetime, end: datetime) -> list[datetime]:
     rows = db.scalars(
         select(Publication.scheduled_at).where(
             Publication.account_id == account_id,
@@ -70,6 +91,9 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
     if posts_hora <= 0:
         return []
     min_gap = timedelta(seconds=max(3600 // posts_hora, 60))
+    tz = _window_tz(db, account)
+    # o dia é o LOCAL da conta — aprovar de madrugada agenda para HOJE, não para amanhã
+    day = now.astimezone(tz).date()
 
     pendentes = list(
         db.scalars(
@@ -85,13 +109,9 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
     if not pendentes:
         return []
 
-    def window_for(day: date) -> tuple[datetime, datetime]:
-        return (
-            datetime.combine(day, janela_inicio, tzinfo=timezone.utc),
-            datetime.combine(day, janela_fim, tzinfo=timezone.utc),
-        )
+    def window_for(d: date) -> tuple[datetime, datetime]:
+        return _window_bounds_utc(d, janela_inicio, janela_fim, tz)
 
-    day = now.date()
     w_start, w_end = window_for(day)
     cursor = max(w_start, now)
     if cursor > w_end:
@@ -101,12 +121,12 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
 
     created: list[Publication] = []
     for content in pendentes:
-        taken = _existing_slots(db, account.id, day)
+        taken = _existing_slots(db, account.id, w_start, w_end)
         slot = _next_free_slot(taken, cursor, min_gap)
         if slot > w_end:
             day += timedelta(days=1)
             w_start, w_end = window_for(day)
-            taken = _existing_slots(db, account.id, day)
+            taken = _existing_slots(db, account.id, w_start, w_end)
             slot = _next_free_slot(taken, w_start, min_gap)
 
         jitter = timedelta(seconds=random.randint(-JITTER_SECONDS, JITTER_SECONDS))

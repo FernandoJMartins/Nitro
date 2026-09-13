@@ -12,19 +12,17 @@ import {
   getPublishingDefaults,
   listAccounts,
   listCaptions,
-  listMedia,
   listProxies,
   pauseAccount,
   resumeAccount,
   updateAccount,
   updateCaption,
+  updateProxy,
   updatePublishingDefaults,
   updateStoryConfig,
-  getStoryConfig,
   verifyAccountSession,
   type AccountBody,
   type CaptionTemplate,
-  type Media,
   type Proxy,
   type PubAccount,
   type PublishingDefaults,
@@ -73,7 +71,17 @@ function parseProxyUrl(raw: string): { protocolo: string; host: string; porta: n
 function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () => void }) {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
+  const [nomeInterno, setNomeInterno] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editNome, setEditNome] = useState("");
+  const [editProtocolo, setEditProtocolo] = useState("socks5");
+  const [editHost, setEditHost] = useState("");
+  const [editPorta, setEditPorta] = useState("");
+  const [editUsuario, setEditUsuario] = useState("");
+  const [editSenha, setEditSenha] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
 
   async function add() {
     const parsed = parseProxyUrl(url);
@@ -83,7 +91,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
     }
     try {
       await createProxy({
-        nome: `${parsed.host}:${parsed.porta}`,
+        ...(nomeInterno.trim() ? { nome_interno: nomeInterno.trim() } : {}),
         host: parsed.host,
         porta: parsed.porta,
         protocolo: parsed.protocolo,
@@ -91,10 +99,45 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
         senha: parsed.senha,
       });
       setUrl("");
+      setNomeInterno("");
       setOpen(false);
       onChange();
     } catch (e) {
       setError(String(e));
+    }
+  }
+
+  function startEdit(p: Proxy) {
+    setEditId(p.id);
+    setEditNome(p.nome_interno);
+    setEditProtocolo(p.protocolo);
+    setEditHost(p.host);
+    setEditPorta(String(p.porta));
+    setEditUsuario(p.usuario ?? "");
+    setEditSenha("");
+    setEditError(null);
+  }
+
+  async function saveEdit() {
+    if (editId === null) return;
+    const porta = Number(editPorta);
+    if (!editHost.trim() || !Number.isInteger(porta) || porta <= 0 || porta > 65535) {
+      setEditError("Informe host e porta válidos.");
+      return;
+    }
+    try {
+      await updateProxy(editId, {
+        ...(editNome.trim() ? { nome_interno: editNome.trim() } : {}),
+        protocolo: editProtocolo,
+        host: editHost.trim(),
+        porta,
+        usuario: editUsuario.trim() || null,
+        ...(editSenha ? { senha: editSenha } : {}),
+      });
+      setEditId(null);
+      onChange();
+    } catch (e) {
+      setEditError(String(e));
     }
   }
 
@@ -107,7 +150,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
             <li key={p.id} className="card">
               <div className="card-main">
                 <strong>
-                  {PROXY_DOT[p.status]} {p.nome}
+                  {PROXY_DOT[p.status]} {p.nome_interno}
                 </strong>
                 <div className="meta">
                   {p.protocolo}://{p.usuario ? `${p.usuario}@` : ""}
@@ -116,10 +159,69 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
                   {p.ip_publico && <> · IP {p.ip_publico}</>}
                   {p.ultimo_erro && <> · {p.ultimo_erro}</>}
                 </div>
+                {editId === p.id && (
+                  <div className="form" style={{ marginTop: 8 }}>
+                    <div className="checkrow" style={{ gap: 8 }}>
+                      <label className="field" style={{ flex: 2 }}>
+                        Nome interno
+                        <input
+                          value={editNome}
+                          onChange={(e) => setEditNome(e.target.value)}
+                          placeholder="Ex.: Proxy EUA"
+                        />
+                      </label>
+                      <label className="field" style={{ flex: 1 }}>
+                        Protocolo
+                        <select value={editProtocolo} onChange={(e) => setEditProtocolo(e.target.value)}>
+                          <option value="socks5">socks5</option>
+                          <option value="http">http</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="checkrow" style={{ gap: 8 }}>
+                      <label className="field" style={{ flex: 3 }}>
+                        Host
+                        <input value={editHost} onChange={(e) => setEditHost(e.target.value)} />
+                      </label>
+                      <label className="field" style={{ flex: 1 }}>
+                        Porta
+                        <input type="number" value={editPorta} onChange={(e) => setEditPorta(e.target.value)} />
+                      </label>
+                    </div>
+                    <div className="checkrow" style={{ gap: 8 }}>
+                      <label className="field" style={{ flex: 1 }}>
+                        Usuário
+                        <input value={editUsuario} onChange={(e) => setEditUsuario(e.target.value)} autoComplete="off" />
+                      </label>
+                      <label className="field" style={{ flex: 1 }}>
+                        Senha
+                        <input
+                          type="password"
+                          value={editSenha}
+                          onChange={(e) => setEditSenha(e.target.value)}
+                          placeholder="•••••• (em branco = manter)"
+                          autoComplete="new-password"
+                        />
+                      </label>
+                    </div>
+                    {editError && <div className="error">⚠️ {editError}</div>}
+                    <div className="modal-actions">
+                      <button className="btn ghost sm" onClick={() => setEditId(null)}>
+                        Cancelar
+                      </button>
+                      <button className="btn primary sm" onClick={saveEdit}>
+                        Salvar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="card-actions">
                 <button className="btn sm" onClick={() => checkProxy(p.id).then(onChange)}>
                   Testar
+                </button>
+                <button className="btn sm" onClick={() => startEdit(p)}>
+                  Editar
                 </button>
                 <button className="btn danger sm" onClick={() => deleteProxy(p.id).then(onChange)}>
                   Excluir
@@ -137,6 +239,15 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
         ) : (
           <div className="form" style={{ marginTop: 10 }}>
             {error && <div className="error">⚠️ {error}</div>}
+            <label className="field">
+              Nome interno (opcional — padrão: host:porta)
+              <input
+                value={nomeInterno}
+                onChange={(e) => setNomeInterno(e.target.value)}
+                placeholder="Ex.: Proxy EUA"
+                onKeyDown={(e) => e.key === "Enter" && add()}
+              />
+            </label>
             <div className="checkrow" style={{ gap: 8 }}>
               <input
                 placeholder="socks5://usuario:senha@host:porta — ou — host:porta:usuario:senha"
@@ -167,30 +278,21 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
 
 function AccountForm({
   proxies,
-  photos,
   initial,
   onSave,
   onClose,
 }: {
   proxies: Proxy[];
-  photos: Media[];
   initial?: PubAccount;
-  onSave: (
-    body: AccountBody,
-    storyBody?: {
-      enabled: boolean;
-      horario: string;
-      imagem_media_id: number | null;
-      texto: string | null;
-      link?: string | null;
-      plans?: { horario: string; frames: { media_id: number; texto?: string | null; link?: string | null }[] }[];
-    }
-  ) => void;
+  // o check "Stories automáticos" continua aqui; a MONTAGEM dos stories
+  // (imagens, horários, textos, links) fica no tab dedicado "Stories".
+  onSave: (body: AccountBody, storiesEnabled: boolean) => void;
   onClose: () => void;
 }) {
   const [nomeInterno, setNomeInterno] = useState(initial?.nome_interno ?? "");
   const [username, setUsername] = useState(initial?.username ?? "");
   const [senha, setSenha] = useState("");
+  const [sessionid, setSessionid] = useState("");
   const [proxyId, setProxyId] = useState<number | "">(initial?.proxy_id ?? "");
   const [postsHora, setPostsHora] = useState<number | "">(initial?.posts_por_hora ?? "");
   const [janelaInicio, setJanelaInicio] = useState(initial?.janela_inicio ?? "");
@@ -198,24 +300,6 @@ function AccountForm({
   const [captionMode, setCaptionMode] = useState<AccountBody["caption_mode"]>(initial?.caption_mode ?? "automatica");
   const [audioMode, setAudioMode] = useState<AccountBody["audio_mode"]>(initial?.audio_mode ?? "nenhum");
   const [storiesEnabled, setStoriesEnabled] = useState(initial?.stories_enabled ?? false);
-  const [storyPlans, setStoryPlans] = useState<{ key: number; horario: string; frames: number[]; texto: string; link: string }[]>([
-    { key: Date.now(), horario: "18:00", frames: [], texto: "", link: "" },
-  ]);
-
-  useEffect(() => {
-    if (initial && initial.stories_enabled) {
-      getStoryConfig(initial.id).then((cfg) => {
-        const loaded = (cfg.plans ?? []).map((p) => ({
-          key: p.id,
-          horario: p.horario,
-          frames: p.media_ids,
-          texto: p.texto ?? "",
-          link: p.link ?? "",
-        }));
-        if (loaded.length > 0) setStoryPlans(loaded);
-      });
-    }
-  }, [initial]);
 
   function submit() {
     if (!nomeInterno.trim() || !username.trim()) return;
@@ -223,6 +307,7 @@ function AccountForm({
       nome_interno: nomeInterno.trim(),
       username: username.trim(),
       ...(senha.trim() ? { senha: senha.trim() } : {}),
+      ...(sessionid.trim() ? { sessionid: sessionid.trim() } : {}),
       proxy_id: proxyId === "" ? null : proxyId,
       posts_por_hora: postsHora === "" ? null : postsHora,
       janela_inicio: janelaInicio || null,
@@ -231,21 +316,7 @@ function AccountForm({
       audio_mode: audioMode,
       stories_enabled: storiesEnabled,
     };
-    const primeiro = storyPlans[0];
-    const storyBody = storiesEnabled
-      ? {
-          enabled: true,
-          horario: primeiro?.horario ?? "18:00",
-          imagem_media_id: primeiro?.frames[0] ?? null,
-          texto: primeiro?.texto || null,
-          link: primeiro?.link || null,
-          plans: storyPlans.map((p) => ({
-            horario: p.horario,
-            frames: p.frames.map((media_id) => ({ media_id, texto: p.texto || null, link: p.link || null })),
-          })),
-        }
-      : undefined;
-    onSave(body, storyBody);
+    onSave(body, storiesEnabled);
   }
 
   return (
@@ -274,12 +345,27 @@ function AccountForm({
           </span>
         </label>
         <label className="field">
+          Sessionid (cookie do navegador){" "}
+          {initial?.sessionid_configurada ? "(já configurado — deixe em branco para manter)" : ""}
+          <input
+            type="password"
+            value={sessionid}
+            onChange={(e) => setSessionid(e.target.value)}
+            placeholder={initial?.sessionid_configurada ? "••••••••" : "Cole o cookie sessionid"}
+            autoComplete="new-password"
+          />
+          <span className="hint">
+            Contorna o bloqueio 429 de login: abra o Instagram já logado no navegador, copie o valor do cookie{" "}
+            <code>sessionid</code> (F12 → Application → Cookies) e cole aqui. Guardado criptografado.
+          </span>
+        </label>
+        <label className="field">
           Proxy
           <select value={proxyId} onChange={(e) => setProxyId(e.target.value ? Number(e.target.value) : "")}>
             <option value="">Sem proxy</option>
             {proxies.map((p) => (
               <option key={p.id} value={p.id}>
-                {PROXY_DOT[p.status]} {p.nome}
+                {PROXY_DOT[p.status]} {p.nome_interno}
               </option>
             ))}
           </select>
@@ -327,84 +413,10 @@ function AccountForm({
           <input type="checkbox" checked={storiesEnabled} onChange={(e) => setStoriesEnabled(e.target.checked)} />
           Stories automáticos (vários por dia)
         </label>
-
-        {storiesEnabled && (
-          <>
-            <div className="hint">
-              Cada story tem um horário e uma sequência de imagens. Vários stories = vários agendamentos no dia.
-            </div>
-            {storyPlans.map((p, i) => (
-              <div key={p.key} className="card" style={{ padding: 10, marginBottom: 8 }}>
-                <div className="checkrow" style={{ gap: 8, alignItems: "center" }}>
-                  <label className="field" style={{ width: 120 }}>
-                    Horário
-                    <input
-                      type="time"
-                      value={p.horario}
-                      onChange={(e) =>
-                        setStoryPlans((prev) => prev.map((x, j) => (j === i ? { ...x, horario: e.target.value } : x)))
-                      }
-                    />
-                  </label>
-                  <label className="field" style={{ flex: 1 }}>
-                    Texto
-                    <input
-                      value={p.texto}
-                      onChange={(e) =>
-                        setStoryPlans((prev) => prev.map((x, j) => (j === i ? { ...x, texto: e.target.value } : x)))
-                      }
-                      placeholder="Confere aí 👇"
-                    />
-                  </label>
-                  <label className="field" style={{ flex: 1 }}>
-                    Link (opcional)
-                    <input
-                      value={p.link}
-                      onChange={(e) =>
-                        setStoryPlans((prev) => prev.map((x, j) => (j === i ? { ...x, link: e.target.value } : x)))
-                      }
-                      placeholder="https://…"
-                    />
-                  </label>
-                  {storyPlans.length > 1 && (
-                    <button
-                      className="btn danger sm"
-                      onClick={() => setStoryPlans((prev) => prev.filter((_, j) => j !== i))}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-                <label className="field">
-                  Imagens (selecione várias para uma sequência — Ctrl/⌘ + clique)
-                  <select
-                    multiple
-                    size={4}
-                    value={p.frames.map(String)}
-                    onChange={(e) => {
-                      const frames = Array.from(e.target.selectedOptions).map((o) => Number(o.value));
-                      setStoryPlans((prev) => prev.map((x, j) => (j === i ? { ...x, frames } : x)));
-                    }}
-                  >
-                    {photos.map((ph) => (
-                      <option key={ph.id} value={ph.id}>
-                        {ph.nome_original}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ))}
-            <button
-              className="btn sm"
-              onClick={() =>
-                setStoryPlans((prev) => [...prev, { key: Date.now() + prev.length, horario: "18:00", frames: [], texto: "", link: "" }])
-              }
-            >
-              ＋ Adicionar story ao dia
-            </button>
-          </>
-        )}
+        <div className="hint">
+          Este check só liga/desliga a automação de stories da conta. As imagens, horários, textos e links de
+          cada story são montados no tab <strong>Stories</strong>.
+        </div>
 
         <div className="modal-actions">
           <button className="btn ghost" onClick={onClose}>
@@ -564,23 +576,10 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
             Timezone
             <input value={d.timezone} onChange={(e) => setD({ ...d, timezone: e.target.value })} placeholder="America/Sao_Paulo" />
           </label>
-          <label className="checkrow">
-            <input
-              type="checkbox"
-              checked={d.trending_enabled ?? false}
-              onChange={(e) => setD({ ...d, trending_enabled: e.target.checked })}
-            />
-            Coletar áudios em alta automaticamente
-          </label>
           <button className="btn primary sm" onClick={salvar}>
             Salvar global
           </button>
         </div>
-        {d.ultima_coleta_em && (
-          <div className="meta" style={{ marginTop: 6 }}>
-            Última coleta de tendências: {new Date(d.ultima_coleta_em).toLocaleString("pt-BR")}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -590,7 +589,6 @@ export default function Accounts() {
   const [accounts, setAccounts] = useState<PubAccount[]>([]);
   const [proxies, setProxies] = useState<Proxy[]>([]);
   const [captions, setCaptions] = useState<CaptionTemplate[]>([]);
-  const [photos, setPhotos] = useState<Media[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [formFor, setFormFor] = useState<PubAccount | "new" | null>(null);
   const [toDelete, setToDelete] = useState<PubAccount | null>(null);
@@ -601,22 +599,11 @@ export default function Accounts() {
     listAccounts().then(setAccounts).catch((e) => setError(String(e)));
     listProxies().then(setProxies).catch((e) => setError(String(e)));
     listCaptions().then(setCaptions).catch((e) => setError(String(e)));
-    listMedia("photo").then(setPhotos).catch(() => {});
   }
 
   useEffect(refreshAll, []);
 
-  async function saveAccount(
-    body: AccountBody,
-    storyBody?: {
-      enabled: boolean;
-      horario: string;
-      imagem_media_id: number | null;
-      texto: string | null;
-      link?: string | null;
-      plans?: { horario: string; frames: { media_id: number; texto?: string | null; link?: string | null }[] }[];
-    }
-  ) {
+  async function saveAccount(body: AccountBody, storiesEnabled: boolean) {
     try {
       let acc: PubAccount;
       if (formFor && formFor !== "new") {
@@ -624,7 +611,8 @@ export default function Accounts() {
       } else {
         acc = await createAccount(body);
       }
-      if (storyBody) await updateStoryConfig(acc.id, storyBody);
+      // sincroniza o check com o StoryConfig da conta (sem tocar nos plans)
+      await updateStoryConfig(acc.id, { enabled: storiesEnabled });
       setFormFor(null);
       refreshAll();
     } catch (e) {
@@ -702,9 +690,10 @@ export default function Accounts() {
                 {a.automation_status === "pausada" && a.status === "pronta" && <> · ⏸️ Automação pausada</>}
                 {" · "}
                 {a.senha_configurada ? "🔒 Senha configurada" : "⚠ Sem senha"}
+                {a.sessionid_configurada && <> · 🍪 Cookie de sessão configurado</>}
                 {" · "}
                 {a.session_configurada ? "🔑 Sessão salva" : "⚠ Sem sessão"}
-                {a.proxy && <> · {PROXY_DOT[a.proxy.status]} {a.proxy.nome}</>}
+                {a.proxy && <> · {PROXY_DOT[a.proxy.status]} {a.proxy.nome_interno}</>}
                 {" · "}
                 {a.posts_por_hora ?? "padrão"} posts/h · {a.janela_inicio ?? "—"}→{a.janela_fim ?? "—"}
                 {a.stories_enabled && <> · 📖 Stories ativo</>}
@@ -747,7 +736,6 @@ export default function Accounts() {
       {formFor && (
         <AccountForm
           proxies={proxies}
-          photos={photos}
           initial={formFor === "new" ? undefined : formFor}
           onSave={saveAccount}
           onClose={() => setFormFor(null)}

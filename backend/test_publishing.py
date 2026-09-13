@@ -27,8 +27,8 @@ from app.publishing.core.publications import execute_publication  # noqa: E402
 from app.publishing.core.scheduling import build_schedule_for_account  # noqa: E402
 from app.publishing.core.stories import ensure_daily_stories  # noqa: E402
 from app.publishing.core.workers import run_cycle  # noqa: E402
-from app.publishing.models import Account, ContentMedia, Publication  # noqa: E402
-from app.publishing.platforms.base import PlatformAdapter, PublishContext, PublishResult  # noqa: E402
+from app.publishing.models import Account, ContentMedia, Publication, Proxy  # noqa: E402
+from app.publishing.platforms.base import PlatformAdapter, PublishContext, PublishResult, ThrottledError  # noqa: E402
 
 
 class FakeInstagramAdapter(PlatformAdapter):
@@ -46,6 +46,11 @@ class FakeInstagramAdapter(PlatformAdapter):
         if not ctx.account_username:
             raise ValueError("username ausente")
         return ctx.session_data or f"fake-session:{ctx.account_username}:{uuid.uuid4().hex[:8]}"
+
+    def login_with_sessionid(self, ctx: PublishContext) -> str | None:
+        if not (ctx.sessionid or "").strip()[:1].isdigit():
+            raise ValueError("sessionid inválido")
+        return f"fake-sessionid:{ctx.account_username}:{uuid.uuid4().hex[:8]}"
 
     def check_session(self, ctx: PublishContext) -> bool:
         return bool(ctx.session_data)
@@ -75,6 +80,15 @@ class FakeInstagramAdapter(PlatformAdapter):
         return None
 
 
+class FakeThrottledAdapter(FakeInstagramAdapter):
+    """Caso real de login limitado pelo Instagram (429): o adapter levanta ThrottledError."""
+
+    def login(self, ctx: PublishContext) -> str | None:
+        raise ThrottledError(
+            "login: Instagram limitou as tentativas desta conta/IP (429 Too Many Requests)"
+        )
+
+
 # o núcleo consulta o registro de adapters em tempo de execução — troca o transporte
 publications.ADAPTERS["instagram"] = FakeInstagramAdapter
 
@@ -99,13 +113,32 @@ print("vídeos de teste criados:", gen_ids)
 
 # ---------- proxies ----------
 proxy_ok = client.post(
-    "/api/v1/publishing/proxies", json={"nome": "proxy-b", "host": "203.0.113.10", "porta": 1080}
+    "/api/v1/publishing/proxies", json={"nome_interno": "proxy-b", "host": "203.0.113.10", "porta": 1080}
 ).json()
 proxy_bad = client.post(
-    "/api/v1/publishing/proxies", json={"nome": "proxy-quebrado", "host": "203.0.113.254", "porta": 1}
+    "/api/v1/publishing/proxies", json={"nome_interno": "proxy-quebrado", "host": "203.0.113.254", "porta": 1}
 ).json()
 assert proxy_ok["status"] == "cinza" and proxy_bad["status"] == "cinza"
 print("proxies criados sem check automático ok")
+
+# nome interno padrão (host:porta) quando não informado
+proxy_default = client.post(
+    "/api/v1/publishing/proxies", json={"host": "198.51.100.7", "porta": 4145}
+).json()
+assert proxy_default["nome_interno"] == "198.51.100.7:4145"
+
+# edição de proxy: renomeia e altera conexão; senha em branco mantém a atual
+r = client.patch(
+    f"/api/v1/publishing/proxies/{proxy_ok['id']}",
+    json={"nome_interno": "Proxy EUA", "usuario": "u1", "senha": "s1"},
+)
+assert r.status_code == 200 and r.json()["nome_interno"] == "Proxy EUA"
+r = client.patch(f"/api/v1/publishing/proxies/{proxy_ok['id']}", json={"host": "203.0.113.11"})
+assert r.status_code == 200 and r.json()["host"] == "203.0.113.11" and r.json()["nome_interno"] == "Proxy EUA"
+db = SessionLocal()
+assert db.get(Proxy, proxy_ok["id"]).senha == "s1"  # não sobrescrita pela edição sem senha
+db.close()
+print("edição de proxy (nome interno, campos e senha preservada) ok")
 
 # ---------- contas ----------
 acc_a = client.post(
@@ -265,28 +298,43 @@ r = client.put(
         "enabled": True,
         "horario": "00:00",
         "plans": [
-            {"horario": "00:00", "frames": [{"media_id": media_id_1}, {"media_id": media_id_2, "texto": "Parte 2"}]},
-            {"horario": "00:05", "frames": [{"media_id": media_id_2, "link": "https://exemplo.com"}]},
+            {
+                "horario": "00:00",
+                "texto": "Título do story",
+                "link": "https://exemplo.com/link",
+                "link_posicao": "superior",
+                "texto_extra": "Oferta só hoje!",
+                "frames": [{"media_id": media_id_1}, {"media_id": media_id_2}],
+            },
+            {"horario": "00:05", "frames": [{"media_id": media_id_2, "link": "https://frame-link.com"}]},
         ],
     },
 )
 assert r.status_code == 200 and r.json()["enabled"] is True
 assert len(r.json()["plans"]) == 2, r.json()
 assert r.json()["plans"][0]["media_ids"] == [media_id_1, media_id_2]
-print("story-config com 2 plans (sequência de imagens) ok")
+assert r.json()["plans"][0]["texto"] == "Título do story"
+assert r.json()["plans"][0]["link_posicao"] == "superior"
+assert r.json()["plans"][0]["texto_extra"] == "Oferta só hoje!"
+print("story-config com 2 plans (sequência de imagens + campos novos) ok")
 
 db = SessionLocal()
 account_a = db.get(Account, acc_a["id"])
 stories = ensure_daily_stories(db, account_a)
 assert len(stories) == 2, f"esperava 2 stories (1 por plan), veio {len(stories)}"
 assert all(s.kind == "story" for s in stories)
-multi = next(s for s in stories if s.legenda and "Parte 2" in s.legenda)
-medias_multi = list(db.scalars(select(ContentMedia).where(ContentMedia.content_id == multi.id)))
+story1 = next(s for s in stories if s.legenda == "Título do story")
+assert story1.link == "https://exemplo.com/link"
+assert story1.link_posicao == "superior"
+assert story1.texto_extra == "Oferta só hoje!"
+story2 = next(s for s in stories if s.link == "https://frame-link.com")
+assert story2.link_posicao is None and story2.texto_extra is None
+medias_multi = list(db.scalars(select(ContentMedia).where(ContentMedia.content_id == story1.id)))
 assert len(medias_multi) == 2, "story com 2 imagens deveria ter 2 ContentMedia"
 again = ensure_daily_stories(db, account_a)
 assert again == [], "não deve gerar os mesmos plans 2x no mesmo dia"
 db.close()
-print("stories: múltiplos por dia + múltiplas imagens por story ok")
+print("stories: múltiplos por dia + múltiplas imagens + posição do link + texto extra ok")
 
 # modo legado (1 imagem / 1 horário) continua funcionando
 r = client.put(
@@ -322,33 +370,34 @@ r = client.post(f"/api/v1/publishing/accounts/{acc_d['id']}/connect")
 assert r.status_code == 409
 print("connect: sem senha/sessão → 409 ok")
 
+# login limitado pelo Instagram (429) → HTTP 429 com a mensagem real (não 400 genérico)
+r = client.patch(f"/api/v1/publishing/accounts/{acc_d['id']}", json={"senha": "senha-d"})
+assert r.status_code == 200, r.text
+publications.ADAPTERS["instagram"] = FakeThrottledAdapter
+try:
+    r = client.post(f"/api/v1/publishing/accounts/{acc_d['id']}/connect")
+    assert r.status_code == 429 and "429" in r.text, (r.status_code, r.text)
+finally:
+    publications.ADAPTERS["instagram"] = FakeInstagramAdapter
+print("connect: throttle 429 com mensagem clara ok")
+
+# cookie de sessão (sessionid) conecta sem senha — contorna o fluxo de login
+r = client.post(
+    "/api/v1/publishing/accounts",
+    json={"nome_interno": "E", "username": "perfil05", "sessionid": "1234567890%3Aabcdef1234567890abcdef", **WIDE_WINDOW},
+)
+acc_e = r.json()
+assert acc_e["sessionid_configurada"] is True
+r = client.post(f"/api/v1/publishing/accounts/{acc_e['id']}/connect")
+assert r.status_code == 200, r.text
+assert r.json()["session_configurada"] is True
+r = client.delete(f"/api/v1/publishing/accounts/{acc_e['id']}")
+assert r.status_code == 204
+print("connect: sessionid (cookie) contorna login e conecta ok")
+
 r = client.post(f"/api/v1/publishing/accounts/{acc_a['id']}/verify-session")
 assert r.status_code == 200 and r.json()["valida"] is True
 print("verify-session ok")
-
-# ---------- tendências: coleta de fonte externa (fonte fake injetada) ----------
-class FakeTrendingSource:
-    name = "fake"
-
-    def fetch(self, *, platform: str, limit: int):
-        from app.publishing.core.audio import TrendingTrack
-
-        return [TrendingTrack(nome="Som do Momento", artista="Artista", external_id="ext-1", referencia="ref-1", popularidade=1)]
-
-
-import app.publishing.core.audio as audio_mod  # noqa: E402
-
-original_source_for = audio_mod.source_for
-audio_mod.source_for = lambda name=None: FakeTrendingSource()
-try:
-    r = client.post("/api/v1/publishing/audio/collect")
-    assert r.status_code == 200, r.text
-    coletados = r.json()
-    assert len(coletados) == 1 and coletados[0]["provider"] == "trending"
-    assert coletados[0]["external_id"] == "ext-1"
-    print("coleta de áudios em alta (fonte externa) ok")
-finally:
-    audio_mod.source_for = original_source_for
 
 # ---------- calendário: reagendar publicação (persiste e vira horário real) ----------
 pubs_pending = client.get("/api/v1/publishing/publications", params={"status": "PENDING"}).json()
@@ -369,8 +418,8 @@ dash = client.get("/api/v1/publishing/dashboard").json()
 print("dashboard ->", dash)
 assert dash["publicados_hoje"] >= 3
 assert dash["contas_total"] == 4  # A, B, C, D
-assert dash["proxies_total"] == 2
-assert dash["proxies_inativos"] == 2  # nenhum proxy respondeu de verdade aqui
+assert dash["proxies_total"] == 3
+assert dash["proxies_inativos"] == 3  # nenhum proxy respondeu de verdade aqui
 assert dash["sessoes_validas"] >= 2
 assert dash["sessoes_expiradas"] >= 1
 assert isinstance(dash["retries"], int) and isinstance(dash["em_execucao"], int)

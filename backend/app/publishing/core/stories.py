@@ -30,6 +30,9 @@ def _create_story_content(
     texto: str | None,
     link: str | None,
     today: date,
+    *,
+    link_posicao: str | None = None,
+    texto_extra: str | None = None,
 ) -> Content:
     scheduled_at = _scheduled_for(today, horario)
     content = Content(
@@ -39,6 +42,8 @@ def _create_story_content(
         caminho=paths[0],
         legenda=texto,
         link=link,
+        link_posicao=link_posicao,
+        texto_extra=texto_extra,
         account_id=account.id,
         approval_status="aprovado",  # stories automáticos seguem a config já aprovada pelo usuário
         schedule_mode="especifico",
@@ -100,9 +105,21 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
             if not frames:
                 continue
             paths = [caminho for caminho, _, _ in frames]
-            texto = " / ".join(t for _, t, _ in frames if t) or cfg.texto
-            link = next((lnk for _, _, lnk in frames if lnk), cfg.link)
-            content = _create_story_content(db, account, paths, plan.horario, texto, link, today)
+            # texto/link do story inteiro vivem no plano; frames antigos (e a config
+            # legada) funcionam como fallback, nesta ordem.
+            texto = plan.texto or " / ".join(t for _, t, _ in frames if t) or cfg.texto
+            link = plan.link or next((lnk for _, _, lnk in frames if lnk), None) or cfg.link
+            content = _create_story_content(
+                db,
+                account,
+                paths,
+                plan.horario,
+                texto,
+                link,
+                today,
+                link_posicao=plan.link_posicao,
+                texto_extra=plan.texto_extra,
+            )
             created.append(content)
             plan.ultima_geracao_em = agora
         if created:

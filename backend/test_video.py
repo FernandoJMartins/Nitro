@@ -98,3 +98,82 @@ print(f"frame {END+1} (depois): R={r1:.0f} G={g1:.0f} B={b1:.0f}")
 assert b1 > r1, "frame depois do bloco deveria ser AZUL"
 
 print(f">>> FLASH caiu em EXATAMENTE {N} frames ({START}..{END}). MOTOR DE VÍDEO OK")
+
+
+# ============ loop de música: vídeo mais longo que o som universal ============
+def probe_out(caminho, entries, stream=""):
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", *(["-select_streams", stream] if stream else []),
+         "-show_entries", entries, "-of", "default=nk=1:nw=1", str(caminho)],
+        capture_output=True, text=True,
+    )
+    return r.stdout.strip().splitlines()
+
+curta = tmp / "music_curta.mp3"
+subprocess.run(
+    [FFMPEG, "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=3", str(curta)],
+    capture_output=True,
+)
+out_loop = tmp / "out_loop.mp4"
+build_video(
+    base, out_loop,
+    duration=12.0,  # vídeo 4x mais longo que a música — o áudio deve entrar em loop
+    music_path=curta,
+    fps=FPS, width=W, height=H,
+)
+loop_dur = float(probe_out(out_loop, "format=duration")[0])
+loop_audio = float(probe_out(out_loop, "format=duration", stream="a")[0])
+print(f"loop: vídeo {loop_dur:.2f}s / áudio {loop_audio:.2f}s (música de 3s)")
+assert abs(loop_dur - 12.0) < 0.4, loop_dur
+assert abs(loop_audio - loop_dur) < 0.4, f"áudio cortou em {loop_audio}s — o loop falhou"
+print(">>> MÚSICA EM LOOP cobre o vídeo inteiro. OK")
+
+
+# ============ tipo 'final': a música loopa SOBRE o clipe final ============
+import struct
+import wave
+
+# clipe final COM áudio próprio (880 Hz) — não pode substituir a música universal
+clip_final = tmp / "clip_final_audio.mp4"
+subprocess.run(
+    [FFMPEG, "-y", "-f", "lavfi", "-i", "color=c=green:s=1080x1920:d=2:r=30",
+     "-f", "lavfi", "-i", "sine=frequency=880:duration=2",
+     "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(clip_final)],
+    capture_output=True,
+)
+out_final = tmp / "out_final_loop.mp4"
+build_video(
+    base, out_final,
+    duration=12.0,
+    music_path=curta,  # 330 Hz, 3s — loopa
+    final_path=clip_final,
+    final_duration=2.0,
+    fps=FPS, width=W, height=H,
+)
+final_dur = float(probe_out(out_final, "format=duration")[0])
+final_audio = float(probe_out(out_final, "format=duration", stream="a")[0])
+print(f"final: vídeo {final_dur:.2f}s / áudio {final_audio:.2f}s")
+assert abs(final_dur - 14.0) < 0.4, final_dur
+assert abs(final_audio - final_dur) < 0.4, f"áudio cortou em {final_audio}s"
+
+
+def freq_dominante(caminho, t_inicio):
+    """Frequência aproximada (zero-crossings) do áudio num trecho de 0.5s."""
+    trecho = tmp / "trecho.wav"
+    subprocess.run(
+        [FFMPEG, "-y", "-ss", str(t_inicio), "-t", "0.5", "-i", str(caminho),
+         "-map", "0:a", "-ar", "44100", "-ac", "1", "-f", "wav", str(trecho)],
+        capture_output=True,
+    )
+    with wave.open(str(trecho), "rb") as w:
+        n = w.getnframes()
+        dados = w.readframes(n)
+    vals = struct.unpack(f"<{n}h", dados[: n * 2])
+    cruzamentos = sum(1 for a, b in zip(vals, vals[1:]) if (a < 0 <= b) or (b < 0 <= a))
+    return cruzamentos / (2 * (n / 44100))
+
+# dentro do trecho do clipe final (t≈13s): deve tocar a MÚSICA (330 Hz), não o clipe (880 Hz)
+f_no_final = freq_dominante(out_final, 13.0)
+print(f"frequência no trecho do clipe final: {f_no_final:.0f} Hz (música=330, clipe=880)")
+assert f_no_final < 550, f"o áudio do clipe final substituiu a música ({f_no_final:.0f} Hz)"
+print(">>> MÚSICA loopa SOBRE o clipe final. OK")

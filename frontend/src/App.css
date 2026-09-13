@@ -673,6 +673,49 @@ code {
 }
 .folder-search:focus { outline: none; border-color: var(--blue); }
 
+/* input genérico (importar áudio por link etc.) */
+.input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 14px;
+}
+.input:focus { outline: none; border-color: var(--blue); }
+
+/* lista de músicas: texto + player + ações numa linha */
+.music-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+}
+.music-row-info {
+  flex: 1;
+  min-width: 0;
+}
+.music-row-info .vtext {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-row-player {
+  flex-shrink: 0;
+  width: 260px;
+  max-width: 100%;
+}
+.music-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+@media (max-width: 720px) {
+  .music-row { flex-wrap: wrap; }
+  .music-row-player { width: 100%; }
+}
+
 .folder-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .folder-card {
   position: relative;
@@ -847,6 +890,32 @@ code {
   border: 2px dashed rgba(255, 255, 255, 0.7); border-radius: 6px;
 }
 .preview-hint { text-align: center; font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+/* prévia de story (tab Stories) — reusa o canvas 9:16 do Criar */
+.smodel-row { display: flex; gap: 14px; align-items: flex-start; }
+.story-preview { flex-shrink: 0; width: 200px; }
+.story-preview-texto {
+  position: absolute; left: 50%; top: 55%; transform: translate(-50%, -50%);
+  width: 88%; text-align: center; color: #fff; font-weight: 800;
+  font-size: 15px; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); pointer-events: none;
+}
+.story-preview-extra {
+  position: absolute; left: 50%; top: 68%; transform: translateX(-50%);
+  width: 88%; text-align: center; color: #fff; font-weight: 600;
+  font-size: 12px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); pointer-events: none;
+}
+.story-preview-link {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.92); color: #111; border-radius: 999px;
+  padding: 2px 10px; font-size: 11px; font-weight: 700; pointer-events: none;
+}
+.story-preview-link.pos-superior { top: 4%; }
+.story-preview-link.pos-meio { top: 47%; }
+.story-preview-link.pos-inferior { bottom: 6%; }
+@media (max-width: 900px) {
+  .smodel-row { flex-direction: column; }
+  .story-preview { width: 100%; }
+}
 
 /* guias de centralização (aparecem só ao arrastar) */
 .guide { position: absolute; background: rgba(255, 255, 255, 0.35); pointer-events: none; z-index: 3; }
@@ -1438,6 +1507,7 @@ code {
   cursor: grab;
 }
 .cal-chip.draggable { border-style: dashed; }
+.cal-chip.selected { outline: 2px solid var(--blue); background: rgba(56, 151, 240, 0.12); }
 .cal-chip:active { cursor: grabbing; }
 .cal-chip.st-published { opacity: 0.75; }
 .cal-chip.st-failed { border-color: var(--danger); }
@@ -1445,3 +1515,84 @@ code {
 .cal-icon { flex: none; }
 .cal-acc { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-time { color: var(--muted, #8a8a8a); white-space: nowrap; }
+
+/* ---------- Stories (tab de montagem por conta) ---------- */
+.sgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.scard {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.scard.selected {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue);
+}
+.scard .thumb { height: 170px; }
+.scard-nome {
+  padding: 6px 8px 2px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scard-pasta {
+  padding: 0 8px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scard-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+.sframes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sframe {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.sframe-nome {
+  flex: 1;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sframe .mini-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}

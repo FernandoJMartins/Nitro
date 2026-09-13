@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 import {
+  cancelPublications,
   getCalendar,
+  postNowPublications,
   reschedulePublication,
   type CalendarItem,
   type PublicationStatus,
@@ -50,20 +52,27 @@ function accountColor(username: string): string {
 function ItemChip({
   item,
   draggable,
+  selectable,
+  selected,
   onDragStart,
   onDragEnd,
+  onToggle,
 }: {
   item: CalendarItem;
   draggable: boolean;
+  selectable: boolean;
+  selected: boolean;
   onDragStart: (e: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
+  onToggle: () => void;
 }) {
   const color = accountColor(item.account_username);
   const when = new Date(item.scheduled_at);
   return (
     <div
-      className={`cal-chip ${draggable ? "draggable" : ""} st-${item.status.toLowerCase()}`}
+      className={`cal-chip ${draggable ? "draggable" : ""} ${selected ? "selected" : ""} st-${item.status.toLowerCase()}`}
       draggable={draggable}
+      onClick={() => selectable && onToggle()}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       title={`${item.kind} · ${item.status} · @${item.account_username}\n${when.toLocaleString("pt-BR")}`}
@@ -83,6 +92,51 @@ export default function Calendar() {
   const [items, setItems] = useState<CalendarItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+
+  // selecionáveis: pendentes/retry/falhas — publicado e em execução não dá para mexer
+  const selectable = (s: PublicationStatus) => s === "PENDING" || s === "RETRYING" || s === "FAILED";
+
+  function toggle(c: CalendarItem) {
+    if (!selectable(c.status)) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(c.publication_id)) next.delete(c.publication_id);
+      else next.add(c.publication_id);
+      return next;
+    });
+  }
+
+  async function desprogramar() {
+    if (selected.size === 0) return;
+    if (!confirm(`Desprogramar ${selected.size} publicação(ões)? O conteúdo volta para a fila de aprovação.`)) return;
+    setBusy("cancel");
+    try {
+      await cancelPublications([...selected]);
+      setSelected(new Set());
+      refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function postarAgora() {
+    if (selected.size === 0) return;
+    if (!confirm(`Postar ${selected.size} publicação(ões) AGORA na conta?`)) return;
+    setBusy("now");
+    try {
+      await postNowPublications([...selected]);
+      setSelected(new Set());
+      refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   const firstDay = useMemo(() => {
     if (view === "month") {
@@ -191,6 +245,17 @@ export default function Calendar() {
             </button>
           ))}
         </div>
+        <div className="cal-actions" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="hint">
+            {selected.size > 0 ? `${selected.size} selecionada(s)` : "Clique nos itens para selecionar"}
+          </span>
+          <button className="btn sm" onClick={postarAgora} disabled={selected.size === 0 || busy !== null}>
+            ⚡ Postar agora
+          </button>
+          <button className="btn danger sm" onClick={desprogramar} disabled={selected.size === 0 || busy !== null}>
+            ✕ Desprogramar
+          </button>
+        </div>
       </div>
 
       {view === "month" && (
@@ -217,6 +282,9 @@ export default function Calendar() {
                       key={c.publication_id}
                       item={c}
                       draggable={c.status === "PENDING" || c.status === "RETRYING"}
+                      selectable={selectable(c.status)}
+                      selected={selected.has(c.publication_id)}
+                      onToggle={() => toggle(c)}
                       onDragStart={(e) => {
                         e.dataTransfer.setData("text/plain", String(c.publication_id));
                         setDragging(c.publication_id);
@@ -260,6 +328,9 @@ export default function Calendar() {
                           key={c.publication_id}
                           item={c}
                           draggable={c.status === "PENDING" || c.status === "RETRYING"}
+                          selectable={selectable(c.status)}
+                          selected={selected.has(c.publication_id)}
+                          onToggle={() => toggle(c)}
                           onDragStart={(e) => {
                             e.dataTransfer.setData("text/plain", String(c.publication_id));
                             setDragging(c.publication_id);
@@ -295,6 +366,9 @@ export default function Calendar() {
                       key={c.publication_id}
                       item={c}
                       draggable={c.status === "PENDING" || c.status === "RETRYING"}
+                      selectable={selectable(c.status)}
+                      selected={selected.has(c.publication_id)}
+                      onToggle={() => toggle(c)}
                       onDragStart={(e) => {
                         e.dataTransfer.setData("text/plain", String(c.publication_id));
                         setDragging(c.publication_id);

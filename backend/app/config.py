@@ -13,20 +13,24 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"  # a opção mais barata da OpenAI para texto
 
-    # fonte externa de áudios em alta (tendências) para o módulo de publicação
-    trending_source: str = "apple_music"
-    trending_country: str = "br"  # chart brasileiro (mais tocadas no Brasil)
-    trending_limit: int = 100  # máximo suportado pelo feed Apple RSS (200 devolve HTTP 500)
-    trending_brasileiras_only: bool = True  # filtra por gêneros de música brasileira
-    trending_min_brasileiras: int = 20  # se o filtro sobrar menos que isso, usa o chart completo
-    trending_refresh_hours: int = 24
-
     # quantas contas podem executar publicações em paralelo (cada conta = 1 slot,
     # sempre serializada dentro de si mesma — fila própria por conta)
     publishing_concurrency: int = 4
 
     # timeout (segundos) de cada tentativa da checagem de proxy
     proxy_check_timeout_seconds: int = 8
+
+    # versão de app do Instagram usada no LOGIN LEGADO (o User-Agent que o fork
+    # do instagrapi monta). O fork só conhece versões antigas (446/428/385/364)
+    # que o Instagram passou a rejeitar com "Your version of Instagram is out of
+    # date" — configure aqui a versão atual + version_code (loja do app) para o
+    # login legado voltar a passar sem mexer no código. Vazio = usa só as
+    # versões do fork.
+    # ATENÇÃO: o transporte declara User-Agent Android; se a versão informada
+    # for de outra plataforma (ex.: build iOS), o Instagram pode seguir
+    # rejeitando — nesse caso use a versão Android atual (Play Store/apkmirror).
+    instagram_app_version: str = ""
+    instagram_app_version_code: str = ""
 
     # segredo para assinar os tokens JWT — TROQUE em produção (via .env)
     secret_key: str = "dev-secret-troque-em-producao"

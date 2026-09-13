@@ -18,8 +18,10 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
-    # --reload reinicia o uvicorn a cada mudança no código.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
+    # --reload reinicia o uvicorn a cada mudança no código. O timeout de graceful
+    # shutdown evita o travamento: sem ele, um reload durante um download em
+    # streaming (206) fica esperando a conexão fechar para sempre e o backend cai.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --timeout-graceful-shutdown 30
     environment:
       # Banco dedicado (seu Postgres local), definido no .env.
       DATABASE_URL: ${LOCAL_DATABASE_URL}
@@ -29,6 +31,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
+      # versão de app para o login legado do Instagram — ver app/config.py
+      INSTAGRAM_APP_VERSION: ${INSTAGRAM_APP_VERSION:-446.0.0.49.77}
+      INSTAGRAM_APP_VERSION_CODE: ${INSTAGRAM_APP_VERSION_CODE:-1060018354}
       # No Windows+Docker os eventos de arquivo não chegam; polling resolve.
       WATCHFILES_FORCE_POLLING: "true"
     volumes:

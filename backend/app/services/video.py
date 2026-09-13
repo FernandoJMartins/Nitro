@@ -492,22 +492,29 @@ def build_video(
         b = "b0"
         parts.append(f"[{a}][{b}]concat=n=2:v=1:a=0[outv]")
 
-        # ---- áudio: trecho A leva a música (ou silêncio); trecho B leva o áudio
-        # do próprio clipe final quando ele existe (senão segue a música/silêncio). ----
+        # ---- áudio: a música universal (se houver) loopa o vídeo INTEIRO, inclusive
+        # sobre o clipe final — o áudio do próprio clipe só entra quando NÃO há música. ----
         afmt = "aformat=sample_rates=44100:channel_layouts=stereo"
         a_src = music_idx if music_idx is not None else anull_idx
         parts.append(
             f"[{a_src}:a]atrim=duration={duration:.3f},asetpts=PTS-STARTPTS,{afmt}[aA]"
         )
-        if final_has_audio:
-            b_src = final_idx
-        elif music_idx is not None:
+        if music_idx is not None:
             b_src = music_idx
+        elif final_has_audio:
+            b_src = final_idx
         else:
             b_src = anull_idx
-        parts.append(
-            f"[{b_src}:a]atrim=duration={final_duration:.3f},asetpts=PTS-STARTPTS,{afmt}[aB]"
-        )
+        if b_src == music_idx:
+            # continua o loop DE ONDE PAROU (sem recomeçar do zero no clipe final)
+            parts.append(
+                f"[{music_idx}:a]atrim=start={duration:.3f}:duration={final_duration:.3f},"
+                f"asetpts=PTS-STARTPTS,{afmt}[aB]"
+            )
+        else:
+            parts.append(
+                f"[{b_src}:a]atrim=duration={final_duration:.3f},asetpts=PTS-STARTPTS,{afmt}[aB]"
+            )
         parts.append("[aA][aB]concat=n=2:v=0:a=1[outa]")
 
         total = duration + final_duration

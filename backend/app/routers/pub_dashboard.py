@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -236,6 +237,70 @@ def reschedule_publication(
     db.commit()
     db.refresh(pub)
     return pub
+
+
+class PublicationBulkIds(BaseModel):
+    ids: list[int]
+
+
+@router.post("/publications/cancel")
+def cancel_publications(
+    body: PublicationBulkIds,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Desprograma uma ou várias publicações que ainda não rodaram: remove o
+    agendamento (some do calendário) e devolve o conteúdo para a fila de
+    aprovação, pronto para ser aprovado/agendado de novo."""
+    pubs = list(
+        db.scalars(
+            select(Publication)
+            .join(Content)
+            .where(Publication.id.in_(body.ids), Content.user_id == user.id)
+        )
+    )
+    cancelados = 0
+    for p in pubs:
+        if p.status == "PUBLISHED":
+            continue  # já foi pro ar — não dá para desprogramar
+        content = p.content
+        outras = any(x.id != p.id and x.status != "CANCELLED" for x in content.publications)
+        db.delete(p)
+        cancelados += 1
+        if not outras:
+            content.approval_status = "pendente"
+            content.scheduled_at = None
+            content.schedule_mode = "automatico"
+    db.commit()
+    return {"cancelados": cancelados}
+
+
+@router.post("/publications/post-now")
+def post_now_publications(
+    body: PublicationBulkIds,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Antecipa publicações agendadas para AGORA — a fila executa em até ~20s.
+    Útil para testar a postagem de verdade na conta."""
+    pubs = list(
+        db.scalars(
+            select(Publication)
+            .join(Content)
+            .where(Publication.id.in_(body.ids), Content.user_id == user.id)
+        )
+    )
+    agora = datetime.now(timezone.utc)
+    adiantadas = 0
+    for p in pubs:
+        if p.status in ("PUBLISHED", "UPLOADING", "PROCESSING"):
+            continue
+        p.status = "PENDING"
+        p.erro = None
+        p.scheduled_at = agora
+        adiantadas += 1
+    db.commit()
+    return {"adiantadas": adiantadas}
 
 
 @router.get("/logs", response_model=list[LogOut])
