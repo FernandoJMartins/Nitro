@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal, ConfirmDialog } from "./Dialog";
 import {
   checkProxy,
@@ -59,10 +59,10 @@ function HourPicker({
   return (
     <div style={{ marginTop: 4 }}>
       <div className="checkrow" style={{ gap: 6, marginBottom: 6 }}>
-        <button className="btn sm" onClick={() => onChange(new Set(horas))}>
+        <button type="button" className="btn sm" onClick={() => onChange(new Set(horas))}>
           Todos
         </button>
-        <button className="btn sm" onClick={() => onChange(new Set())}>
+        <button type="button" className="btn sm" onClick={() => onChange(new Set())}>
           Limpar
         </button>
         <span className="hint">{selecionados.size} selecionado(s)</span>
@@ -454,13 +454,13 @@ function AccountForm({
         <div className="field">
           Modo de agendamento
           <nav className="tabs" style={{ marginTop: 4 }}>
-            <button className={modo === "hora" ? "tab active" : "tab"} onClick={() => setModo("hora")}>
+            <button type="button" className={modo === "hora" ? "tab active" : "tab"} onClick={() => setModo("hora")}>
               🕐 Posts/hora
             </button>
-            <button className={modo === "ciclo" ? "tab active" : "tab"} onClick={() => setModo("ciclo")}>
+            <button type="button" className={modo === "ciclo" ? "tab active" : "tab"} onClick={() => setModo("ciclo")}>
               🔁 Por ciclo
             </button>
-            <button className={modo === "horarios" ? "tab active" : "tab"} onClick={() => setModo("horarios")}>
+            <button type="button" className={modo === "horarios" ? "tab active" : "tab"} onClick={() => setModo("horarios")}>
               ⏰ Horários fixos
             </button>
           </nav>
@@ -671,16 +671,29 @@ const STATUS_BADGE: Record<string, string> = {
 function DefaultsManager({ onChange }: { onChange: () => void }) {
   const [d, setD] = useState<PublishingDefaults | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  // aba escolhida é ESTADO próprio (não derivado de d): trocar para "ciclo" com X/Y ainda
+  // em 0 não pode fazer a aba voltar sozinha para "hora" — senão o usuário nunca
+  // consegue preencher os campos do modo novo.
+  const [modo, setModoTab] = useState<ScheduleMode>("hora");
+  const modoCarregado = useRef(false);
 
   useEffect(() => {
-    getPublishingDefaults().then(setD).catch((e) => setMsg(`⚠ ${String(e)}`));
+    getPublishingDefaults()
+      .then((data) => {
+        setD(data);
+        // sincroniza a aba com o que já está salvo (apenas na 1ª carga)
+        if (!modoCarregado.current) {
+          modoCarregado.current = true;
+          setModoTab(inferScheduleMode(data));
+        }
+      })
+      .catch((e) => setMsg(`⚠ ${String(e)}`));
   }, []);
 
   if (!d) return <div className="card" style={{ marginTop: 16 }}>Carregando configuração global…</div>;
 
-  const modo: ScheduleMode = inferScheduleMode(d);
-
-  const setModo = (m: ScheduleMode) => {
+  const escolherModo = (m: ScheduleMode) => {
+    setModoTab(m);
     if (m === "hora") setD({ ...d, posts_por_ciclo: 0, horas_por_ciclo: 0, horarios_selecionados: null });
     if (m === "ciclo") setD({ ...d, horarios_selecionados: null });
     if (m === "horarios") setD({ ...d, posts_por_ciclo: 0, horas_por_ciclo: 0 });
@@ -731,13 +744,13 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
         <div className="field">
           Modo de agendamento
           <nav className="tabs" style={{ marginTop: 4 }}>
-            <button className={modo === "hora" ? "tab active" : "tab"} onClick={() => setModo("hora")}>
+            <button type="button" className={modo === "hora" ? "tab active" : "tab"} onClick={() => escolherModo("hora")}>
               🕐 Posts/hora
             </button>
-            <button className={modo === "ciclo" ? "tab active" : "tab"} onClick={() => setModo("ciclo")}>
+            <button type="button" className={modo === "ciclo" ? "tab active" : "tab"} onClick={() => escolherModo("ciclo")}>
               🔁 Por ciclo
             </button>
-            <button className={modo === "horarios" ? "tab active" : "tab"} onClick={() => setModo("horarios")}>
+            <button type="button" className={modo === "horarios" ? "tab active" : "tab"} onClick={() => escolherModo("horarios")}>
               ⏰ Horários fixos
             </button>
           </nav>
