@@ -1,5 +1,24 @@
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 import {
+  AlertTriangle,
+  BookImage,
+  Calendar as CalendarIcon,
+  CalendarDays,
+  CalendarRange,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Clapperboard,
+  Clock,
+  Loader,
+  RefreshCw,
+  Trash2,
+  UploadCloud,
+  X,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
+import {
   cancelPublications,
   getCalendar,
   postNowPublications,
@@ -10,15 +29,21 @@ import {
 
 type View = "day" | "week" | "month";
 
-const STATUS_ICON: Record<PublicationStatus, string> = {
-  PENDING: "⏰",
-  UPLOADING: "⏳",
-  PROCESSING: "⏳",
-  PUBLISHED: "✓",
-  FAILED: "⚠",
-  RETRYING: "↻",
-  CANCELLED: "✕",
+const STATUS_ICON: Record<PublicationStatus, LucideIcon> = {
+  PENDING: Clock,
+  UPLOADING: UploadCloud,
+  PROCESSING: Loader,
+  PUBLISHED: Check,
+  FAILED: AlertTriangle,
+  RETRYING: RefreshCw,
+  CANCELLED: X,
 };
+
+const VIEWS: { key: View; label: string; Icon: LucideIcon }[] = [
+  { key: "day", label: "Dia", Icon: CalendarDays },
+  { key: "week", label: "Semana", Icon: CalendarRange },
+  { key: "month", label: "Mês", Icon: CalendarIcon },
+];
 
 const DAY_LABEL = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
@@ -68,6 +93,8 @@ function ItemChip({
 }) {
   const color = accountColor(item.account_username);
   const when = new Date(item.scheduled_at);
+  const StatusIcon = STATUS_ICON[item.status];
+  const KindIcon = item.kind === "story" ? BookImage : Clapperboard;
   return (
     <div
       className={`cal-chip ${draggable ? "draggable" : ""} ${selected ? "selected" : ""} st-${item.status.toLowerCase()}`}
@@ -78,9 +105,13 @@ function ItemChip({
       title={`${item.kind} · ${item.status} · @${item.account_username}\n${when.toLocaleString("pt-BR")}`}
     >
       <span className="cal-dot" style={{ background: color }} />
-      <span className="cal-icon">{STATUS_ICON[item.status]}</span>
+      <span className="cal-icon">
+        <StatusIcon size={12} strokeWidth={2.5} />
+      </span>
       <span className="cal-acc">@{item.account_username}</span>
-      <span className="cal-kind">{item.kind === "story" ? "📖" : "🎬"}</span>
+      <span className="cal-kind">
+        <KindIcon size={12} />
+      </span>
       <span className="cal-time">{when.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
     </div>
   );
@@ -227,21 +258,21 @@ export default function Calendar() {
 
       <div className="selbar" style={{ marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <div className="cal-nav">
-          <button className="btn sm" onClick={() => moveAnchor(-1)}>
-            ◀
+          <button className="btn sm" onClick={() => moveAnchor(-1)} aria-label="Anterior">
+            <ChevronLeft size={15} />
           </button>
           <button className="btn sm" onClick={() => setAnchor(new Date())}>
             Hoje
           </button>
-          <button className="btn sm" onClick={() => moveAnchor(1)}>
-            ▶
+          <button className="btn sm" onClick={() => moveAnchor(1)} aria-label="Próximo">
+            <ChevronRight size={15} />
           </button>
           <strong style={{ marginLeft: 8 }}>{title}</strong>
         </div>
         <div className="cal-views">
-          {(["day", "week", "month"] as View[]).map((v) => (
-            <button key={v} className={`btn sm ${view === v ? "primary" : ""}`} onClick={() => setView(v)}>
-              {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
+          {VIEWS.map(({ key, label, Icon }) => (
+            <button key={key} className={`btn sm ${view === key ? "primary" : ""}`} onClick={() => setView(key)}>
+              <Icon size={13} /> {label}
             </button>
           ))}
         </div>
@@ -250,10 +281,10 @@ export default function Calendar() {
             {selected.size > 0 ? `${selected.size} selecionada(s)` : "Clique nos itens para selecionar"}
           </span>
           <button className="btn sm" onClick={postarAgora} disabled={selected.size === 0 || busy !== null}>
-            ⚡ Postar agora
+            <Zap size={13} /> Postar agora
           </button>
           <button className="btn danger sm" onClick={desprogramar} disabled={selected.size === 0 || busy !== null}>
-            ✕ Desprogramar
+            <Trash2 size={13} /> Desprogramar
           </button>
         </div>
       </div>
@@ -267,11 +298,13 @@ export default function Calendar() {
           ))}
           {monthDays.map((day) => {
             const inMonth = day.getMonth() === anchor.getMonth();
+            const wknd = day.getDay() === 0 || day.getDay() === 6;
+            const hoje = keyOf(day) === keyOf(new Date());
             const chips = chipsFor(day);
             return (
               <div
                 key={keyOf(day)}
-                className={`cal-month-cell ${inMonth ? "" : "out"} ${dragging !== null ? "droptarget" : ""}`}
+                className={`cal-month-cell${inMonth ? "" : " out"}${wknd ? " wknd" : ""}${hoje ? " today" : ""} ${dragging !== null ? "droptarget" : ""}`}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => handleDrop(e, day, null)}
               >
@@ -304,22 +337,28 @@ export default function Calendar() {
         <div className="cal-week">
           <div className="cal-week-head-row">
             <div className="cal-hour-col" />
-            {weekDays.map((day) => (
-              <div key={keyOf(day)} className={`cal-week-head ${day.getDay() === 0 || day.getDay() === 6 ? "wknd" : ""}`}>
-                {DAY_LABEL[day.getDay()]} {day.getDate()}/{day.getMonth() + 1}
-              </div>
-            ))}
+            {weekDays.map((day) => {
+              const hoje = keyOf(day) === keyOf(new Date());
+              const wknd = day.getDay() === 0 || day.getDay() === 6;
+              return (
+                <div key={keyOf(day)} className={`cal-week-head${wknd ? " wknd" : ""}${hoje ? " today" : ""}`}>
+                  {DAY_LABEL[day.getDay()]}
+                  <span className="cal-week-num">{day.getDate()}</span>
+                </div>
+              );
+            })}
           </div>
           <div className="cal-week-body">
             {Array.from({ length: 24 }, (_, hour) => (
               <div key={hour} className="cal-week-row">
                 <div className="cal-hour-col">{String(hour).padStart(2, "0")}:00</div>
                 {weekDays.map((day) => {
+                  const hoje = keyOf(day) === keyOf(new Date());
                   const chips = chipsFor(day).filter((c) => new Date(c.scheduled_at).getHours() === hour);
                   return (
                     <div
                       key={keyOf(day)}
-                      className="cal-hour-cell"
+                      className={`cal-hour-cell${hoje ? " today" : ""}`}
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => handleDrop(e, day, hour)}
                     >
@@ -349,38 +388,43 @@ export default function Calendar() {
 
       {view === "day" && (
         <div className="cal-day">
-          <h3 style={{ marginBottom: 8 }}>{firstDay.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" })}</h3>
-          {Array.from({ length: 24 }, (_, hour) => {
-            const chips = chipsFor(firstDay).filter((c) => new Date(c.scheduled_at).getHours() === hour);
-            return (
-              <div
-                key={hour}
-                className="cal-day-row"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => handleDrop(e, firstDay, hour)}
-              >
-                <div className="cal-hour-col">{String(hour).padStart(2, "0")}:00</div>
-                <div className="cal-day-cell">
-                  {chips.map((c) => (
-                    <ItemChip
-                      key={c.publication_id}
-                      item={c}
-                      draggable={c.status === "PENDING" || c.status === "RETRYING"}
-                      selectable={selectable(c.status)}
-                      selected={selected.has(c.publication_id)}
-                      onToggle={() => toggle(c)}
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("text/plain", String(c.publication_id));
-                        setDragging(c.publication_id);
-                      }}
-                      onDragEnd={() => setDragging(null)}
-                    />
-                  ))}
-                  {chips.length === 0 && <span className="hint" />}
+          <div className="cal-day-head">
+            <h3 style={{ margin: 0 }}>
+              {firstDay.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" })}
+            </h3>
+          </div>
+          <div className="cal-day-grid">
+            {Array.from({ length: 24 }, (_, hour) => {
+              const chips = chipsFor(firstDay).filter((c) => new Date(c.scheduled_at).getHours() === hour);
+              return (
+                <div key={hour} className="cal-day-row">
+                  <div className="cal-hour-col">{String(hour).padStart(2, "0")}:00</div>
+                  <div
+                    className="cal-day-cell"
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => handleDrop(e, firstDay, hour)}
+                  >
+                    {chips.map((c) => (
+                      <ItemChip
+                        key={c.publication_id}
+                        item={c}
+                        draggable={c.status === "PENDING" || c.status === "RETRYING"}
+                        selectable={selectable(c.status)}
+                        selected={selected.has(c.publication_id)}
+                        onToggle={() => toggle(c)}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", String(c.publication_id));
+                          setDragging(c.publication_id);
+                        }}
+                        onDragEnd={() => setDragging(null)}
+                      />
+                    ))}
+                    {chips.length === 0 && <span className="hint" />}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
     </>
