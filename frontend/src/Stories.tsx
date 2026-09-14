@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ConfirmDialog, Modal } from "./Dialog";
 import {
   cancelPublications,
   downloadUrl,
@@ -121,6 +122,139 @@ function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<numb
   );
 }
 
+/** Editor de um modelo do dia — abre em MODAL (a lista fica só com linhas-resumo). */
+function ModelEditorModal({
+  modelo,
+  mediaMap,
+  onSave,
+  onClose,
+}: {
+  modelo: Modelo;
+  mediaMap: Map<number, Media>;
+  onSave: (patch: Partial<Modelo>) => void;
+  onClose: () => void;
+}) {
+  const [d, setD] = useState<Modelo>(modelo);
+
+  function moverFrame(fIdx: number, delta: number) {
+    setD((prev) => {
+      const frames = [...prev.frames];
+      const j = fIdx + delta;
+      if (j < 0 || j >= frames.length) return prev;
+      [frames[fIdx], frames[j]] = [frames[j], frames[fIdx]];
+      return { ...prev, frames };
+    });
+  }
+
+  return (
+    <Modal title={`Editar modelo — story das ${d.horario}`} onClose={onClose} wide scroll>
+      <div className="smodel-row" style={{ width: "100%" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
+            <label className="field" style={{ width: 110 }}>
+              Horário
+              <input type="time" value={d.horario} onChange={(e) => setD({ ...d, horario: e.target.value })} />
+            </label>
+            <label className="field" style={{ flex: 2, minWidth: 160 }}>
+              Texto
+              <input value={d.texto} onChange={(e) => setD({ ...d, texto: e.target.value })} placeholder="Confere aí 👇" />
+            </label>
+          </div>
+          <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
+            <label className="field" style={{ flex: 2, minWidth: 160 }}>
+              Link (opcional)
+              <input value={d.link} onChange={(e) => setD({ ...d, link: e.target.value })} placeholder="https://…" />
+            </label>
+            <label className="field" style={{ width: 110 }}>
+              Posição do link
+              <select value={d.link_posicao} onChange={(e) => setD({ ...d, link_posicao: e.target.value })}>
+                {LINK_POSICOES.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              Texto extra (opcional)
+              <input
+                value={d.texto_extra}
+                onChange={(e) => setD({ ...d, texto_extra: e.target.value })}
+                placeholder="Ex.: Só hoje!"
+              />
+            </label>
+          </div>
+
+          <p className="hint" style={{ marginTop: 10 }}>
+            Sequência do story — a ordem abaixo é a ordem da publicação:
+          </p>
+          <div className="sframes">
+            {d.frames.map((id, j) => {
+              const media = mediaMap.get(id);
+              return (
+                <div className="sframe" key={`${id}-${j}`}>
+                  {media ? (
+                    <img className="mini-thumb" src={downloadUrl(id)} alt={media.nome_original} />
+                  ) : (
+                    <div className="mini-thumb">❓</div>
+                  )}
+                  <span className="sframe-nome" title={media?.nome_original}>
+                    {j + 1}. {media?.nome_original ?? `mídia #${id} (removida)`}
+                  </span>
+                  <button className="btn sm" title="Mover para cima" disabled={j === 0} onClick={() => moverFrame(j, -1)}>
+                    ▲
+                  </button>
+                  <button
+                    className="btn sm"
+                    title="Mover para baixo"
+                    disabled={j === d.frames.length - 1}
+                    onClick={() => moverFrame(j, 1)}
+                  >
+                    ▼
+                  </button>
+                  <button
+                    className="btn danger sm"
+                    title="Remover"
+                    onClick={() => setD({ ...d, frames: d.frames.filter((_, k) => k !== j) })}
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+            {d.frames.length === 0 && (
+              <div className="empty">
+                Sem imagens ainda — feche este modal, escolha na biblioteca e clique em “＋ Adicionar”.
+              </div>
+            )}
+          </div>
+        </div>
+        <StoryPreview modelo={d} mediaMap={mediaMap} />
+      </div>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>
+          Cancelar
+        </button>
+        <button
+          className="btn primary"
+          onClick={() =>
+            onSave({
+              horario: d.horario,
+              texto: d.texto,
+              link: d.link,
+              link_posicao: d.link_posicao,
+              texto_extra: d.texto_extra,
+              frames: d.frames,
+            })
+          }
+        >
+          Salvar modelo
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export default function Stories() {
   const [accounts, setAccounts] = useState<PubAccount[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -138,6 +272,14 @@ export default function Stories() {
   const [historico, setHistorico] = useState<StoryHistory[]>([]);
   const [bibliotecaAberta, setBibliotecaAberta] = useState(true);
   const [histFiltro, setHistFiltro] = useState<"todos" | "PENDING" | "PUBLISHED" | "erro">("todos");
+  // índice do modelo sendo editado em MODAL (a lista fica só com linhas-resumo)
+  const [editModelo, setEditModelo] = useState<number | null>(null);
+  const [confirma, setConfirma] = useState<null | {
+    titulo: string;
+    mensagem: ReactNode;
+    rotulo: string;
+    acao: () => void;
+  }>(null);
 
   // carrega contas, pastas e TODAS as imagens do banco uma vez (a busca/pasta filtram em memória)
   useEffect(() => {
@@ -254,25 +396,11 @@ export default function Stories() {
     setModelos((prev) => prev.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
   }
 
-  function moverFrame(mIdx: number, fIdx: number, delta: number) {
-    setModelos((prev) =>
-      prev.map((m, i) => {
-        if (i !== mIdx) return m;
-        const frames = [...m.frames];
-        const j = fIdx + delta;
-        if (j < 0 || j >= frames.length) return m;
-        [frames[fIdx], frames[j]] = [frames[j], frames[fIdx]];
-        return { ...m, frames };
-      })
-    );
-  }
-
   function atualizarHistorico() {
     if (accountId !== "") listStoryHistory(accountId).then(setHistorico).catch(() => {});
   }
 
   async function cancelarStory(id: number) {
-    if (!confirm("Cancelar este story? Ele sai do histórico e não será postado.")) return;
     try {
       await cancelPublications([id]);
       atualizarHistorico();
@@ -281,16 +409,47 @@ export default function Stories() {
     }
   }
 
-  async function cancelarTodosStories() {
-    const ids = historico.filter((h) => h.status !== "PUBLISHED").map((h) => h.id);
+  async function cancelarTodosStories(ids: number[]) {
     if (ids.length === 0) return;
-    if (!confirm(`Cancelar ${ids.length} story(s) ainda não postados?`)) return;
     try {
       await cancelPublications(ids);
       atualizarHistorico();
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  function pedirPostar(m: Modelo) {
+    setConfirma({
+      titulo: "Publicar story agora",
+      mensagem: (
+        <>
+          Publicar este story agora na <strong>@{acc?.username}</strong>?
+        </>
+      ),
+      rotulo: "Publicar agora",
+      acao: () => postarAgora(m),
+    });
+  }
+
+  function pedirCancelarStory(id: number) {
+    setConfirma({
+      titulo: "Cancelar story",
+      mensagem: <>Cancelar este story? Ele sai do histórico e não será postado.</>,
+      rotulo: "Cancelar story",
+      acao: () => cancelarStory(id),
+    });
+  }
+
+  function pedirCancelarTodos() {
+    const ids = historico.filter((h) => h.status !== "PUBLISHED").map((h) => h.id);
+    if (ids.length === 0) return;
+    setConfirma({
+      titulo: "Cancelar todos os stories",
+      mensagem: <>Cancelar {ids.length} story(s) ainda não postados?</>,
+      rotulo: "Cancelar todos",
+      acao: () => cancelarTodosStories(ids),
+    });
   }
 
   async function salvar() {
@@ -325,7 +484,6 @@ export default function Stories() {
 
   async function postarAgora(m: Modelo) {
     if (accountId === "" || m.planId == null || !acc) return;
-    if (!confirm(`Publicar este story agora na @${acc.username}?`)) return;
     setError(null);
     setMsg(null);
     setPostando(m.planId);
@@ -485,134 +643,44 @@ export default function Stories() {
 
           <div className="card" style={{ marginTop: 12 }}>
             <div className="card-main" style={{ width: "100%" }}>
+              <div className="checkrow" style={{ gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+                <strong>🕒 {modelos.length} modelo(s) do dia</strong>
+                <span className="hint">clique em ✏️ Editar para abrir o modelo</span>
+              </div>
               {modelos.map((m, i) => (
-                <div key={m.key} className="card" style={{ padding: 12, marginTop: 10, alignItems: "flex-start" }}>
-                  <div className="smodel-row" style={{ width: "100%" }}>
-                    <div className="card-main" style={{ flex: 1, minWidth: 0 }}>
-                      <div className="checkrow" style={{ gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
-                        <strong>🕒 {m.horario} — {m.texto.trim() || `Modelo ${i + 1}`}</strong>
-                        <div className="checkrow" style={{ gap: 6, flexWrap: "wrap" }}>
-                          <span className="badge st-ok">{m.frames.length} img</span>
-                          {m.link.trim() !== "" && (
-                            <span className="badge" style={{ color: "var(--blue)" }}>🔗 com link</span>
-                          )}
-                          {m.planId != null && (
-                            <button
-                              className="btn primary sm"
-                              onClick={() => postarAgora(m)}
-                              disabled={postando === m.planId}
-                              title="Publica este story imediatamente"
-                            >
-                              {postando === m.planId ? "Publicando…" : "▶ Postar agora"}
-                            </button>
-                          )}
-                          <button className="btn danger sm" onClick={() => removerModelo(i)}>
-                            Excluir
-                          </button>
-                        </div>
-                      </div>
-                      <p className="hint" style={{ margin: "2px 0 0" }}>
-                        Publica todo dia às {m.horario}
-                        {m.link.trim() !== "" ? ` · o texto vira o botão do link (posição: ${m.link_posicao})` : ""}
-                      </p>
-                      <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                      <label className="field" style={{ width: 110 }}>
-                        Horário
-                        <input
-                          type="time"
-                          value={m.horario}
-                          onChange={(e) => editarModelo(i, { horario: e.target.value })}
-                        />
-                      </label>
-                      <label className="field" style={{ flex: 2, minWidth: 160 }}>
-                        Texto
-                        <input
-                          value={m.texto}
-                          onChange={(e) => editarModelo(i, { texto: e.target.value })}
-                          placeholder="Confere aí 👇"
-                        />
-                      </label>
-                      <label className="field" style={{ flex: 2, minWidth: 160 }}>
-                        Link (opcional)
-                        <input
-                          value={m.link}
-                          onChange={(e) => editarModelo(i, { link: e.target.value })}
-                          placeholder="https://…"
-                        />
-                      </label>
-                      <label className="field" style={{ width: 110 }}>
-                        Posição do link
-                        <select
-                          value={m.link_posicao}
-                          onChange={(e) => editarModelo(i, { link_posicao: e.target.value })}
-                        >
-                          {LINK_POSICOES.map((p) => (
-                            <option key={p.value} value={p.value}>
-                              {p.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="field" style={{ flex: 1, minWidth: 160 }}>
-                        Texto extra (opcional)
-                        <input
-                          value={m.texto_extra}
-                          onChange={(e) => editarModelo(i, { texto_extra: e.target.value })}
-                          placeholder="Ex.: Só hoje!"
-                        />
-                      </label>
-                    </div>
-
-                    <p className="hint" style={{ marginTop: 10 }}>
-                      Sequência do story — a ordem abaixo é a ordem da publicação:
-                    </p>
-                    <div className="sframes">
-                      {m.frames.map((id, j) => {
-                        const media = mediaMap.get(id);
-                        return (
-                          <div className="sframe" key={`${id}-${j}`}>
-                            {media ? (
-                              <img className="mini-thumb" src={downloadUrl(id)} alt={media.nome_original} />
-                            ) : (
-                              <div className="mini-thumb">❓</div>
-                            )}
-                            <span className="sframe-nome" title={media?.nome_original}>
-                              {j + 1}. {media?.nome_original ?? `mídia #${id} (removida)`}
-                            </span>
-                            <button
-                              className="btn sm"
-                              title="Mover para cima"
-                              disabled={j === 0}
-                              onClick={() => moverFrame(i, j, -1)}
-                            >
-                              ▲
-                            </button>
-                            <button
-                              className="btn sm"
-                              title="Mover para baixo"
-                              disabled={j === m.frames.length - 1}
-                              onClick={() => moverFrame(i, j, 1)}
-                            >
-                              ▼
-                            </button>
-                            <button
-                              className="btn danger sm"
-                              title="Remover"
-                              onClick={() => editarModelo(i, { frames: m.frames.filter((_, k) => k !== j) })}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        );
-                      })}
-                      {m.frames.length === 0 && (
-                        <div className="empty">Sem imagens ainda — escolha na biblioteca acima e clique em “＋ Adicionar”.</div>
+                <div key={m.key} className="card" style={{ padding: 12, marginTop: 10 }}>
+                  <div className="card-main" style={{ flex: 1, minWidth: 0 }}>
+                    <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
+                      <strong>🕒 {m.horario} — {m.texto.trim() || `Modelo ${i + 1}`}</strong>
+                      <span className="badge st-ok">{m.frames.length} img</span>
+                      {m.link.trim() !== "" && (
+                        <span className="badge" style={{ color: "var(--blue)" }}>🔗 com link</span>
                       )}
                     </div>
+                    <p className="hint" style={{ margin: "2px 0 0" }}>
+                      Publica todo dia às {m.horario}
+                      {m.link.trim() !== "" ? ` · o texto vira o botão do link (posição: ${m.link_posicao})` : ""}
+                    </p>
                   </div>
-                  <StoryPreview modelo={m} mediaMap={mediaMap} />
+                  <div className="card-actions" style={{ flexWrap: "wrap" }}>
+                    {m.planId != null && (
+                      <button
+                        className="btn primary sm"
+                        onClick={() => pedirPostar(m)}
+                        disabled={postando === m.planId}
+                        title="Publica este story imediatamente"
+                      >
+                        {postando === m.planId ? "Publicando…" : "▶ Postar agora"}
+                      </button>
+                    )}
+                    <button className="btn sm" onClick={() => setEditModelo(i)}>
+                      ✏️ Editar
+                    </button>
+                    <button className="btn danger sm" onClick={() => removerModelo(i)}>
+                      Excluir
+                    </button>
+                  </div>
                 </div>
-              </div>
               ))}
 
               <div className="card-actions" style={{ marginTop: 10 }}>
@@ -636,7 +704,7 @@ export default function Stories() {
                   <button className="btn sm" onClick={atualizarHistorico}>
                     ↻ Atualizar
                   </button>
-                  <button className="btn danger sm" onClick={cancelarTodosStories} disabled={!historico.some((h) => h.status !== "PUBLISHED")}>
+                  <button className="btn danger sm" onClick={pedirCancelarTodos} disabled={!historico.some((h) => h.status !== "PUBLISHED")}>
                     ✕ Cancelar todos
                   </button>
                 </div>
@@ -679,7 +747,7 @@ export default function Stories() {
                       {h.erro && <div className="error" style={{ marginTop: 4 }}>{h.erro}</div>}
                     </div>
                     {h.status !== "PUBLISHED" && (
-                      <button className="btn danger sm" onClick={() => cancelarStory(h.id)} title="Cancelar story">
+                      <button className="btn danger sm" onClick={() => pedirCancelarStory(h.id)} title="Cancelar story">
                         ✕
                       </button>
                     )}
@@ -700,6 +768,30 @@ export default function Stories() {
 
       {accounts.length === 0 && (
         <div className="empty">Nenhuma conta cadastrada ainda — crie uma em Publicação → Contas.</div>
+      )}
+
+      {editModelo !== null && modelos[editModelo] && (
+        <ModelEditorModal
+          modelo={modelos[editModelo]}
+          mediaMap={mediaMap}
+          onSave={(patch) => {
+            editarModelo(editModelo, patch);
+            setEditModelo(null);
+          }}
+          onClose={() => setEditModelo(null)}
+        />
+      )}
+      {confirma && (
+        <ConfirmDialog
+          title={confirma.titulo}
+          message={confirma.mensagem}
+          confirmLabel={confirma.rotulo}
+          onConfirm={() => {
+            confirma.acao();
+            setConfirma(null);
+          }}
+          onClose={() => setConfirma(null)}
+        />
       )}
     </div>
   );
