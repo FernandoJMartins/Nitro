@@ -188,6 +188,9 @@ h2 { font-size: 18px; margin: 0; }
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
 
@@ -499,6 +502,8 @@ input:focus, select:focus, textarea:focus {
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
   display: flex;
+  align-items: center;
+  gap: 8px;
   justify-content: space-between;
   align-items: center;
   gap: 12px;

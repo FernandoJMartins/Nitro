@@ -1,4 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  BookImage,
+  CalendarClock,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  Clapperboard,
+  Clock,
+  FileDown,
+  FileText,
+  History,
+  Package,
+  RefreshCw,
+  X,
+  XCircle,
+} from "lucide-react";
 import { Modal } from "./Dialog";
 import {
   approveAllContent,
@@ -107,7 +123,11 @@ function LoteImportModal({
             <video src={videoDownloadUrl(v.id)} controls preload="metadata" />
             <div className="vmeta">
               <div className="meta">{v.duracao ?? "?"}s</div>
-              {v.legenda && <div className="vlegenda">📝 {v.legenda}</div>}
+              {v.legenda && (
+                <div className="vlegenda">
+                  <FileText size={12} /> {v.legenda}
+                </div>
+              )}
             </div>
           </li>
         ))}
@@ -117,7 +137,7 @@ function LoteImportModal({
           Cancelar
         </button>
         <button className="btn primary" onClick={confirmar} disabled={selected.size === 0 || importing}>
-          {importing ? "Importando…" : `Importar e distribuir (${selected.size})`}
+          <FileDown size={14} /> {importing ? "Importando…" : `Importar e distribuir (${selected.size})`}
         </button>
       </div>
     </Modal>
@@ -140,55 +160,60 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
 
   const days = useMemo(() => groupByDayAndLote(items), [items]);
 
+  // importou: fecha TODOS os modais sozinho (lote + histórico) e atualiza a fila
   function handleImported() {
-    refresh();
+    setOpenLote(null);
+    setOpen(false);
     onImported();
   }
 
   return (
-    <div className="card" style={{ marginBottom: 16 }}>
-      <div className="card-main" style={{ width: "100%" }}>
-        <div className="selbar" style={{ padding: 0, background: "none" }}>
-          <strong>Importar do histórico (geração em massa) — por lote</strong>
-          <button className="btn sm" onClick={() => setOpen((o) => !o)}>
-            {open ? "Fechar" : `Ver lotes disponíveis (${items.length || "…"})`}
-          </button>
-        </div>
-        {open && (
-          <>
-            {error && <div className="error">⚠️ {error}</div>}
-            {days.length === 0 ? (
-              <div className="empty">Nenhum vídeo novo no histórico para importar.</div>
-            ) : (
-              days.map((day) => (
-                <div key={day.dia} className="day-group">
-                  <div className="day-header">
-                    <span>📅 {day.dia}</span>
-                  </div>
-                  <ul className="list" style={{ marginTop: 8 }}>
-                    {day.lotes.map((l) => (
-                      <li key={l.key} className="card">
-                        <div className="card-main">
-                          <strong>{l.job_id != null ? `📦 Lote #${l.job_id}` : "📦 Sem lote"}</strong>
-                          <div className="meta">{l.videos.length} vídeo(s)</div>
-                        </div>
-                        <div className="card-actions">
-                          <button className="btn primary sm" onClick={() => setOpenLote(l)}>
-                            Ver e selecionar vídeos
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))
-            )}
-          </>
-        )}
+    <>
+      <div className="selbar" style={{ marginBottom: 12 }}>
+        <button className="btn sm" onClick={() => setOpen(true)}>
+          <History size={14} /> Importar do histórico
+        </button>
+        <span className="hint">
+          Importa vídeos da geração em massa e já distribui pelas contas — o modal fecha sozinho ao importar.
+        </span>
       </div>
 
+      {open && (
+        <Modal title="Importar do histórico — por lote" onClose={() => setOpen(false)} wide scroll>
+          {error && <div className="error">⚠️ {error}</div>}
+          {days.length === 0 ? (
+            <div className="empty">Nenhum vídeo novo no histórico para importar.</div>
+          ) : (
+            days.map((day) => (
+              <div key={day.dia} className="day-group">
+                <div className="day-header">
+                  <CalendarDays size={14} /> {day.dia}
+                </div>
+                <ul className="list" style={{ marginTop: 8 }}>
+                  {day.lotes.map((l) => (
+                    <li key={l.key} className="card">
+                      <div className="card-main">
+                        <strong>
+                          <Package size={14} /> {l.job_id != null ? `Lote #${l.job_id}` : "Sem lote"}
+                        </strong>
+                        <div className="meta">{l.videos.length} vídeo(s)</div>
+                      </div>
+                      <div className="card-actions">
+                        <button className="btn primary sm" onClick={() => setOpenLote(l)}>
+                          Selecionar vídeos
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          )}
+        </Modal>
+      )}
+
       {openLote && <LoteImportModal lote={openLote} onClose={() => setOpenLote(null)} onImported={handleImported} />}
-    </div>
+    </>
   );
 }
 
@@ -259,12 +284,21 @@ function ContentCard({
         <video src={videoDownloadUrl(content.generated_video_id)} controls preload="metadata" />
       ) : (
         <div className="mini-music" style={{ width: "100%", aspectRatio: "9/16", background: "#000" }}>
-          🎬
+          <Clapperboard size={28} color="#666" />
         </div>
       )}
       <div className="vmeta">
         <div className="meta">
-          {content.kind === "story" ? "📖 Story" : "🎬 Reel"} · {content.duracao ?? "?"}s ·{" "}
+          {content.kind === "story" ? (
+            <>
+              <BookImage size={13} /> Story
+            </>
+          ) : (
+            <>
+              <Clapperboard size={13} /> Reel
+            </>
+          )}{" "}
+          · {content.duracao ?? "?"}s ·{" "}
           {content.scheduled_at ? new Date(content.scheduled_at).toLocaleString("pt-BR") : "sem horário ainda"}
         </div>
 
@@ -289,31 +323,40 @@ function ContentCard({
             />
             <div className="card-actions" style={{ marginTop: 8 }}>
               <button className="btn primary sm" onClick={() => approveContent([content.id]).then(onChange)}>
-                ✓ Aprovar
+                <Check size={14} /> Aprovar
               </button>
               <button className="btn danger sm" onClick={() => rejectContent([content.id]).then(onChange)}>
-                ✕ Rejeitar
+                <X size={14} /> Rejeitar
               </button>
               <button className="btn sm" onClick={() => redistributeContent(content.id).then(onChange)}>
-                ↻ Redistribuir
+                <RefreshCw size={13} /> Redistribuir
               </button>
             </div>
           </>
         ) : (
           <>
-            {content.legenda && <div className="vlegenda">📝 {content.legenda}</div>}
+            {content.legenda && (
+              <div className="vlegenda">
+                <FileText size={12} /> {content.legenda}
+              </div>
+            )}
             <div className="meta">
               {account ? `@${account.username}` : "sem conta"} ·{" "}
               <span className={content.approval_status === "aprovado" ? "badge" : "badge ia"}>
                 {content.approval_status}
               </span>
-              {content.schedule_mode === "especifico" && <> · ⏰ horário manual</>}
+              {content.schedule_mode === "especifico" && (
+                <>
+                  {" "}
+                  · <Clock size={12} /> horário manual
+                </>
+              )}
             </div>
             {content.approval_status === "aprovado" && (
               <>
                 <div className="card-actions" style={{ marginTop: 8 }}>
                   <button className="btn sm" onClick={() => setAgendando((v) => !v)}>
-                    📅 Programar manualmente
+                    <CalendarClock size={14} /> Programar manualmente
                   </button>
                 </div>
                 {agendando && (
@@ -367,13 +410,13 @@ export default function Approval() {
 
       <nav className="tabs">
         <button className={status === "pendente" ? "tab active" : "tab"} onClick={() => setStatus("pendente")}>
-          Pendentes
+          <Clock size={14} /> Pendentes
         </button>
         <button className={status === "aprovado" ? "tab active" : "tab"} onClick={() => setStatus("aprovado")}>
-          Aprovados
+          <CheckCircle2 size={14} /> Aprovados
         </button>
         <button className={status === "rejeitado" ? "tab active" : "tab"} onClick={() => setStatus("rejeitado")}>
-          Rejeitados
+          <XCircle size={14} /> Rejeitados
         </button>
       </nav>
 
@@ -381,14 +424,14 @@ export default function Approval() {
         <div className="selbar">
           <span>{items.length} pendente(s)</span>
           <button className="btn primary sm" onClick={() => approveAllContent().then(refresh)}>
-            ✓ Aprovar todos
+            <Check size={14} /> Aprovar todos
           </button>
           <button className="btn danger sm" onClick={() => rejectAllContent().then(refresh)}>
-            ✕ Rejeitar todos
+            <X size={14} /> Rejeitar todos
           </button>
           {selected.size > 0 && (
             <button className="btn sm" onClick={() => approveContent([...selected]).then(() => { setSelected(new Set()); refresh(); })}>
-              ✓ Aprovar selecionados ({selected.size})
+              <Check size={14} /> Aprovar selecionados ({selected.size})
             </button>
           )}
         </div>
