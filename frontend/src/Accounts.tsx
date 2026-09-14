@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal, ConfirmDialog } from "./Dialog";
 import {
   checkProxy,
@@ -135,25 +135,13 @@ function parseProxyUrl(raw: string): { protocolo: string; host: string; porta: n
   }
 }
 
-function ManagerHead({ titulo, aberto, onToggle }: { titulo: string; aberto: boolean; onToggle: () => void }) {
-  return (
-    <div className="selbar" style={{ padding: 0, background: "none", marginBottom: aberto ? 10 : 0 }}>
-      <strong>{titulo}</strong>
-      <button type="button" className="btn sm" onClick={onToggle}>
-        {aberto ? "Fechar" : "Abrir"}
-      </button>
-    </div>
-  );
-}
-
 function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () => void }) {
-  const [visivel, setVisivel] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [novo, setNovo] = useState(false);
   const [url, setUrl] = useState("");
   const [nomeInterno, setNomeInterno] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const [editId, setEditId] = useState<number | null>(null);
+  const [editando, setEditando] = useState<Proxy | null>(null);
   const [editNome, setEditNome] = useState("");
   const [editProtocolo, setEditProtocolo] = useState("socks5");
   const [editHost, setEditHost] = useState("");
@@ -179,7 +167,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
       });
       setUrl("");
       setNomeInterno("");
-      setOpen(false);
+      setNovo(false);
       onChange();
     } catch (e) {
       setError(String(e));
@@ -187,7 +175,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
   }
 
   function startEdit(p: Proxy) {
-    setEditId(p.id);
+    setEditando(p);
     setEditNome(p.nome_interno);
     setEditProtocolo(p.protocolo);
     setEditHost(p.host);
@@ -198,14 +186,14 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
   }
 
   async function saveEdit() {
-    if (editId === null) return;
+    if (editando === null) return;
     const porta = Number(editPorta);
     if (!editHost.trim() || !Number.isInteger(porta) || porta <= 0 || porta > 65535) {
       setEditError("Informe host e porta válidos.");
       return;
     }
     try {
-      await updateProxy(editId, {
+      await updateProxy(editando.id, {
         ...(editNome.trim() ? { nome_interno: editNome.trim() } : {}),
         protocolo: editProtocolo,
         host: editHost.trim(),
@@ -213,7 +201,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
         usuario: editUsuario.trim() || null,
         ...(editSenha ? { senha: editSenha } : {}),
       });
-      setEditId(null);
+      setEditando(null);
       onChange();
     } catch (e) {
       setEditError(String(e));
@@ -221,12 +209,9 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
   }
 
   return (
-    <div className="card" style={{ marginBottom: 16 }}>
+    <div className="card">
       <div className="card-main" style={{ width: "100%" }}>
-        <ManagerHead titulo="🛡️ Proxies (SOCKS5, opcional)" aberto={visivel} onToggle={() => setVisivel((v) => !v)} />
-        {visivel && (
-          <>
-        <ul className="list" style={{ marginTop: 10 }}>
+        <ul className="list">
           {proxies.map((p) => (
             <li key={p.id} className="card">
               <div className="card-main">
@@ -240,62 +225,6 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
                   {p.ip_publico && <> · IP {p.ip_publico}</>}
                   {p.ultimo_erro && <> · {p.ultimo_erro}</>}
                 </div>
-                {editId === p.id && (
-                  <div className="form" style={{ marginTop: 8 }}>
-                    <div className="checkrow" style={{ gap: 8 }}>
-                      <label className="field" style={{ flex: 2 }}>
-                        Nome interno
-                        <input
-                          value={editNome}
-                          onChange={(e) => setEditNome(e.target.value)}
-                          placeholder="Ex.: Proxy EUA"
-                        />
-                      </label>
-                      <label className="field" style={{ flex: 1 }}>
-                        Protocolo
-                        <select value={editProtocolo} onChange={(e) => setEditProtocolo(e.target.value)}>
-                          <option value="socks5">socks5</option>
-                          <option value="http">http</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="checkrow" style={{ gap: 8 }}>
-                      <label className="field" style={{ flex: 3 }}>
-                        Host
-                        <input value={editHost} onChange={(e) => setEditHost(e.target.value)} />
-                      </label>
-                      <label className="field" style={{ flex: 1 }}>
-                        Porta
-                        <input type="number" value={editPorta} onChange={(e) => setEditPorta(e.target.value)} />
-                      </label>
-                    </div>
-                    <div className="checkrow" style={{ gap: 8 }}>
-                      <label className="field" style={{ flex: 1 }}>
-                        Usuário
-                        <input value={editUsuario} onChange={(e) => setEditUsuario(e.target.value)} autoComplete="off" />
-                      </label>
-                      <label className="field" style={{ flex: 1 }}>
-                        Senha
-                        <input
-                          type="password"
-                          value={editSenha}
-                          onChange={(e) => setEditSenha(e.target.value)}
-                          placeholder="•••••• (em branco = manter)"
-                          autoComplete="new-password"
-                        />
-                      </label>
-                    </div>
-                    {editError && <div className="error">⚠️ {editError}</div>}
-                    <div className="modal-actions">
-                      <button className="btn ghost sm" onClick={() => setEditId(null)}>
-                        Cancelar
-                      </button>
-                      <button className="btn primary sm" onClick={saveEdit}>
-                        Salvar
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
               <div className="card-actions">
                 <button className="btn sm" onClick={() => checkProxy(p.id).then(onChange)}>
@@ -313,12 +242,14 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
           {proxies.length === 0 && <li className="empty">Nenhum proxy cadastrado — contas sem proxy publicam direto.</li>}
         </ul>
 
-        {!open ? (
-          <button className="btn sm" onClick={() => setOpen(true)}>
-            ＋ Novo proxy
-          </button>
-        ) : (
-          <div className="form" style={{ marginTop: 10 }}>
+        <button className="btn sm" onClick={() => setNovo(true)}>
+          ＋ Novo proxy
+        </button>
+      </div>
+
+      {novo && (
+        <Modal title="Novo proxy" onClose={() => setNovo(false)}>
+          <div className="form">
             {error && <div className="error">⚠️ {error}</div>}
             <label className="field">
               Nome interno (opcional — padrão: host:porta)
@@ -346,15 +277,72 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
               provider <code>host:porta:usuario:senha</code> (protocolo e porta opcionais — padrão socks5 e 1080).
             </div>
             <div className="modal-actions">
-              <button className="btn ghost" onClick={() => setOpen(false)}>
+              <button className="btn ghost" onClick={() => setNovo(false)}>
                 Cancelar
               </button>
             </div>
           </div>
-        )}
-          </>
-        )}
-      </div>
+        </Modal>
+      )}
+
+      {editando && (
+        <Modal title={`Editar proxy — ${editando.nome_interno}`} onClose={() => setEditando(null)}>
+          <div className="form">
+            <div className="checkrow" style={{ gap: 8 }}>
+              <label className="field" style={{ flex: 2 }}>
+                Nome interno
+                <input
+                  value={editNome}
+                  onChange={(e) => setEditNome(e.target.value)}
+                  placeholder="Ex.: Proxy EUA"
+                />
+              </label>
+              <label className="field" style={{ flex: 1 }}>
+                Protocolo
+                <select value={editProtocolo} onChange={(e) => setEditProtocolo(e.target.value)}>
+                  <option value="socks5">socks5</option>
+                  <option value="http">http</option>
+                </select>
+              </label>
+            </div>
+            <div className="checkrow" style={{ gap: 8 }}>
+              <label className="field" style={{ flex: 3 }}>
+                Host
+                <input value={editHost} onChange={(e) => setEditHost(e.target.value)} />
+              </label>
+              <label className="field" style={{ flex: 1 }}>
+                Porta
+                <input type="number" value={editPorta} onChange={(e) => setEditPorta(e.target.value)} />
+              </label>
+            </div>
+            <div className="checkrow" style={{ gap: 8 }}>
+              <label className="field" style={{ flex: 1 }}>
+                Usuário
+                <input value={editUsuario} onChange={(e) => setEditUsuario(e.target.value)} autoComplete="off" />
+              </label>
+              <label className="field" style={{ flex: 1 }}>
+                Senha
+                <input
+                  type="password"
+                  value={editSenha}
+                  onChange={(e) => setEditSenha(e.target.value)}
+                  placeholder="•••••• (em branco = manter)"
+                  autoComplete="new-password"
+                />
+              </label>
+            </div>
+            {editError && <div className="error">⚠️ {editError}</div>}
+            <div className="modal-actions">
+              <button className="btn ghost sm" onClick={() => setEditando(null)}>
+                Cancelar
+              </button>
+              <button className="btn primary sm" onClick={saveEdit}>
+                Salvar
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -642,7 +630,6 @@ function CaptionsManager({
   const [texto, setTexto] = useState("");
   const [accountId, setAccountId] = useState<number | "">("");
   const [error, setError] = useState<string | null>(null);
-  const [visivel, setVisivel] = useState(false);
 
   function nomeConta(id: number | null): string {
     if (id === null) return "Global";
@@ -664,11 +651,8 @@ function CaptionsManager({
   }
 
   return (
-    <div className="card" style={{ marginTop: 16 }}>
+    <div className="card">
       <div className="card-main" style={{ width: "100%" }}>
-        <ManagerHead titulo="✍️ Legendas (modelos globais e por conta)" aberto={visivel} onToggle={() => setVisivel((v) => !v)} />
-        {visivel && (
-          <>
         <p className="hint">
           Use variáveis: {"{{username}} {{date}} {{number}} {{random_emoji}}"} · A legenda específica da conta tem
           prioridade sobre a global.
@@ -715,8 +699,6 @@ function CaptionsManager({
             ＋ Adicionar
           </button>
         </div>
-          </>
-        )}
       </div>
     </div>
   );
@@ -789,24 +771,19 @@ function VerificationModal({
 function DefaultsManager({ onChange }: { onChange: () => void }) {
   const [d, setD] = useState<PublishingDefaults | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [visivel, setVisivel] = useState(false);
   // aba escolhida é ESTADO próprio (não derivado de d): trocar para "ciclo" com X/Y ainda
   // em 0 não pode fazer a aba voltar sozinha para "hora" — senão o usuário nunca
   // consegue preencher os campos do modo novo.
   const [modo, setModoTab] = useState<ScheduleMode>("hora");
-  const carregado = useRef(false);
 
   useEffect(() => {
-    if (visivel && !carregado.current) {
-      carregado.current = true;
-      getPublishingDefaults()
-        .then((data) => {
-          setD(data);
-          setModoTab(inferScheduleMode(data)); // sincroniza a aba com o que já está salvo
-        })
-        .catch((e) => setMsg(`⚠ ${String(e)}`));
-    }
-  }, [visivel]);
+    getPublishingDefaults()
+      .then((data) => {
+        setD(data);
+        setModoTab(inferScheduleMode(data)); // sincroniza a aba com o que já está salvo
+      })
+      .catch((e) => setMsg(`⚠ ${String(e)}`));
+  }, []);
 
   const escolherModo = (m: ScheduleMode) => {
     if (!d) return;
@@ -837,11 +814,10 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
   };
 
   return (
-    <div className="card" style={{ marginTop: 16 }}>
+    <div className="card">
       <div className="card-main" style={{ width: "100%" }}>
-        <ManagerHead titulo="⚙️ Configuração global de publicação" aberto={visivel} onToggle={() => setVisivel((v) => !v)} />
-        {visivel && !d && <div className="hint">Carregando configuração…</div>}
-        {visivel && d && (
+        {!d && <div className="hint">Carregando configuração…</div>}
+        {d && (
           <>
         <p className="hint">Vale para todas as contas, exceto quando a conta define um valor próprio.</p>
         {msg && <div className={msg.startsWith("⚠") ? "error" : "hint"}>{msg}</div>}
@@ -935,6 +911,7 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
 }
 
 export default function Accounts() {
+  const [tab, setTab] = useState<"contas" | "proxies" | "global" | "legendas">("contas");
   const [accounts, setAccounts] = useState<PubAccount[]>([]);
   const [proxies, setProxies] = useState<Proxy[]>([]);
   const [captions, setCaptions] = useState<CaptionTemplate[]>([]);
@@ -1020,9 +997,27 @@ export default function Accounts() {
       <p className="sub">Contas/perfis, proxy opcional e configuração de publicação por conta.</p>
       {error && <div className="error">⚠️ {error}</div>}
 
-      <ProxyManager proxies={proxies} onChange={refreshAll} />
-      <DefaultsManager onChange={refreshAll} />
+      <nav className="tabs">
+        <button type="button" className={tab === "contas" ? "tab active" : "tab"} onClick={() => setTab("contas")}>
+          📱 Contas ({accounts.length})
+        </button>
+        <button type="button" className={tab === "proxies" ? "tab active" : "tab"} onClick={() => setTab("proxies")}>
+          🛡️ Proxies ({proxies.length})
+        </button>
+        <button type="button" className={tab === "global" ? "tab active" : "tab"} onClick={() => setTab("global")}>
+          ⚙️ Config global
+        </button>
+        <button type="button" className={tab === "legendas" ? "tab active" : "tab"} onClick={() => setTab("legendas")}>
+          ✍️ Legendas ({captions.length})
+        </button>
+      </nav>
 
+      {tab === "proxies" && <ProxyManager proxies={proxies} onChange={refreshAll} />}
+      {tab === "global" && <DefaultsManager onChange={refreshAll} />}
+      {tab === "legendas" && <CaptionsManager captions={captions} accounts={accounts} onChange={refreshAll} />}
+
+      {tab === "contas" && (
+        <>
       <div className="selbar" style={{ marginBottom: 12 }}>
         <span>{accounts.length} conta(s)</span>
         <button className="btn primary sm" onClick={() => setFormFor("new")}>
@@ -1100,8 +1095,8 @@ export default function Accounts() {
         ))}
         {accounts.length === 0 && <li className="empty">Nenhuma conta cadastrada ainda.</li>}
       </ul>
-
-      <CaptionsManager captions={captions} accounts={accounts} onChange={refreshAll} />
+        </>
+      )}
 
       {formFor && (
         <AccountForm
