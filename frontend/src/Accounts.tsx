@@ -802,13 +802,6 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
             </div>
           )}
         </div>
-        <div className="field">
-          Horários selecionados (padrão global) — 1 post por horário/dia, com offset de ±15min
-          <HourPicker
-            selecionados={new Set(d.horarios_selecionados ?? [])}
-            onChange={(next) => setD({ ...d, horarios_selecionados: next.size ? [...next].sort() : null })}
-          />
-        </div>
         <p className="hint">
           Cada conta pode escolher o próprio modo de agendamento — o que estiver aqui vale como padrão
           (janela, timezone e modo) para as contas sem override.
