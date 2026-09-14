@@ -6,11 +6,13 @@ export function Modal({
   children,
   onClose,
   wide,
+  scroll,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
+  scroll?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -20,16 +22,17 @@ export function Modal({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const cls = `modal${wide ? " wide" : ""}${scroll ? " scroll" : ""}`;
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className={wide ? "modal wide" : "modal"} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
+      <div className={cls} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="modal-close" aria-label="Fechar" onClick={onClose}>
             ×
           </button>
         </div>
-        {children}
+        {scroll ? <div className="modal-body">{children}</div> : children}
       </div>
     </div>
   );

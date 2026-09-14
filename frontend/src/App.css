@@ -1128,6 +1128,19 @@ code {
 .modal.wide > *:not(.import-grid) {
   flex-shrink: 0;
 }
+/* modal alto: o conteúdo rola DENTRO do modal (não estoura a tela nem corta campos) */
+.modal.scroll {
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal.scroll .modal-body {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding-right: 4px;
+  margin-right: -4px;
+}
 .import-grid {
   list-style: none;
   padding: 0;

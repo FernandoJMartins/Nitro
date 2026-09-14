@@ -411,7 +411,7 @@ function AccountForm({
   }
 
   return (
-    <Modal title={initial ? `Editar ${initial.nome_interno}` : "Nova conta"} onClose={onClose}>
+    <Modal title={initial ? `Editar ${initial.nome_interno}` : "Nova conta"} onClose={onClose} wide scroll>
       <div className="form">
         <label className="field">
           Nome interno
