@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   BookImage,
   Check,
   ChevronDown,
   ChevronUp,
   Clock,
-  Layers,
+  ImagePlus,
   Library,
   Link2,
   Loader,
@@ -148,17 +149,124 @@ function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<numb
   );
 }
 
+/** Biblioteca de mídias em MODAL (sem barra de pesquisa) — escolhe imagens para
+ * criar um story novo ou adicionar a um story existente. */
+function BibliotecaModal({
+  titulo,
+  confirmLabel,
+  folders,
+  library,
+  folderNome,
+  onConfirm,
+  onClose,
+}: {
+  titulo: string;
+  confirmLabel: string;
+  folders: Folder[];
+  library: Media[];
+  folderNome: (id: number | null) => string;
+  onConfirm: (ids: number[]) => void;
+  onClose: () => void;
+}) {
+  const [folderFilter, setFolderFilter] = useState<number | "all" | "none">("all");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  const filtradas = useMemo(() => {
+    let lista = library;
+    if (folderFilter === "none") lista = lista.filter((m) => m.folder_id == null);
+    else if (folderFilter !== "all") lista = lista.filter((m) => m.folder_id === folderFilter);
+    return lista;
+  }, [library, folderFilter]);
+
+  function toggleSel(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <Modal title={titulo} onClose={onClose} wide scroll>
+      <div className="checkrow" style={{ gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <label className="field" style={{ width: 220 }}>
+          Pasta
+          <select
+            value={folderFilter}
+            onChange={(e) =>
+              setFolderFilter(e.target.value === "all" || e.target.value === "none" ? e.target.value : Number(e.target.value))
+            }
+          >
+            <option value="all">Todas as pastas</option>
+            <option value="none">Sem pasta</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>
+                📁 {f.nome}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="hint">
+          {selected.size > 0 ? `${selected.size} imagem(ns) selecionada(s)` : "Clique nas imagens para selecionar"}
+        </span>
+      </div>
+      <div className="sgrid">
+        {filtradas.map((m) => {
+          const isVideo = VIDEO_RE.test(m.caminho);
+          return (
+            <div
+              key={m.id}
+              role="button"
+              tabIndex={0}
+              className={selected.has(m.id) ? "scard selected" : "scard"}
+              onClick={() => toggleSel(m.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleSel(m.id);
+                }
+              }}
+            >
+              {isVideo ? (
+                <video className="thumb" src={downloadUrl(m.id)} preload="metadata" muted />
+              ) : (
+                <img className="thumb" src={downloadUrl(m.id)} alt={m.nome_original} />
+              )}
+              <div className="scard-nome" title={m.nome_original}>
+                {m.nome_original}
+              </div>
+              <div className="scard-pasta">📁 {folderNome(m.folder_id)}</div>
+              {selected.has(m.id) && <span className="scard-check">✓</span>}
+            </div>
+          );
+        })}
+        {filtradas.length === 0 && <div className="empty">Nenhuma imagem encontrada para essa pasta.</div>}
+      </div>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>
+          Cancelar
+        </button>
+        <button className="btn primary" disabled={selected.size === 0} onClick={() => onConfirm([...selected])}>
+          <Plus size={14} /> {confirmLabel} ({selected.size})
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Editor de um modelo do dia — abre em MODAL (a lista fica só com linhas-resumo). */
 function ModelEditorModal({
   modelo,
   mediaMap,
   onSave,
   onClose,
+  onAddImages,
 }: {
   modelo: Modelo;
   mediaMap: Map<number, Media>;
   onSave: (patch: Partial<Modelo>) => void;
   onClose: () => void;
+  onAddImages?: () => void;
 }) {
   const [d, setD] = useState<Modelo>(modelo);
 
@@ -214,9 +322,16 @@ function ModelEditorModal({
             O texto é o rótulo do botão do link. Sem link (opcional), o texto vira a legenda nativa do story.
           </p>
 
-          <p className="hint" style={{ marginTop: 10 }}>
-            Sequência do story — a ordem abaixo é a ordem da publicação:
-          </p>
+          <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+            <p className="hint" style={{ margin: "10px 0 0" }}>
+              Sequência do story — a ordem abaixo é a ordem da publicação:
+            </p>
+            {onAddImages && (
+              <button className="btn sm" onClick={onAddImages}>
+                <ImagePlus size={14} /> Adicionar imagens
+              </button>
+            )}
+          </div>
           <div className="sframes">
             {d.frames.map((id, j) => {
               const media = mediaMap.get(id);
@@ -295,18 +410,18 @@ export default function Stories() {
   const [library, setLibrary] = useState<Media[]>([]);
   const [accountId, setAccountId] = useState<number | "">("");
   const [modelos, setModelos] = useState<Modelo[]>([]);
-  const [folderFilter, setFolderFilter] = useState<number | "all" | "none">("all");
-  const [busca, setBusca] = useState("");
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [target, setTarget] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [postando, setPostando] = useState<number | null>(null);
   const [historico, setHistorico] = useState<HistoryItem[]>([]);
   const [histFiltro, setHistFiltro] = useState<"todos" | "PENDING" | "PUBLISHED" | "erro">("todos");
-  // modal dos modelos do dia (lista + novo + salvar) e índice do modelo em edição
-  const [modelosAbertos, setModelosAbertos] = useState(false);
+  // fluxo de criação/edição: esconde o histórico e mostra conta → stories ativos → novo/editar
+  const [editando, setEditando] = useState(false);
+  // modal da biblioteca de mídias: null = criando story novo; número = adicionando ao modelo n
+  const [bibliotecaAberta, setBibliotecaAberta] = useState(false);
+  const [bibliotecaPara, setBibliotecaPara] = useState<number | null>(null);
+  // índice do modelo sendo editado em MODAL
   const [editModelo, setEditModelo] = useState<number | null>(null);
   const [confirma, setConfirma] = useState<null | {
     titulo: string;
@@ -359,15 +474,12 @@ export default function Stories() {
   useEffect(() => {
     if (accountId === "") {
       setModelos([]);
-      setTarget(0);
       return;
     }
     setMsg(null);
     getStoryConfig(accountId)
       .then((cfg) => {
         setModelos(mapearConfig(cfg));
-        setTarget(0);
-        setSelected(new Set());
       })
       .catch((e) => setError(String(e)));
   }, [accountId]);
@@ -398,38 +510,9 @@ export default function Stories() {
         : h.status === histFiltro
   );
 
-  const filtradas = useMemo(() => {
-    let lista = library;
-    if (folderFilter === "none") lista = lista.filter((m) => m.folder_id == null);
-    else if (folderFilter !== "all") lista = lista.filter((m) => m.folder_id === folderFilter);
-    const q = busca.trim().toLowerCase();
-    if (q) lista = lista.filter((m) => m.nome_original.toLowerCase().includes(q));
-    return lista;
-  }, [library, folderFilter, busca]);
-
   function folderNome(folderId: number | null): string {
     if (folderId == null) return "Sem pasta";
     return folders.find((f) => f.id === folderId)?.nome ?? "Sem pasta";
-  }
-
-  function toggleSel(id: number) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function addSelecionadas() {
-    if (selected.size === 0 || modelos.length === 0) return;
-    const ids = [...selected];
-    setModelos((prev) =>
-      prev.map((m, i) =>
-        i === target ? { ...m, frames: [...m.frames, ...ids.filter((id) => !m.frames.includes(id))] } : m
-      )
-    );
-    setSelected(new Set());
   }
 
   function removerModelo(idx: number) {
@@ -437,11 +520,32 @@ export default function Stories() {
       const next = prev.filter((_, i) => i !== idx);
       return next.length > 0 ? next : [novoModelo()];
     });
-    setTarget((t) => Math.min(t, Math.max(modelos.length - 2, 0)));
+    if (editModelo === idx) setEditModelo(null);
   }
 
   function editarModelo(idx: number, patch: Partial<Modelo>) {
     setModelos((prev) => prev.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
+  }
+
+  // biblioteca confirmou: cria um story NOVO com as imagens escolhidas e já abre
+  // o editor dele, ou acrescenta as imagens ao story que estava em edição.
+  function confirmarBiblioteca(ids: number[]) {
+    if (bibliotecaPara === null) {
+      const novo = novoModelo();
+      novo.frames = ids;
+      const idx = modelos.length;
+      setModelos((prev) => [...prev, novo]);
+      setEditModelo(idx);
+    } else {
+      const atual = modelos[bibliotecaPara];
+      if (atual) {
+        editarModelo(bibliotecaPara, {
+          frames: [...atual.frames, ...ids.filter((id) => !atual.frames.includes(id))],
+        });
+        setEditModelo(bibliotecaPara);
+      }
+    }
+    setBibliotecaAberta(false);
   }
 
   function atualizarHistorico() {
@@ -566,171 +670,53 @@ export default function Stories() {
   return (
     <div>
       <p className="sub">
-        Stories em 3 passos: escolha a conta, monte os modelos do dia (cada modelo vira 1 story no horário
-        dele) e acompanhe o histórico. O check de ativar/desativar a automação fica em Publicação → Contas.
+        Stories de todas as contas em um lugar: crie ou edite o story ativo de cada conta e acompanhe o
+        histórico. O check de ativar/desativar a automação fica em Publicação → Contas.
       </p>
       {error && <div className="error">⚠️ {error}</div>}
 
-      <Secao n={1} titulo="Conta" dica="de qual perfil saem os stories" />
-      <div className="card">
-        <div className="card-main" style={{ width: "100%" }}>
-          <div className="checkrow" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <label className="field" style={{ flex: 1, minWidth: 220 }}>
-              Conta
-              <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
-                <option value="">— Escolha a conta —</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    @{a.username} · {a.nome_interno}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {acc && (
-              <span className={`badge ${acc.stories_enabled ? "st-ok" : "st-danger"}`}>
-                {acc.stories_enabled ? (
-                  <>
-                    <BookImage size={13} /> Automação de stories ativa
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle size={13} /> Automação desativada — ligue o check em Contas (Publicação → Contas).
-                  </>
-                )}
-              </span>
-            )}
-            {acc && (
-              <button className="btn sm" onClick={() => setModelosAbertos(true)}>
-                <Layers size={14} /> Modelos do dia ({modelos.length})
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {accountId !== "" && acc && (
+      {!editando ? (
         <>
-          <Secao n={2} titulo="Biblioteca de mídias" dica="escolha as imagens e adicione ao modelo selecionado" />
+          <div className="selbar" style={{ marginBottom: 12 }}>
+            <button className="btn primary" onClick={() => setEditando(true)}>
+              <Pencil size={15} /> Criar/editar storie
+            </button>
+            <span className="hint">Escolha a conta, veja os stories ativos e crie um novo — o histórico some enquanto edita.</span>
+          </div>
 
+          <Secao n={1} titulo="Histórico" dica="stories de todas as contas, mais recente primeiro" />
           <div className="card">
             <div className="card-main" style={{ width: "100%" }}>
-              <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                <input
-                  type="search"
-                  placeholder="Buscar imagem…"
-                  value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  style={{ flex: 2, minWidth: 180 }}
-                />
-                <select
-                  value={folderFilter}
-                  onChange={(e) =>
-                    setFolderFilter(e.target.value === "all" || e.target.value === "none" ? e.target.value : Number(e.target.value))
-                  }
-                  style={{ flex: 1, minWidth: 150 }}
-                >
-                  <option value="all">Todas as pastas</option>
-                  <option value="none">Sem pasta</option>
-                  {folders.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      📁 {f.nome}
-                    </option>
-                  ))}
-                </select>
-                <label className="field" style={{ width: 220 }}>
-                  Adicionar ao modelo
-                  <select value={target} onChange={(e) => setTarget(Number(e.target.value))}>
-                    {modelos.map((m, i) => (
-                      <option key={m.key} value={i}>
-                        Modelo {i + 1} · {m.horario} ({m.frames.length} img)
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                <strong>
+                  <Library size={15} /> Histórico — todas as contas ({historico.length})
+                </strong>
+                <div className="checkrow" style={{ gap: 6 }}>
+                  <button className="btn sm" onClick={atualizarHistorico}>
+                    <RefreshCw size={13} /> Atualizar
+                  </button>
+                  <button className="btn danger sm" onClick={pedirCancelarTodos} disabled={!historico.some((h) => h.status !== "PUBLISHED")}>
+                    <Trash2 size={13} /> Cancelar todos
+                  </button>
+                </div>
               </div>
-
-              <div className="sgrid">
-                {filtradas.map((m) => {
-                  const isVideo = VIDEO_RE.test(m.caminho);
-                  return (
-                    <div
-                      key={m.id}
-                      role="button"
-                      tabIndex={0}
-                      className={selected.has(m.id) ? "scard selected" : "scard"}
-                      onClick={() => toggleSel(m.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          toggleSel(m.id);
-                        }
-                      }}
-                    >
-                      {isVideo ? (
-                        <video className="thumb" src={downloadUrl(m.id)} preload="metadata" muted />
-                      ) : (
-                        <img className="thumb" src={downloadUrl(m.id)} alt={m.nome_original} />
-                      )}
-                      <div className="scard-nome" title={m.nome_original}>
-                        {m.nome_original}
-                      </div>
-                      <div className="scard-pasta">📁 {folderNome(m.folder_id)}</div>
-                      {selected.has(m.id) && <span className="scard-check">✓</span>}
-                    </div>
-                  );
-                })}
-                {filtradas.length === 0 && <div className="empty">Nenhuma imagem encontrada para esse filtro.</div>}
-              </div>
-
-              {/* botão de adicionar em evidência, DEPOIS das opções e do grid de imagens */}
-              <div className="selbar" style={{ marginTop: 10 }}>
-                <span className="hint">
-                  {selected.size > 0
-                    ? `${selected.size} imagem(ns) selecionada(s) → Modelo ${target + 1} · ${modelos[target]?.horario ?? "—"}`
-                    : "Selecione as imagens acima para adicionar ao modelo"}
-                </span>
-                <button className="btn primary" onClick={addSelecionadas} disabled={selected.size === 0}>
-                  <Plus size={15} /> Adicionar ao Modelo {target + 1}
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      <Secao n={3} titulo="Histórico" dica="stories de todas as contas, mais recente primeiro" />
-      <div className="card">
-        <div className="card-main" style={{ width: "100%" }}>
-          <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-            <strong>
-              <Library size={15} /> Histórico — todas as contas ({historico.length})
-            </strong>
-            <div className="checkrow" style={{ gap: 6 }}>
-              <button className="btn sm" onClick={atualizarHistorico}>
-                <RefreshCw size={13} /> Atualizar
-              </button>
-              <button className="btn danger sm" onClick={pedirCancelarTodos} disabled={!historico.some((h) => h.status !== "PUBLISHED")}>
-                <Trash2 size={13} /> Cancelar todos
-              </button>
-            </div>
-          </div>
-          <div className="checkrow" style={{ gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-            {(
-              [
-                ["todos", "Todos", null],
-                ["PENDING", "Pendentes", Clock],
-                ["PUBLISHED", "Publicados", Check],
-                ["erro", "Com erro", AlertTriangle],
-              ] as const
-            ).map(([f, label, Icon]) => (
-              <button
-                key={f}
-                className={histFiltro === f ? "chip active" : "chip"}
-                onClick={() => setHistFiltro(f)}
-              >
-                {Icon && <Icon size={12} />} {label}
-              </button>
-            ))}
+              <div className="checkrow" style={{ gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                {(
+                  [
+                    ["todos", "Todos", null],
+                    ["PENDING", "Pendentes", Clock],
+                    ["PUBLISHED", "Publicados", Check],
+                    ["erro", "Com erro", AlertTriangle],
+                  ] as const
+                ).map(([f, label, Icon]) => (
+                  <button
+                    key={f}
+                    className={histFiltro === f ? "chip active" : "chip"}
+                    onClick={() => setHistFiltro(f)}
+                  >
+                    {Icon && <Icon size={12} />} {label}
+                  </button>
+                ))}
               </div>
               <ul className="list" style={{ marginTop: 10, maxHeight: 480, overflowY: "auto" }}>
                 {historicoFiltrado.map((h) => {
@@ -783,78 +769,144 @@ export default function Stories() {
                   </li>
                 )}
               </ul>
-        </div>
-      </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="selbar" style={{ marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+            <button className="btn sm" onClick={() => setEditando(false)}>
+              <ArrowLeft size={14} /> Voltar
+            </button>
+            <span className="hint">Editor de stories</span>
+            {acc && (
+              <button className="btn primary sm" onClick={salvar} disabled={saving}>
+                <Save size={14} /> {saving ? "Salvando…" : "Salvar stories"}
+              </button>
+            )}
+            {msg && <span className="hint">{msg}</span>}
+          </div>
+
+          <Secao n={1} titulo="Conta" dica="de qual perfil saem os stories" />
+          <div className="card">
+            <div className="card-main" style={{ width: "100%" }}>
+              <div className="checkrow" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <label className="field" style={{ flex: 1, minWidth: 220 }}>
+                  Conta
+                  <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
+                    <option value="">— Escolha a conta —</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        @{a.username} · {a.nome_interno}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {acc && (
+                  <span className={`badge ${acc.stories_enabled ? "st-ok" : "st-danger"}`}>
+                    {acc.stories_enabled ? (
+                      <>
+                        <BookImage size={13} /> Automação de stories ativa
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle size={13} /> Automação desativada — ligue o check em Contas (Publicação → Contas).
+                      </>
+                    )}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {accountId !== "" && acc && (
+            <>
+              <Secao n={2} titulo="Stories ativos" dica={`o que já está programado em @${acc.username}`} />
+              <div className="card">
+                <div className="card-main" style={{ width: "100%" }}>
+                  <div className="checkrow" style={{ gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+                    <strong>{modelos.length} story(s) ativo(s)</strong>
+                    <button
+                      className="btn primary sm"
+                      onClick={() => {
+                        setBibliotecaPara(null);
+                        setBibliotecaAberta(true);
+                      }}
+                    >
+                      <Plus size={14} /> Novo story
+                    </button>
+                  </div>
+                  <div className="smodels-grid">
+                    {modelos.map((m, i) => (
+                      <div key={m.key} className="card smodel-card">
+                        <div style={{ display: "flex", justifyContent: "center" }}>
+                          <StoryPreview modelo={m} mediaMap={mediaMap} />
+                        </div>
+                        <div className="card-main" style={{ width: "100%" }}>
+                          <strong>
+                            <Clock size={14} /> {m.horario} — {m.texto.trim() || `Story ${i + 1}`}
+                          </strong>
+                          <div className="hint">
+                            {m.frames.length} img
+                            {m.link.trim() !== ""
+                              ? ` · botão do link (posição: ${m.link_posicao})`
+                              : " · sem link — texto vira legenda"}
+                          </div>
+                        </div>
+                        <div className="card-actions" style={{ flexWrap: "wrap" }}>
+                          {m.planId != null && (
+                            <button
+                              className="btn primary sm"
+                              onClick={() => pedirPostar(m)}
+                              disabled={postando === m.planId}
+                              title="Publica este story imediatamente"
+                            >
+                              <Play size={13} /> {postando === m.planId ? "Publicando…" : "Postar agora"}
+                            </button>
+                          )}
+                          <button className="btn sm" onClick={() => setEditModelo(i)}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                          <button className="btn danger sm" onClick={() => removerModelo(i)} title="Excluir story">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {modelos.length === 0 && <div className="empty">Nenhum story ativo — clique em “＋ Novo story”.</div>}
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {accounts.length === 0 && (
         <div className="empty">Nenhuma conta cadastrada ainda — crie uma em Publicação → Contas.</div>
       )}
 
-      {modelosAbertos && acc && (
-        <Modal title={`Modelos do dia — @${acc.username}`} onClose={() => setModelosAbertos(false)} wide scroll>
-          <p className="hint" style={{ marginTop: 0 }}>
-            Cada modelo vira 1 story por dia no horário dele. Edite para mudar texto, link, posição e a
-            sequência de imagens.
-          </p>
-          {modelos.map((m, i) => (
-            <div key={m.key} className="card" style={{ padding: 12, marginTop: 10 }}>
-              <div className="card-main" style={{ flex: 1, minWidth: 0 }}>
-                <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
-                  <strong>
-                    <Clock size={14} /> {m.horario} — {m.texto.trim() || `Modelo ${i + 1}`}
-                  </strong>
-                  <span className="badge st-ok">{m.frames.length} img</span>
-                  {m.link.trim() !== "" && (
-                    <span className="badge" style={{ color: "var(--blue)" }}>
-                      <Link2 size={11} /> com link
-                    </span>
-                  )}
-                </div>
-                <p className="hint" style={{ margin: "2px 0 0" }}>
-                  Publica todo dia às {m.horario}
-                  {m.link.trim() !== ""
-                    ? ` · o texto vira o botão do link (posição: ${m.link_posicao})`
-                    : " · sem link — o texto vira a legenda do story"}
-                </p>
-              </div>
-              <div className="card-actions" style={{ flexWrap: "wrap" }}>
-                {m.planId != null && (
-                  <button
-                    className="btn primary sm"
-                    onClick={() => pedirPostar(m)}
-                    disabled={postando === m.planId}
-                    title="Publica este story imediatamente"
-                  >
-                    <Play size={13} /> {postando === m.planId ? "Publicando…" : "Postar agora"}
-                  </button>
-                )}
-                <button className="btn sm" onClick={() => setEditModelo(i)}>
-                  <Pencil size={13} /> Editar
-                </button>
-                <button className="btn danger sm" onClick={() => removerModelo(i)}>
-                  <Trash2 size={13} /> Excluir
-                </button>
-              </div>
-            </div>
-          ))}
-          <div className="modal-actions" style={{ justifyContent: "space-between" }}>
-            <button className="btn sm" onClick={() => setModelos((prev) => [...prev, novoModelo()])}>
-              <Plus size={14} /> Novo modelo
-            </button>
-            <div className="checkrow" style={{ gap: 8, alignItems: "center" }}>
-              {msg && <span className="hint">{msg}</span>}
-              <button className="btn primary" onClick={salvar} disabled={saving}>
-                <Save size={14} /> {saving ? "Salvando…" : "Salvar stories"}
-              </button>
-            </div>
-          </div>
-        </Modal>
+      {bibliotecaAberta && (
+        <BibliotecaModal
+          titulo={bibliotecaPara === null ? "Novo story — escolha as imagens" : "Adicionar imagens ao story"}
+          confirmLabel={bibliotecaPara === null ? "Criar story" : "Adicionar"}
+          folders={folders}
+          library={library}
+          folderNome={folderNome}
+          onConfirm={confirmarBiblioteca}
+          onClose={() => setBibliotecaAberta(false)}
+        />
       )}
 
       {editModelo !== null && modelos[editModelo] && (
         <ModelEditorModal
+          key={`${editModelo}-${modelos[editModelo].frames.length}`}
           modelo={modelos[editModelo]}
           mediaMap={mediaMap}
+          onAddImages={() => {
+            setBibliotecaPara(editModelo);
+            setBibliotecaAberta(true);
+          }}
           onSave={(patch) => {
             editarModelo(editModelo, patch);
             setEditModelo(null);

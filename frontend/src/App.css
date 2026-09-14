@@ -898,6 +898,19 @@ code {
 
 /* prévia de story (tab Stories) — reusa o canvas 9:16 do Criar */
 .smodel-row { display: flex; gap: 14px; align-items: flex-start; }
+.smodels-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.smodel-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.smodel-card .story-preview { align-self: center; }
+.modal .sgrid { max-height: none; }
 .story-preview { flex-shrink: 0; width: 200px; }
 .story-preview-texto {
   position: absolute; left: 50%; top: 55%; transform: translate(-50%, -50%);
