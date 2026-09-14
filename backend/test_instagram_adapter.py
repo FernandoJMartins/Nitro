@@ -363,6 +363,35 @@ def test_story_sem_link_mantem_legenda_nativa():
         os.unlink(a)
 
 
+def test_story_sem_link_nao_passa_stickers_none():
+    """Regressão: o fork do instagrapi faz stickers.copy() no configure_story —
+    story SEM link quebraria com AttributeError se o adapter passasse
+    stickers=None. O adapter precisa omitir o kwarg (default vira [])."""
+    a = _tmp_imagem()
+
+    class ForkLikeClient(StubClient):
+        def photo_upload_to_story(self, path, caption="", links=None, stickers=[]):
+            if stickers is None:
+                raise AttributeError("'NoneType' object has no attribute 'copy'")
+            self.stories.append((path, caption, links, stickers))
+            return StubMedia("pk-story-semlink")
+
+    try:
+        adapter = InstagramAdapter(client_factory=lambda proxy: ForkLikeClient(proxy))
+        ctx = _ctx(kind="story", media_path=a, story_text="Sem link")
+        adapter.open()
+        session = adapter.login(ctx)
+        ctx.session_data = session
+        adapter.create_story(ctx)
+        result = adapter.publish(ctx)
+        assert result.external_id == "pk-story-semlink"
+        path0, caption, links, stickers = adapter._client.stories[0]
+        assert caption == "Sem link"
+        assert stickers == []  # kwarg omitido -> default do fork
+    finally:
+        os.unlink(a)
+
+
 def test_render_story_pill_desenha_pilula_branca_com_texto_preto():
     """A pílula é desenhada na imagem: fundo branco, texto preto e o sticker
     cobrindo exatamente a pílula (frações da tela)."""

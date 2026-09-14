@@ -896,7 +896,12 @@ class InstagramAdapter(PlatformAdapter):
                     destino = str(renderizado)
                     stickers = self._prepare_story_stickers([sticker])
                     caption = ""  # o texto agora vive DENTRO da pílula (rótulo do botão)
-                media = self._client.photo_upload_to_story(destino, caption=caption, stickers=stickers)
+                # stickers=None quebra o fork (configure_story faz stickers.copy());
+                # story sem link não pode receber o kwarg.
+                kwargs = {"caption": caption}
+                if stickers is not None:
+                    kwargs["stickers"] = stickers
+                media = self._client.photo_upload_to_story(destino, **kwargs)
                 ids.append(str(media.pk))
                 self._uploaded_media_ids.append(str(media.pk))
         finally:
