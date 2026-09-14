@@ -30,6 +30,19 @@ import {
 
 const PROXY_DOT: Record<string, string> = { verde: "🟢", amarelo: "🟡", vermelho: "🔴", cinza: "⚪" };
 
+type ScheduleMode = "hora" | "ciclo" | "horarios";
+
+function inferScheduleMode(a?: {
+  horarios_selecionados?: string[] | null;
+  posts_por_ciclo?: number | null;
+  horas_por_ciclo?: number | null;
+}): ScheduleMode {
+  // mesma prioridade do backend: horários fixos > ciclo > posts/hora
+  if (a?.horarios_selecionados?.length) return "horarios";
+  if (a?.posts_por_ciclo && a?.horas_por_ciclo) return "ciclo";
+  return "hora";
+}
+
 function HourPicker({
   selecionados,
   onChange,
@@ -349,6 +362,8 @@ function AccountForm({
   const [postsCiclo, setPostsCiclo] = useState<number | "">(initial?.posts_por_ciclo ?? "");
   const [horasCiclo, setHorasCiclo] = useState<number | "">(initial?.horas_por_ciclo ?? "");
   const [horarios, setHorarios] = useState<Set<string>>(new Set(initial?.horarios_selecionados ?? []));
+  const [modo, setModo] = useState<ScheduleMode>(inferScheduleMode(initial));
+  const [formError, setFormError] = useState<string | null>(null);
   const [janelaInicio, setJanelaInicio] = useState(initial?.janela_inicio ?? "");
   const [janelaFim, setJanelaFim] = useState(initial?.janela_fim ?? "");
   const [captionMode, setCaptionMode] = useState<AccountBody["caption_mode"]>(initial?.caption_mode ?? "automatica");
@@ -357,16 +372,25 @@ function AccountForm({
 
   function submit() {
     if (!nomeInterno.trim() || !username.trim()) return;
+    if (modo === "ciclo" && (postsCiclo === "" || horasCiclo === "")) {
+      setFormError("Modo “por ciclo”: preencha quantos posts (X) e a cada quantas horas (Y).");
+      return;
+    }
+    if (modo === "horarios" && horarios.size === 0) {
+      setFormError("Modo “horários fixos”: marque ao menos um horário (ou escolha outro modo).");
+      return;
+    }
+    setFormError(null);
     const body: AccountBody = {
       nome_interno: nomeInterno.trim(),
       username: username.trim(),
       ...(senha.trim() ? { senha: senha.trim() } : {}),
       ...(sessionid.trim() ? { sessionid: sessionid.trim() } : {}),
       proxy_id: proxyId === "" ? null : proxyId,
-      posts_por_hora: postsHora === "" ? null : postsHora,
-      posts_por_ciclo: postsCiclo === "" ? null : postsCiclo,
-      horas_por_ciclo: horasCiclo === "" ? null : horasCiclo,
-      horarios_selecionados: horarios.size ? [...horarios].sort() : null,
+      posts_por_hora: modo === "hora" ? (postsHora === "" ? null : postsHora) : null,
+      posts_por_ciclo: modo === "ciclo" ? (postsCiclo === "" ? null : postsCiclo) : null,
+      horas_por_ciclo: modo === "ciclo" ? (horasCiclo === "" ? null : horasCiclo) : null,
+      horarios_selecionados: modo === "horarios" && horarios.size ? [...horarios].sort() : null,
       janela_inicio: janelaInicio || null,
       janela_fim: janelaFim || null,
       caption_mode: captionMode,
@@ -427,52 +451,77 @@ function AccountForm({
             ))}
           </select>
         </label>
-        <div className="checkrow" style={{ gap: 12 }}>
-          <label className="field" style={{ flex: 1 }}>
-            Posts/hora (vazio = usar padrão global)
-            <input
-              type="number"
-              min={1}
-              value={postsHora}
-              onChange={(e) => setPostsHora(e.target.value ? Number(e.target.value) : "")}
-            />
-          </label>
-        </div>
-        <div className="checkrow" style={{ gap: 12 }}>
-          <label className="field" style={{ flex: 1 }}>
-            Posts por ciclo — X
-            <input
-              type="number"
-              min={1}
-              value={postsCiclo}
-              onChange={(e) => setPostsCiclo(e.target.value ? Number(e.target.value) : "")}
-            />
-          </label>
-          <label className="field" style={{ flex: 1 }}>
-            A cada (horas) — Y
-            <input
-              type="number"
-              min={0.5}
-              step={0.5}
-              value={horasCiclo}
-              onChange={(e) => setHorasCiclo(e.target.value ? Number(e.target.value) : "")}
-            />
-          </label>
-        </div>
-        <div className="hint">
-          Cadência profissional: ex. <strong>2 posts a cada 3 horas</strong> mantém um ritmo mais
-          natural/humano (posts/hora fixo cai em spam). Quando preenchida (X e Y), ela substitui o limite
-          de posts/hora no agendamento.
-        </div>
         <div className="field">
-          Horários selecionados — 1 post por horário/dia, com offset de ±15min
-          <HourPicker selecionados={horarios} onChange={setHorarios} />
-          <span className="hint">
-            Com horários marcados, o agendamento usa <strong>somente</strong> esses horários (com um offset
-            aleatório para nunca repetir o horário exato todo dia) e ignora cadência/posts-hora. O que não
-            couber hoje vai para o dia seguinte, na mesma ordem.
-          </span>
+          Modo de agendamento
+          <nav className="tabs" style={{ marginTop: 4 }}>
+            <button className={modo === "hora" ? "tab active" : "tab"} onClick={() => setModo("hora")}>
+              🕐 Posts/hora
+            </button>
+            <button className={modo === "ciclo" ? "tab active" : "tab"} onClick={() => setModo("ciclo")}>
+              🔁 Por ciclo
+            </button>
+            <button className={modo === "horarios" ? "tab active" : "tab"} onClick={() => setModo("horarios")}>
+              ⏰ Horários fixos
+            </button>
+          </nav>
+          {modo === "hora" && (
+            <>
+              <div className="checkrow" style={{ gap: 12, marginTop: 8 }}>
+                <label className="field" style={{ flex: 1 }}>
+                  Posts/hora (vazio = usar padrão global)
+                  <input
+                    type="number"
+                    min={1}
+                    value={postsHora}
+                    onChange={(e) => setPostsHora(e.target.value ? Number(e.target.value) : "")}
+                  />
+                </label>
+              </div>
+              <div className="hint">Limite simples por hora. Alto demais cai em spam.</div>
+            </>
+          )}
+          {modo === "ciclo" && (
+            <>
+              <div className="checkrow" style={{ gap: 12, marginTop: 8 }}>
+                <label className="field" style={{ flex: 1 }}>
+                  Posts por ciclo — X
+                  <input
+                    type="number"
+                    min={1}
+                    value={postsCiclo}
+                    onChange={(e) => setPostsCiclo(e.target.value ? Number(e.target.value) : "")}
+                  />
+                </label>
+                <label className="field" style={{ flex: 1 }}>
+                  A cada (horas) — Y
+                  <input
+                    type="number"
+                    min={0.5}
+                    step={0.5}
+                    value={horasCiclo}
+                    onChange={(e) => setHorasCiclo(e.target.value ? Number(e.target.value) : "")}
+                  />
+                </label>
+              </div>
+              <div className="hint">
+                Ex.: <strong>2 posts a cada 3 horas</strong> → um post a cada ~1h30. Ritmo mais
+                natural/humano que um teto fixo por hora.
+              </div>
+            </>
+          )}
+          {modo === "horarios" && (
+            <>
+              <div style={{ marginTop: 8 }}>
+                <HourPicker selecionados={horarios} onChange={setHorarios} />
+              </div>
+              <span className="hint">
+                1 post por horário/dia, com offset aleatório de ±15min (nunca repete o horário exato).
+                O que não couber hoje vai para o dia seguinte.
+              </span>
+            </>
+          )}
         </div>
+        {formError && <div className="error">⚠️ {formError}</div>}
         <div className="checkrow" style={{ gap: 12 }}>
           <label className="field" style={{ flex: 1 }}>
             Janela — início
@@ -629,16 +678,32 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
 
   if (!d) return <div className="card" style={{ marginTop: 16 }}>Carregando configuração global…</div>;
 
-  async function salvar() {
+  const modo: ScheduleMode = inferScheduleMode(d);
+
+  const setModo = (m: ScheduleMode) => {
+    if (m === "hora") setD({ ...d, posts_por_ciclo: 0, horas_por_ciclo: 0, horarios_selecionados: null });
+    if (m === "ciclo") setD({ ...d, horarios_selecionados: null });
+    if (m === "horarios") setD({ ...d, posts_por_ciclo: 0, horas_por_ciclo: 0 });
+  };
+
+  const salvar = async () => {
     setMsg(null);
+    if (modo === "ciclo" && (!d.posts_por_ciclo || !d.horas_por_ciclo)) {
+      setMsg("⚠ Modo “por ciclo”: preencha X e Y (ou escolha outro modo).");
+      return;
+    }
+    if (modo === "horarios" && !(d.horarios_selecionados?.length)) {
+      setMsg("⚠ Modo “horários fixos”: marque ao menos um horário (ou escolha outro modo).");
+      return;
+    }
     try {
-      await updatePublishingDefaults(d!);
+      await updatePublishingDefaults(d);
       setMsg("Configuração global salva.");
       onChange();
     } catch (e) {
       setMsg(`⚠ ${String(e)}`);
     }
-  }
+  };
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
@@ -647,34 +712,6 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
         <p className="hint">Vale para todas as contas, exceto quando a conta define um valor próprio.</p>
         {msg && <div className={msg.startsWith("⚠") ? "error" : "hint"}>{msg}</div>}
         <div className="checkrow" style={{ gap: 12, marginTop: 10, flexWrap: "wrap" }}>
-          <label className="field" style={{ width: 140 }}>
-            Posts/hora
-            <input
-              type="number"
-              min={1}
-              value={d.posts_por_hora}
-              onChange={(e) => setD({ ...d, posts_por_hora: Number(e.target.value) })}
-            />
-          </label>
-          <label className="field" style={{ width: 130 }}>
-            Posts por ciclo — X
-            <input
-              type="number"
-              min={0}
-              value={d.posts_por_ciclo}
-              onChange={(e) => setD({ ...d, posts_por_ciclo: Number(e.target.value) })}
-            />
-          </label>
-          <label className="field" style={{ width: 140 }}>
-            A cada (horas) — Y
-            <input
-              type="number"
-              min={0}
-              step={0.5}
-              value={d.horas_por_ciclo}
-              onChange={(e) => setD({ ...d, horas_por_ciclo: Number(e.target.value) })}
-            />
-          </label>
           <label className="field">
             Janela — início
             <input type="time" value={d.janela_inicio} onChange={(e) => setD({ ...d, janela_inicio: e.target.value })} />
@@ -692,6 +729,67 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
           </button>
         </div>
         <div className="field">
+          Modo de agendamento
+          <nav className="tabs" style={{ marginTop: 4 }}>
+            <button className={modo === "hora" ? "tab active" : "tab"} onClick={() => setModo("hora")}>
+              🕐 Posts/hora
+            </button>
+            <button className={modo === "ciclo" ? "tab active" : "tab"} onClick={() => setModo("ciclo")}>
+              🔁 Por ciclo
+            </button>
+            <button className={modo === "horarios" ? "tab active" : "tab"} onClick={() => setModo("horarios")}>
+              ⏰ Horários fixos
+            </button>
+          </nav>
+          {modo === "hora" && (
+            <div className="checkrow" style={{ gap: 12, marginTop: 8 }}>
+              <label className="field" style={{ width: 140 }}>
+                Posts/hora
+                <input
+                  type="number"
+                  min={1}
+                  value={d.posts_por_hora}
+                  onChange={(e) => setD({ ...d, posts_por_hora: Number(e.target.value) })}
+                />
+              </label>
+              <span className="hint">Limite simples por hora — alto demais cai em spam.</span>
+            </div>
+          )}
+          {modo === "ciclo" && (
+            <div className="checkrow" style={{ gap: 12, marginTop: 8 }}>
+              <label className="field" style={{ width: 130 }}>
+                Posts por ciclo — X
+                <input
+                  type="number"
+                  min={1}
+                  value={d.posts_por_ciclo}
+                  onChange={(e) => setD({ ...d, posts_por_ciclo: Number(e.target.value) })}
+                />
+              </label>
+              <label className="field" style={{ width: 140 }}>
+                A cada (horas) — Y
+                <input
+                  type="number"
+                  min={0.5}
+                  step={0.5}
+                  value={d.horas_por_ciclo}
+                  onChange={(e) => setD({ ...d, horas_por_ciclo: Number(e.target.value) })}
+                />
+              </label>
+              <span className="hint">Ex.: 2 a cada 3h → um post a cada ~1h30.</span>
+            </div>
+          )}
+          {modo === "horarios" && (
+            <div style={{ marginTop: 8 }}>
+              <HourPicker
+                selecionados={new Set(d.horarios_selecionados ?? [])}
+                onChange={(next) => setD({ ...d, horarios_selecionados: next.size ? [...next].sort() : null })}
+              />
+              <span className="hint">1 post por horário/dia, com offset aleatório de ±15min.</span>
+            </div>
+          )}
+        </div>
+        <div className="field">
           Horários selecionados (padrão global) — 1 post por horário/dia, com offset de ±15min
           <HourPicker
             selecionados={new Set(d.horarios_selecionados ?? [])}
@@ -699,9 +797,8 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
           />
         </div>
         <p className="hint">
-          Cadência “X posts a cada Y horas” (0 em ambos = usa posts/hora): ex. <strong>2 a cada 3h</strong> dá
-          um ritmo natural de um posto a cada ~1h30, em vez de um teto fixo por hora que cai em spam. Com
-          horários selecionados marcados, eles têm prioridade e substituem cadência e posts/hora.
+          Cada conta pode escolher o próprio modo de agendamento — o que estiver aqui vale como padrão
+          (janela, timezone e modo) para as contas sem override.
         </p>
       </div>
     </div>
