@@ -582,4 +582,67 @@ dash = client.get("/api/v1/publishing/dashboard").json()
 assert dash["contas_ativas"] == 3, dash
 print("conta reativada: agendamento, stories e dashboard voltam a funcionar ok")
 
+# ---------- agendamento manual (aprovação): reagenda a mesma publicação, nunca duplica ----------
+db = SessionLocal()
+gv_m = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_manual.mp4", duracao=7.0)
+db.add(gv_m)
+db.flush()
+content_m = Content(
+    user_id=USER_ID,
+    kind="reel",
+    origem="gerador",
+    generated_video_id=gv_m.id,
+    caminho=gv_m.caminho,
+    duracao=7.0,
+    account_id=acc_b["id"],
+    approval_status="aprovado",
+)
+db.add(content_m)
+db.commit()
+db.refresh(content_m)
+db.close()
+
+# 1º agendamento cria a publicação
+r = client.post(f"/api/v1/publishing/content/{content_m.id}/schedule", json={"scheduled_at": "2099-03-01T10:00:00"})
+assert r.status_code == 200, r.text
+pub1 = r.json()
+assert pub1["status"] == "PENDING" and pub1["scheduled_at"].startswith("2099-03-01T10:00")
+db = SessionLocal()
+assert db.get(Content, content_m.id).schedule_mode == "especifico"
+db.close()
+
+# 2º agendamento reagenda a MESMA publicação (nunca cria uma segunda)
+r = client.post(f"/api/v1/publishing/content/{content_m.id}/schedule", json={"scheduled_at": "2099-03-02T15:30:00"})
+assert r.status_code == 200, r.text
+pub2 = r.json()
+assert pub2["id"] == pub1["id"], "reagendar deve reusar a publicação existente"
+assert pub2["scheduled_at"].startswith("2099-03-02T15:30")
+db = SessionLocal()
+assert len(list(db.scalars(select(Publication).where(Publication.content_id == content_m.id)))) == 1, "nunca duplicar"
+db.close()
+print("agendamento manual: reagenda a mesma publicação sem duplicar ok")
+
+# conteúdo sem conta atribuída não pode ser agendado (409 claro)
+db = SessionLocal()
+gv_m2 = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_manual2.mp4", duracao=7.0)
+db.add(gv_m2)
+db.flush()
+content_sem = Content(
+    user_id=USER_ID,
+    kind="reel",
+    origem="gerador",
+    generated_video_id=gv_m2.id,
+    caminho=gv_m2.caminho,
+    duracao=7.0,
+    account_id=None,
+    approval_status="aprovado",
+)
+db.add(content_sem)
+db.commit()
+db.refresh(content_sem)
+db.close()
+r = client.post(f"/api/v1/publishing/content/{content_sem.id}/schedule", json={"scheduled_at": "2099-03-03T10:00:00"})
+assert r.status_code == 409 and "sem conta" in r.text, (r.status_code, r.text)
+print("agendamento manual sem conta destinada → 409 claro ok")
+
 print(">>> PUBLICAÇÃO (multicontas) OK")

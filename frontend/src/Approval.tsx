@@ -11,6 +11,7 @@ import {
   redistributeContent,
   rejectAllContent,
   rejectContent,
+  scheduleContent,
   videoDownloadUrl,
   type ApprovalStatus,
   type ImportableVideo,
@@ -191,6 +192,15 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
   );
 }
 
+function toLocalInput(dt: string | null): string {
+  // converte ISO (UTC) para o formato do <input type="datetime-local"> no fuso do navegador
+  if (!dt) return "";
+  const d = new Date(dt);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function ContentCard({
   content,
   accounts,
@@ -207,6 +217,10 @@ function ContentCard({
   onToggleSelect?: () => void;
 }) {
   const [legenda, setLegenda] = useState(content.legenda ?? "");
+  const [agendando, setAgendando] = useState(false);
+  const [quando, setQuando] = useState(toLocalInput(content.scheduled_at));
+  const [salvandoAgendamento, setSalvandoAgendamento] = useState(false);
+  const [erroAgendamento, setErroAgendamento] = useState<string | null>(null);
   const account = accounts.find((a) => a.id === content.account_id);
 
   async function salvarLegenda() {
@@ -217,6 +231,21 @@ function ContentCard({
   async function mudarConta(id: number) {
     await editContent(content.id, { account_id: id });
     onChange();
+  }
+
+  async function salvarAgendamento() {
+    if (!quando) return;
+    setSalvandoAgendamento(true);
+    setErroAgendamento(null);
+    try {
+      await scheduleContent(content.id, new Date(quando).toISOString());
+      setAgendando(false);
+      onChange();
+    } catch (e) {
+      setErroAgendamento(String(e));
+    } finally {
+      setSalvandoAgendamento(false);
+    }
   }
 
   return (
@@ -278,7 +307,34 @@ function ContentCard({
               <span className={content.approval_status === "aprovado" ? "badge" : "badge ia"}>
                 {content.approval_status}
               </span>
+              {content.schedule_mode === "especifico" && <> · ⏰ horário manual</>}
             </div>
+            {content.approval_status === "aprovado" && (
+              <>
+                <div className="card-actions" style={{ marginTop: 8 }}>
+                  <button className="btn sm" onClick={() => setAgendando((v) => !v)}>
+                    📅 Programar manualmente
+                  </button>
+                </div>
+                {agendando && (
+                  <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <input type="datetime-local" value={quando} onChange={(e) => setQuando(e.target.value)} />
+                    <button
+                      className="btn primary sm"
+                      disabled={!quando || salvandoAgendamento}
+                      onClick={salvarAgendamento}
+                    >
+                      {salvandoAgendamento ? "Salvando…" : "Salvar horário"}
+                    </button>
+                    {erroAgendamento && (
+                      <span className="hint" style={{ color: "var(--danger)" }}>
+                        ⚠ {erroAgendamento}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </>
         )}
       </div>

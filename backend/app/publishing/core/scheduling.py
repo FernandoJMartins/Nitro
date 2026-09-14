@@ -145,7 +145,12 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
 
 
 def schedule_specific(db: Session, content: Content, when: datetime) -> Publication:
-    """Agendamento manual: horário específico escolhido pelo usuário para um Content já aprovado."""
+    """Agendamento manual: horário específico escolhido pelo usuário para um Content já aprovado.
+
+    Idempotente por conteúdo: se já existe uma publicação ativa (PENDING/RETRYING),
+    apenas reagenda o horário dela — nunca cria uma segunda publicação do mesmo
+    conteúdo (que resultaria em post duplicado).
+    """
     if content.account_id is None:
         raise ValueError("conteúdo sem conta destinada")
     account = db.get(Account, content.account_id)
@@ -153,6 +158,33 @@ def schedule_specific(db: Session, content: Content, when: datetime) -> Publicat
         raise ValueError("conta destinada não encontrada")
     if not account.ativa:
         raise ValueError(f"Conta @{account.username} está desativada — reative-a para programar publicações.")
+
+    ativas = list(
+        db.scalars(
+            select(Publication).where(
+                Publication.content_id == content.id,
+                Publication.status.notin_(("CANCELLED", "FAILED")),
+            )
+        )
+    )
+    if any(p.status in ("UPLOADING", "PROCESSING") for p in ativas):
+        raise ValueError("publicação em execução — aguarde concluir para reagendar.")
+    if any(p.status == "PUBLISHED" for p in ativas):
+        raise ValueError("conteúdo já publicado — não é possível reagendar.")
+
+    pendentes = [p for p in ativas if p.status in ("PENDING", "RETRYING")]
+    if pendentes:
+        pub = pendentes[0]
+        pub.scheduled_at = when
+        pub.erro = None
+        if pub.status == "RETRYING":
+            pub.status = "PENDING"
+        content.schedule_mode = "especifico"
+        content.scheduled_at = when
+        db.commit()
+        db.refresh(pub)
+        return pub
+
     content.schedule_mode = "especifico"
     content.scheduled_at = when
     pub = Publication(content_id=content.id, account_id=content.account_id, status="PENDING", scheduled_at=when)
