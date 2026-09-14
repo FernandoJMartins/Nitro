@@ -43,6 +43,16 @@ const STORY_STATUS_ICON: Record<string, string> = {
   CANCELLED: "✕",
 };
 
+const STORY_STATUS_COLOR: Record<string, string> = {
+  PENDING: "st-warn",
+  UPLOADING: "st-warn",
+  PROCESSING: "st-warn",
+  PUBLISHED: "st-ok",
+  FAILED: "st-danger",
+  RETRYING: "st-warn",
+  CANCELLED: "st-muted",
+};
+
 interface Modelo {
   key: number;
   planId?: number; // id no servidor (presente após salvar/carregar) — habilita "Postar agora"
@@ -64,6 +74,16 @@ function novoModelo(): Modelo {
     texto_extra: "",
     frames: [],
   };
+}
+
+function Secao({ n, titulo, dica }: { n: number; titulo: string; dica?: string }) {
+  return (
+    <div className="section-title">
+      <span className="step">{n}</span>
+      {titulo}
+      {dica && <span className="hint">{dica}</span>}
+    </div>
+  );
 }
 
 /** Prévia 9:16 do story do modelo — mesma ideia do preview de "Criar". */
@@ -116,6 +136,8 @@ export default function Stories() {
   const [saving, setSaving] = useState(false);
   const [postando, setPostando] = useState<number | null>(null);
   const [historico, setHistorico] = useState<StoryHistory[]>([]);
+  const [bibliotecaAberta, setBibliotecaAberta] = useState(true);
+  const [histFiltro, setHistFiltro] = useState<"todos" | "PENDING" | "PUBLISHED" | "erro">("todos");
 
   // carrega contas, pastas e TODAS as imagens do banco uma vez (a busca/pasta filtram em memória)
   useEffect(() => {
@@ -177,6 +199,14 @@ export default function Stories() {
   }, [accountId]);
 
   const mediaMap = useMemo(() => new Map(library.map((m) => [m.id, m])), [library]);
+
+  const historicoFiltrado = historico.filter((h) =>
+    histFiltro === "todos"
+      ? true
+      : histFiltro === "erro"
+        ? h.status === "FAILED" || h.status === "RETRYING" || Boolean(h.erro)
+        : h.status === histFiltro
+  );
 
   const filtradas = useMemo(() => {
     let lista = library;
@@ -319,12 +349,12 @@ export default function Stories() {
   return (
     <div>
       <p className="sub">
-        Monte os stories automáticos de cada conta: busque as imagens no banco, escolha a pasta e atribua a um
-        modelo (horário + texto + link + posição do link + texto extra). O check de ativar/desativar fica em
-        Publicação → Contas.
+        Stories em 3 passos: escolha a conta, monte os modelos do dia (cada modelo vira 1 story no horário
+        dele) e acompanhe o histórico. O check de ativar/desativar a automação fica em Publicação → Contas.
       </p>
       {error && <div className="error">⚠️ {error}</div>}
 
+      <Secao n={1} titulo="Conta" dica="de qual perfil saem os stories" />
       <div className="card">
         <div className="card-main" style={{ width: "100%" }}>
           <div className="checkrow" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -340,11 +370,11 @@ export default function Stories() {
               </select>
             </label>
             {acc && (
-              <div className="meta">
+              <span className={`badge ${acc.stories_enabled ? "st-ok" : "st-danger"}`}>
                 {acc.stories_enabled
                   ? "📖 Automação de stories ativa"
-                  : "⚠ Automação de stories desativada — ligue o check em Contas (Publicação → Contas)."}
-              </div>
+                  : "⚠ Automação desativada — ligue o check em Contas (Publicação → Contas)."}
+              </span>
             )}
           </div>
         </div>
@@ -352,10 +382,28 @@ export default function Stories() {
 
       {accountId !== "" && acc && (
         <>
-          <div className="card" style={{ marginTop: 12 }}>
+          <Secao n={2} titulo="Modelos do dia" dica={`cada modelo vira 1 story por dia em @${acc.username}`} />
+
+          <div className="card">
             <div className="card-main" style={{ width: "100%" }}>
-              <strong>Imagens do banco</strong>
-              <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              <div
+                className={`panel-head${bibliotecaAberta ? " open" : ""}`}
+                onClick={() => setBibliotecaAberta((v) => !v)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setBibliotecaAberta((v) => !v);
+                  }
+                }}
+              >
+                <strong>📚 Biblioteca de mídias — escolha as imagens dos modelos</strong>
+                <span className="caret">▶</span>
+              </div>
+              {bibliotecaAberta && (
+                <>
+                  <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                 <input
                   type="search"
                   placeholder="🔎 Buscar imagem…"
@@ -430,24 +478,44 @@ export default function Stories() {
                 })}
                 {filtradas.length === 0 && <div className="empty">Nenhuma imagem encontrada para esse filtro.</div>}
               </div>
+                </>
+              )}
             </div>
           </div>
 
           <div className="card" style={{ marginTop: 12 }}>
             <div className="card-main" style={{ width: "100%" }}>
-              <strong>Modelos de story — @{acc.username}</strong>
-              <p className="hint">
-                Cada modelo vira 1 story por dia, no horário dele, com a sequência de imagens na ordem abaixo.
-              </p>
-
               {modelos.map((m, i) => (
-                <div key={m.key} className="card" style={{ padding: 12, marginTop: 10 }}>
-                  <div className="smodel-row">
+                <div key={m.key} className="card" style={{ padding: 12, marginTop: 10, alignItems: "flex-start" }}>
+                  <div className="smodel-row" style={{ width: "100%" }}>
                     <div className="card-main" style={{ flex: 1, minWidth: 0 }}>
-                      <strong>
-                        Modelo {i + 1} · {m.frames.length} imagem(ns)
-                      </strong>
-                    <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <div className="checkrow" style={{ gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+                        <strong>🕒 {m.horario} — {m.texto.trim() || `Modelo ${i + 1}`}</strong>
+                        <div className="checkrow" style={{ gap: 6, flexWrap: "wrap" }}>
+                          <span className="badge st-ok">{m.frames.length} img</span>
+                          {m.link.trim() !== "" && (
+                            <span className="badge" style={{ color: "var(--blue)" }}>🔗 com link</span>
+                          )}
+                          {m.planId != null && (
+                            <button
+                              className="btn primary sm"
+                              onClick={() => postarAgora(m)}
+                              disabled={postando === m.planId}
+                              title="Publica este story imediatamente"
+                            >
+                              {postando === m.planId ? "Publicando…" : "▶ Postar agora"}
+                            </button>
+                          )}
+                          <button className="btn danger sm" onClick={() => removerModelo(i)}>
+                            Excluir
+                          </button>
+                        </div>
+                      </div>
+                      <p className="hint" style={{ margin: "2px 0 0" }}>
+                        Publica todo dia às {m.horario}
+                        {m.link.trim() !== "" ? ` · o texto vira o botão do link (posição: ${m.link_posicao})` : ""}
+                      </p>
+                      <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                       <label className="field" style={{ width: 110 }}>
                         Horário
                         <input
@@ -495,6 +563,9 @@ export default function Stories() {
                       </label>
                     </div>
 
+                    <p className="hint" style={{ marginTop: 10 }}>
+                      Sequência do story — a ordem abaixo é a ordem da publicação:
+                    </p>
                     <div className="sframes">
                       {m.frames.map((id, j) => {
                         const media = mediaMap.get(id);
@@ -535,23 +606,8 @@ export default function Stories() {
                         );
                       })}
                       {m.frames.length === 0 && (
-                        <div className="empty">Sem imagens ainda — selecione acima e clique em “＋ Adicionar”.</div>
+                        <div className="empty">Sem imagens ainda — escolha na biblioteca acima e clique em “＋ Adicionar”.</div>
                       )}
-                    </div>
-                    <div className="card-actions">
-                      {m.planId != null && (
-                        <button
-                          className="btn primary sm"
-                          onClick={() => postarAgora(m)}
-                          disabled={postando === m.planId}
-                          title="Publica este story imediatamente"
-                        >
-                          {postando === m.planId ? "Publicando…" : "▶ Postar agora"}
-                        </button>
-                      )}
-                      <button className="btn danger sm" onClick={() => removerModelo(i)}>
-                        Excluir modelo
-                      </button>
                     </div>
                   </div>
                   <StoryPreview modelo={m} mediaMap={mediaMap} />
@@ -571,11 +627,12 @@ export default function Stories() {
             </div>
           </div>
 
-          <div className="card" style={{ marginTop: 12 }}>
+          <Secao n={3} titulo="Histórico" dica="stories gerados e o resultado de cada publicação" />
+          <div className="card">
             <div className="card-main" style={{ width: "100%" }}>
-              <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between" }}>
-                <strong>📖 Histórico de stories — @{acc.username}</strong>
-                <div style={{ display: "flex", gap: 8 }}>
+              <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                <strong>📖 Histórico — @{acc.username}</strong>
+                <div className="checkrow" style={{ gap: 6 }}>
                   <button className="btn sm" onClick={atualizarHistorico}>
                     ↻ Atualizar
                   </button>
@@ -584,13 +641,31 @@ export default function Stories() {
                   </button>
                 </div>
               </div>
+              <div className="checkrow" style={{ gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                {(
+                  [
+                    ["todos", "Todos"],
+                    ["PENDING", "⏰ Pendentes"],
+                    ["PUBLISHED", "✓ Publicados"],
+                    ["erro", "⚠ Com erro"],
+                  ] as const
+                ).map(([f, label]) => (
+                  <button
+                    key={f}
+                    className={histFiltro === f ? "chip active" : "chip"}
+                    onClick={() => setHistFiltro(f)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <ul className="list" style={{ marginTop: 10, maxHeight: 480, overflowY: "auto" }}>
-                {historico.map((h) => (
+                {historicoFiltrado.map((h) => (
                   <li key={h.id} className="card" style={{ padding: 10 }}>
                     <div className="card-main" style={{ width: "100%" }}>
                       <strong>
                         {STORY_STATUS_ICON[h.status] ?? "·"} {new Date(h.scheduled_at).toLocaleString("pt-BR")}
-                        <span className="badge" style={{ marginLeft: 8 }}>
+                        <span className={`badge ${STORY_STATUS_COLOR[h.status] ?? "st-muted"}`} style={{ marginLeft: 8 }}>
                           {h.status}
                         </span>
                       </strong>
@@ -610,9 +685,11 @@ export default function Stories() {
                     )}
                   </li>
                 ))}
-                {historico.length === 0 && (
+                {historicoFiltrado.length === 0 && (
                   <li className="empty">
-                    Nenhum story gerado ainda — os stories do dia aparecem aqui depois de gerados pelo scheduler.
+                    {historico.length === 0
+                      ? "Nenhum story gerado ainda — os stories do dia aparecem aqui depois de gerados pelo scheduler (ou use ▶ Postar agora)."
+                      : "Nenhum story nesse filtro."}
                   </li>
                 )}
               </ul>

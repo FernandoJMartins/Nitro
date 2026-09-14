@@ -24,11 +24,31 @@ const STATUS_ICON: Record<PublicationStatus, string> = {
   CANCELLED: "✕",
 };
 
+const STATUS_COLOR: Record<PublicationStatus, string> = {
+  PENDING: "st-warn",
+  UPLOADING: "st-warn",
+  PROCESSING: "st-warn",
+  PUBLISHED: "st-ok",
+  FAILED: "st-danger",
+  RETRYING: "st-warn",
+  CANCELLED: "st-muted",
+};
+
 function Tile({ label, value, warn }: { label: string; value: number | string; warn?: boolean }) {
   return (
     <div className="card" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
       <div className="meta">{label}</div>
       <strong style={{ fontSize: 22, color: warn ? "var(--danger)" : undefined }}>{value}</strong>
+    </div>
+  );
+}
+
+function Secao({ n, titulo, dica }: { n: number; titulo: string; dica?: string }) {
+  return (
+    <div className="section-title">
+      <span className="step">{n}</span>
+      {titulo}
+      {dica && <span className="hint">{dica}</span>}
     </div>
   );
 }
@@ -39,6 +59,7 @@ export default function PublishDashboard() {
   const [pending, setPending] = useState<PubPublication[]>([]);
   const [logs, setLogs] = useState<PubLog[]>([]);
   const [accounts, setAccounts] = useState<PubAccount[]>([]);
+  const [logsOpen, setLogsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function refresh() {
@@ -74,11 +95,14 @@ export default function PublishDashboard() {
 
   return (
     <>
-      <p className="sub">Visão geral da publicação: aprovação, agendamento e execução em tempo real.</p>
+      <p className="sub">
+        Visão geral em tempo real: o que foi publicado hoje, a saúde das contas e o que está na fila.
+      </p>
       {error && <div className="error">⚠️ {error}</div>}
 
       {dash && (
         <>
+          <Secao n={1} titulo="Publicação hoje" dica="conteúdo aprovado, agendado e executado nas últimas 24h" />
           <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
             <Tile label="Aguardando aprovação" value={dash.aguardando_aprovacao} />
             <Tile label="Aprovados" value={dash.aprovados} />
@@ -89,7 +113,8 @@ export default function PublishDashboard() {
             <Tile label="Retries aguardando" value={dash.retries} warn={dash.retries > 0} />
           </div>
 
-          <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", marginTop: 10 }}>
+          <Secao n={2} titulo="Saúde das contas" dica="sessões, proxies e stories configurados" />
+          <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
             <Tile label="Contas ativas" value={`${dash.contas_ativas}/${dash.contas_total}`} />
             <Tile label="Sessões válidas" value={dash.sessoes_validas} />
             <Tile
@@ -103,15 +128,15 @@ export default function PublishDashboard() {
           </div>
 
           {dash.ultimos_erros.length > 0 && (
-            <div className="card" style={{ marginTop: 16 }}>
+            <div className="card" style={{ marginTop: 14, alignItems: "flex-start" }}>
               <div className="card-main" style={{ width: "100%" }}>
-                <strong>⚠ Últimos erros por conta</strong>
+                <strong className="st-danger">⚠ Atenção — erros por conta</strong>
                 <ul className="list" style={{ marginTop: 8 }}>
                   {dash.ultimos_erros.map((e) => (
-                    <li key={`${e.account_id}-${e.em}`} className="card">
-                      <div className="card-main">
+                    <li key={`${e.account_id}-${e.em}`} className="card" style={{ alignItems: "flex-start" }}>
+                      <div className="card-main" style={{ width: "100%" }}>
                         <strong>@{e.username}</strong>
-                        <div className="meta" style={{ color: "var(--danger)" }}>{e.erro}</div>
+                        <div className="meta st-danger">{e.erro}</div>
                         {e.em && <div className="meta">{new Date(e.em).toLocaleString("pt-BR")}</div>}
                       </div>
                     </li>
@@ -123,19 +148,23 @@ export default function PublishDashboard() {
         </>
       )}
 
-      <h3 style={{ marginTop: 24, marginBottom: 8, fontSize: 15 }}>Próximos agendamentos</h3>
+      <Secao n={3} titulo="Fila de publicação" dica="próximas publicações agendadas" />
       <ul className="list">
         {pending.slice(0, 15).map((p) => (
           <li key={p.id} className="card">
             <div className="card-main">
               <strong>
-                {STATUS_ICON[p.status]} Publicação #{p.id}
+                <span className={STATUS_COLOR[p.status]}>{STATUS_ICON[p.status]}</span>{" "}
+                {new Date(p.scheduled_at).toLocaleString("pt-BR")}
               </strong>
-              <div className="meta">{new Date(p.scheduled_at).toLocaleString("pt-BR")}</div>
+              <div className="meta">
+                para {nomeConta(p.account_id)}
+                {p.tentativas > 0 ? ` · ${p.tentativas} tentativa(s)` : ""}
+              </div>
             </div>
             <div className="card-actions">
-              <button className="btn sm" onClick={() => reagendar(p.id, p.scheduled_at)}>
-                Reagendar
+              <button className="btn ghost sm" onClick={() => reagendar(p.id, p.scheduled_at)}>
+                🕒 Reagendar
               </button>
             </div>
           </li>
@@ -143,38 +172,59 @@ export default function PublishDashboard() {
         {pending.length === 0 && <li className="empty">Nada agendado no momento.</li>}
       </ul>
 
-      <h3 style={{ marginTop: 24, marginBottom: 8, fontSize: 15 }}>Linha do tempo</h3>
+      <Secao n={4} titulo="Atividade recente" dica="últimos reels e stories publicados ou tentados" />
       <ul className="list">
         {timeline.map((t, i) => (
           <li key={i} className="card">
             <div className="card-main">
               <strong>
-                {STATUS_ICON[t.status]} @{t.account_username}
+                <span className={STATUS_COLOR[t.status]}>{STATUS_ICON[t.status]}</span> @{t.account_username}
               </strong>
               <div className="meta">
-                {new Date(t.horario).toLocaleString("pt-BR")} · {t.kind === "story" ? "story" : "reel"} · {t.status}
+                {new Date(t.horario).toLocaleString("pt-BR")} · {t.kind === "story" ? "📖 story" : "🎬 reel"}
               </div>
             </div>
+            <span className={`badge ${STATUS_COLOR[t.status]}`}>{t.status}</span>
           </li>
         ))}
         {timeline.length === 0 && <li className="empty">Nenhuma atividade ainda.</li>}
       </ul>
 
-      <h3 style={{ marginTop: 24, marginBottom: 8, fontSize: 15 }}>Logs de automação (por conta)</h3>
-      <ul className="list">
-        {logs.slice(0, 30).map((log) => (
-          <li key={log.id} className="card">
-            <div className="card-main">
-              <strong className={log.nivel === "erro" ? "" : undefined} style={log.nivel === "erro" ? { color: "var(--danger)" } : undefined}>
-                [{log.nivel}] {nomeConta(log.account_id)}
-              </strong>
-              <div className="meta">{log.mensagem}</div>
-              <div className="meta">{new Date(log.criado_em).toLocaleString("pt-BR")}</div>
-            </div>
-          </li>
-        ))}
-        {logs.length === 0 && <li className="empty">Nenhum log ainda.</li>}
-      </ul>
+      <div className="card" style={{ marginTop: 16, alignItems: "flex-start" }}>
+        <div className="card-main" style={{ width: "100%" }}>
+          <div
+            className={`panel-head${logsOpen ? " open" : ""}`}
+            onClick={() => setLogsOpen((v) => !v)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setLogsOpen((v) => !v);
+              }
+            }}
+          >
+            <strong>🧾 Logs de automação ({Math.min(logs.length, 30)}{logs.length > 30 ? "+" : ""})</strong>
+            <span className="caret">▶</span>
+          </div>
+          {logsOpen && (
+            <ul className="list" style={{ marginTop: 10 }}>
+              {logs.slice(0, 30).map((log) => (
+                <li key={log.id} className="card" style={{ alignItems: "flex-start" }}>
+                  <div className="card-main" style={{ width: "100%" }}>
+                    <strong className={log.nivel === "erro" ? "st-danger" : "st-muted"}>
+                      [{log.nivel}] {nomeConta(log.account_id)}
+                    </strong>
+                    <div className="meta">{log.mensagem}</div>
+                    <div className="meta">{new Date(log.criado_em).toLocaleString("pt-BR")}</div>
+                  </div>
+                </li>
+              ))}
+              {logs.length === 0 && <li className="empty">Nenhum log ainda.</li>}
+            </ul>
+          )}
+        </div>
+      </div>
     </>
   );
 }
