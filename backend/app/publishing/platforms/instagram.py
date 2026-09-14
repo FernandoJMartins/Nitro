@@ -610,6 +610,32 @@ class InstagramAdapter(PlatformAdapter):
             raise SessionExpiredError(f"sessão persistida ilegível: {exc}") from exc
         self._client.set_settings(settings)
 
+    def _apply_fingerprint(self, client, fingerprint: str | None) -> None:
+        """Aplica o fingerprint persistido da conta no client: device/hardware,
+        uuids, user-agent, locale e timezone. Sem fingerprint (ou com blob
+        ilegível), o client segue com o device padrão do fork."""
+        if not fingerprint:
+            return
+        try:
+            dados = json.loads(fingerprint)
+        except (ValueError, TypeError):
+            return
+        try:
+            if dados.get("device_settings"):
+                client.set_device(dict(dados["device_settings"]), hydrate_app_profile=True)
+            if dados.get("uuids"):
+                client.set_uuids(dict(dados["uuids"]))
+            if dados.get("locale"):
+                client.set_locale(dados["locale"])
+            if dados.get("user_agent"):
+                client.set_user_agent(dados["user_agent"])
+            if dados.get("timezone_offset") is not None:
+                client.set_timezone_offset(
+                    int(dados["timezone_offset"]), timezone_name=dados.get("timezone_name") or None
+                )
+        except Exception as exc:  # noqa: BLE001 — fingerprint ruim não pode travar o login
+            logger.warning("fingerprint da conta não aplicável — seguindo com device novo: %s", exc)
+
     def _media_paths(self, ctx: PublishContext) -> list[str]:
         paths = ctx.media_paths if ctx.media_paths else [ctx.media_path]
         return [p for p in paths if p]
@@ -658,6 +684,10 @@ class InstagramAdapter(PlatformAdapter):
                 logger.info("login CAA: reusando estado do desafio anterior")
             except Exception as exc:  # noqa: BLE001 — blob ilegível: segue com client novo
                 logger.warning("estado pendente de login ilegível: %s", exc)
+        else:
+            # sem retry de desafio: aplica a fingerprint persistida da conta
+            # (o desafio anterior já carrega o device correto dentro do blob).
+            self._apply_fingerprint(caa, ctx.fingerprint)
         try:
             caa.login(ctx.account_username, ctx.account_password, **kwargs)
         except Exception as exc:  # noqa: BLE001 — mapeado por nome
@@ -693,7 +723,14 @@ class InstagramAdapter(PlatformAdapter):
             cliente = self._client if i == 0 else self._client_factory(build_proxy_url(self._proxy))
             setattr(cliente, "skip_caa_login", True)  # só login legado nesta rodada
             try:
-                cliente.set_device({"app_version": versao}, hydrate_app_profile=True)
+                device = {"app_version": versao}
+                if ctx.fingerprint:
+                    self._apply_fingerprint(cliente, ctx.fingerprint)
+                    try:
+                        device = {**(json.loads(ctx.fingerprint).get("device_settings") or {}), "app_version": versao}
+                    except (ValueError, TypeError, AttributeError):
+                        pass
+                cliente.set_device(device, hydrate_app_profile=True)
             except Exception as exc:  # noqa: BLE001 — versão fora do APP_SETTINGS do fork
                 logger.warning("app %s indisponível no fork: %s", versao, exc)
                 continue
@@ -731,6 +768,7 @@ class InstagramAdapter(PlatformAdapter):
                 "sessionid inválido — cole o cookie 'sessionid' completo do navegador "
                 "(o valor começa com o id numérico do usuário)"
             )
+        self._apply_fingerprint(self._client, ctx.fingerprint)
         try:
             self._client.login_by_sessionid(sessionid)
         except Exception as exc:  # noqa: BLE001 — mapeado para o contrato do núcleo

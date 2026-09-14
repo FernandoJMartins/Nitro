@@ -468,6 +468,8 @@ export interface PubAccount {
   posts_por_ciclo: number | null;
   horas_por_ciclo: number | null;
   horarios_selecionados: string[] | null;
+  idioma: string | null;
+  fingerprint_resumo: string | null;
   janela_inicio: string | null;
   janela_fim: string | null;
   timezone: string | null;
@@ -496,6 +498,7 @@ export interface AccountBody {
   posts_por_ciclo?: number | null;
   horas_por_ciclo?: number | null;
   horarios_selecionados?: string[] | null;
+  idioma?: string | null;
   janela_inicio?: string | null;
   janela_fim?: string | null;
   timezone?: string | null;
@@ -531,6 +534,9 @@ export function pauseAccount(id: number): Promise<PubAccount> {
 }
 export function resumeAccount(id: number): Promise<PubAccount> {
   return apiSend(`${PUB}/accounts/${id}/resume`, "POST");
+}
+export function regenerateFingerprint(id: number): Promise<PubAccount> {
+  return apiSend(`${PUB}/accounts/${id}/fingerprint`, "POST");
 }
 
 export interface PublishingDefaults {

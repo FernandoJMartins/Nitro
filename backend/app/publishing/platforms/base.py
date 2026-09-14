@@ -66,6 +66,9 @@ class PublishContext:
     # estado de login pendente (device ids do desafio CAA anterior) — o retry com o
     # código de verificação precisa reusar o MESMO device para o código valer.
     pending_login_data: str | None = None
+    # fingerprint de dispositivo persistido da conta (JSON) — aplicado no login para
+    # a conta sempre logar do MESMO aparelho (anti-cruzamento de dados entre contas).
+    fingerprint: str | None = None
     # stories com várias imagens em sequência: todos os caminhos na ordem (media_path é o primeiro)
     media_paths: list[str] = field(default_factory=list)
 

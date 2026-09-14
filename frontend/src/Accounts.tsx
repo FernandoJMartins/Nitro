@@ -14,6 +14,7 @@ import {
   listCaptions,
   listProxies,
   pauseAccount,
+  regenerateFingerprint,
   resumeAccount,
   updateAccount,
   updateCaption,
@@ -29,6 +30,8 @@ import {
 } from "./api";
 
 const PROXY_DOT: Record<string, string> = { verde: "🟢", amarelo: "🟡", vermelho: "🔴", cinza: "⚪" };
+
+const LOCALES = ["pt_BR", "en_US", "es_ES", "pt_PT", "fr_FR", "it_IT", "de_DE"];
 
 type ScheduleMode = "hora" | "ciclo" | "horarios";
 
@@ -350,7 +353,7 @@ function AccountForm({
   initial?: PubAccount;
   // o check "Stories automáticos" continua aqui; a MONTAGEM dos stories
   // (imagens, horários, textos, links) fica no tab dedicado "Stories".
-  onSave: (body: AccountBody, storiesEnabled: boolean) => void;
+  onSave: (body: AccountBody, storiesEnabled: boolean, gerarFingerprint: boolean) => void;
   onClose: () => void;
 }) {
   const [nomeInterno, setNomeInterno] = useState(initial?.nome_interno ?? "");
@@ -368,6 +371,8 @@ function AccountForm({
   const [janelaFim, setJanelaFim] = useState(initial?.janela_fim ?? "");
   const [captionMode, setCaptionMode] = useState<AccountBody["caption_mode"]>(initial?.caption_mode ?? "automatica");
   const [audioMode, setAudioMode] = useState<AccountBody["audio_mode"]>(initial?.audio_mode ?? "nenhum");
+  const [idioma, setIdioma] = useState(initial?.idioma ?? "");
+  const [gerarFingerprint, setGerarFingerprint] = useState(false);
   const [storiesEnabled, setStoriesEnabled] = useState(initial?.stories_enabled ?? false);
 
   function submit() {
@@ -391,13 +396,14 @@ function AccountForm({
       posts_por_ciclo: modo === "ciclo" ? (postsCiclo === "" ? null : postsCiclo) : null,
       horas_por_ciclo: modo === "ciclo" ? (horasCiclo === "" ? null : horasCiclo) : null,
       horarios_selecionados: modo === "horarios" && horarios.size ? [...horarios].sort() : null,
+      idioma: idioma || null,
       janela_inicio: janelaInicio || null,
       janela_fim: janelaFim || null,
       caption_mode: captionMode,
       audio_mode: audioMode,
       stories_enabled: storiesEnabled,
     };
-    onSave(body, storiesEnabled);
+    onSave(body, storiesEnabled, gerarFingerprint);
   }
 
   return (
@@ -451,6 +457,41 @@ function AccountForm({
             ))}
           </select>
         </label>
+        <div className="checkrow" style={{ gap: 12 }}>
+          <label className="field" style={{ flex: 1 }}>
+            Idioma (locale do app)
+            <select value={idioma} onChange={(e) => setIdioma(e.target.value)}>
+              <option value="">padrão (pt_BR)</option>
+              {LOCALES.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="field">
+          Fingerprint do dispositivo
+          {initial?.fingerprint_resumo ? (
+            <div className="hint">
+              Atual: <strong>{initial.fingerprint_resumo}</strong>
+            </div>
+          ) : (
+            <div className="hint">Sem fingerprint salva — a conta loga com o device padrão do sistema.</div>
+          )}
+          <button
+            type="button"
+            className={`btn sm${gerarFingerprint ? " primary" : ""}`}
+            onClick={() => setGerarFingerprint(true)}
+            disabled={gerarFingerprint}
+          >
+            {gerarFingerprint ? "✓ Nova fingerprint será gerada ao salvar" : "🎲 Gerar nova fingerprint"}
+          </button>
+          <span className="hint">
+            Cada conta loga de um aparelho próprio (modelo, resolução, user-agent, uuids, idioma e fuso) —
+            igual às opções de navegador anti-deteção, para o Instagram não cruzar as contas entre si.
+          </span>
+        </div>
         <div className="field">
           Modo de agendamento
           <nav className="tabs" style={{ marginTop: 4 }}>
@@ -886,13 +927,16 @@ export default function Accounts() {
 
   useEffect(refreshAll, []);
 
-  async function saveAccount(body: AccountBody, storiesEnabled: boolean) {
+  async function saveAccount(body: AccountBody, storiesEnabled: boolean, gerarFingerprint: boolean) {
     try {
       let acc: PubAccount;
       if (formFor && formFor !== "new") {
         acc = await updateAccount(formFor.id, body);
       } else {
         acc = await createAccount(body);
+      }
+      if (gerarFingerprint) {
+        acc = await regenerateFingerprint(acc.id);
       }
       // sincroniza o check com o StoryConfig da conta (sem tocar nos plans)
       await updateStoryConfig(acc.id, { enabled: storiesEnabled });
@@ -985,6 +1029,7 @@ export default function Accounts() {
                     : `${a.posts_por_hora ?? "padrão"} posts/h`}{" · "}
                 {a.janela_inicio ?? "—"}→{a.janela_fim ?? "—"}
                 {a.stories_enabled && <> · 📖 Stories ativo</>}
+                {a.fingerprint_resumo && <> · 🎭 {a.fingerprint_resumo}</>}
               </div>
               {a.ultimo_erro && <div className="meta" style={{ color: "var(--danger)" }}>⚠ {a.ultimo_erro}</div>}
             </div>

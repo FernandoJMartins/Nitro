@@ -673,6 +673,58 @@ def test_login_retry_com_codigo_reusa_device_ids():
     assert json.loads(pending)["uuids"]["uuid"] == factory.set_settings_calls[0]["uuids"]["uuid"]
 
 
+def test_login_caa_aplica_fingerprint_da_conta():
+    """Fingerprint persistida da conta: o client do CAA loga com o MESMO
+    aparelho (device/hardware, uuids, user-agent, locale, fuso) — cada conta
+    com identidade própria, sem o device padrão compartilhado do fork."""
+    if not _com_instagrapi():
+        return
+    from app.publishing.core.fingerprint import gerar_fingerprint  # noqa: PLC0415
+
+    fp = gerar_fingerprint("en_US", "America/New_York")
+    dados = json.loads(fp)
+    caa_client_capturado = []
+
+    def login_do_caa(client, username, password):
+        caa_client_capturado.append(client)
+        client.authorization_data = {"ds_user_id": "1", "user": username}
+        return True
+
+    factory, _ = _factory_legado(sucesso_na_versao=None, login_do_caa=login_do_caa)
+    adapter = InstagramAdapter(client_factory=factory)
+    session = adapter.login(_ctx(fingerprint=fp))
+    assert session is not None
+
+    settings = caa_client_capturado[0].get_settings()
+    assert settings["device_settings"]["model"] == dados["device_settings"]["model"]
+    assert settings["device_settings"]["cpu"] == dados["device_settings"]["cpu"]
+    assert settings["uuids"]["uuid"] == dados["uuids"]["uuid"]
+    assert settings["user_agent"] == dados["user_agent"]
+    assert settings["locale"] == "en_US"
+    assert settings["timezone_offset"] == dados["timezone_offset"]
+    assert settings["timezone_name"] == "America/New_York"
+
+
+def test_login_caa_sem_fingerprint_segue_com_device_padrao():
+    """Sem fingerprint na conta, o client do CAA segue com o device padrão do
+    fork — comportamento antigo preservado."""
+    if not _com_instagrapi():
+        return
+    caa_client_capturado = []
+
+    def login_do_caa(client, username, password):
+        caa_client_capturado.append(client)
+        client.authorization_data = {"ds_user_id": "1", "user": username}
+        return True
+
+    factory, _ = _factory_legado(sucesso_na_versao=None, login_do_caa=login_do_caa)
+    adapter = InstagramAdapter(client_factory=factory)
+    session = adapter.login(_ctx(fingerprint=None))
+    assert session is not None
+    settings = caa_client_capturado[0].get_settings()
+    assert settings["locale"] == "en_US"  # device padrão do fork (locale en_US)
+
+
 def test_login_caa_throttle_nao_anexa_pendente():
     """429 segue sendo throttle puro: sem estado pendente anexado."""
     if not _com_instagrapi():

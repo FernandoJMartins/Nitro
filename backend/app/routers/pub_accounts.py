@@ -14,6 +14,7 @@ from .. import security
 from ..publishing.core.proxies import check_proxy
 from ..publishing.core.publications import _proxy_dict, adapter_for_platform, execute_publication
 from ..publishing.core.stories import _frames_of_plan
+from ..publishing.core.fingerprint import gerar_fingerprint
 from ..publishing.models import (
     Account,
     AudioAsset,
@@ -210,6 +211,22 @@ def mark_account_ready(account_id: int, user: User = Depends(get_current_user), 
     return account
 
 
+@router.post("/accounts/{account_id}/fingerprint", response_model=AccountOut)
+def regenerate_fingerprint(account_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Gera uma NOVA fingerprint de dispositivo para a conta (modelo/hardware,
+    uuids, user-agent, locale e timezone) — a conta passa a logar como "outro
+    aparelho". Anti-cruzamento de dados entre contas (estilo multi-login).
+    """
+    account = _get_account(db, user, account_id)
+    try:
+        account.fingerprint = gerar_fingerprint(account.idioma, account.timezone)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    db.commit()
+    db.refresh(account)
+    return account
+
+
 def _fail_connect(account: Account, db: Session, exc: Exception, status_code: int) -> HTTPException:
     """Marca a conta com o erro de conexão e devolve a resposta HTTP correspondente."""
     account.status = "erro"
@@ -233,6 +250,7 @@ def _connect_ctx(account: Account, verification_code: str | None = None) -> Publ
         kind="reel",
         verification_code=verification_code,
         pending_login_data=account.pending_login_data,
+        fingerprint=account.fingerprint,
     )
 
 

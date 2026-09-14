@@ -97,6 +97,13 @@ class Account(Base):
     janela_fim: Mapped[str | None] = mapped_column(String(5), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # locale do app da conta (ex.: pt_BR) — usado na fingerprint do dispositivo
+    idioma: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # fingerprint de dispositivo persistida da conta (JSON): modelo/hardware, resolução,
+    # uuids, user-agent, locale e timezone — cada conta loga de um aparelho próprio
+    # (anti-cruzamento de dados entre contas, estilo multi-login antidetect).
+    fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     caption_mode: Mapped[str] = mapped_column(String(16), default="automatica")  # 'manual' | 'automatica'
     audio_mode: Mapped[str] = mapped_column(String(16), default="nenhum")  # 'manual' | 'automatica' | 'nenhum'
     stories_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -144,6 +151,13 @@ class Account(Base):
     @horarios_selecionados.setter
     def horarios_selecionados(self, valor: list[str] | None) -> None:
         self.horarios_selecionados_json = json.dumps(valor) if valor else None
+
+    @property
+    def fingerprint_resumo(self) -> str | None:
+        """Resumo legível do fingerprint (ex.: 'Pixel 8 Pro · Android 14 · pt_BR')."""
+        from .core.fingerprint import descrever_fingerprint  # noqa: PLC0415 — evita ciclo de import
+
+        return descrever_fingerprint(self.fingerprint)
 
 
 class PublishingDefaults(Base):

@@ -89,6 +89,7 @@ def _build_context(db: Session, content: Content, account: Account) -> PublishCo
         story_link_posicao=content.link_posicao,
         story_text_extra=content.texto_extra,
         media_paths=media_paths,
+        fingerprint=account.fingerprint,
     )
 
 
