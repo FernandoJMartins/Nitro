@@ -87,7 +87,7 @@ function ItemChip({
 }
 
 export default function Calendar() {
-  const [view, setView] = useState<View>("week");
+  const [view, setView] = useState<View>("day");
   const [anchor, setAnchor] = useState<Date>(new Date());
   const [items, setItems] = useState<CalendarItem[]>([]);
   const [error, setError] = useState<string | null>(null);
