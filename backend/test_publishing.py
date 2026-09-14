@@ -26,7 +26,7 @@ from app.models import GeneratedVideo  # noqa: E402
 from app.publishing.core import publications  # noqa: E402
 from app.publishing.core.distribution import eligible_accounts  # noqa: E402
 from app.publishing.core.publications import execute_publication  # noqa: E402
-from app.publishing.core.scheduling import build_schedule_for_account  # noqa: E402
+from app.publishing.core.scheduling import _aware, build_schedule_for_account  # noqa: E402
 from app.publishing.core.stories import ensure_daily_stories  # noqa: E402
 from app.publishing.core.workers import run_cycle  # noqa: E402
 from app.publishing.models import Account, Content, ContentMedia, Publication, Proxy, StoryPlan  # noqa: E402
@@ -644,5 +644,108 @@ db.close()
 r = client.post(f"/api/v1/publishing/content/{content_sem.id}/schedule", json={"scheduled_at": "2099-03-03T10:00:00"})
 assert r.status_code == 409 and "sem conta" in r.text, (r.status_code, r.text)
 print("agendamento manual sem conta destinada → 409 claro ok")
+
+# ---------- cadência "X posts a cada Y horas" (conta e padrão global) ----------
+AGORA_FIXO = datetime(2099, 5, 1, 12, 0, tzinfo=timezone.utc)
+
+# conta G: 2 posts a cada 3 horas → espaço médio de ~1h30 entre publicações
+r = client.post(
+    "/api/v1/publishing/accounts",
+    json={
+        "nome_interno": "Perfil G",
+        "username": "perfil07",
+        "posts_por_ciclo": 2,
+        "horas_por_ciclo": 3.0,
+        **WIDE_WINDOW,
+    },
+)
+acc_g = r.json()
+assert r.status_code == 200 and acc_g["posts_por_ciclo"] == 2 and acc_g["horas_por_ciclo"] == 3.0
+r = client.post(f"/api/v1/publishing/accounts/{acc_g['id']}/ready")
+assert r.status_code == 200
+
+db = SessionLocal()
+conta_g = db.get(Account, acc_g["id"])
+for i in range(3):
+    gv_g = GeneratedVideo(user_id=USER_ID, caminho=f"generated/fake_g{i}.mp4", duracao=8.0)
+    db.add(gv_g)
+    db.flush()
+    db.add(
+        Content(
+            user_id=USER_ID,
+            kind="reel",
+            origem="gerador",
+            generated_video_id=gv_g.id,
+            caminho=gv_g.caminho,
+            duracao=8.0,
+            account_id=acc_g["id"],
+            approval_status="aprovado",
+        )
+    )
+db.commit()
+pubs_g = build_schedule_for_account(db, conta_g, now=AGORA_FIXO)
+assert len(pubs_g) == 3, len(pubs_g)
+tempos_g = sorted(_aware(p.scheduled_at) for p in pubs_g)
+gaps_g = [(tempos_g[i + 1] - tempos_g[i]).total_seconds() for i in range(len(tempos_g) - 1)]
+assert all(g >= 1.5 * 3600 - 200 for g in gaps_g), f"cadência 2 a cada 3h deveria dar ~1h30 entre posts: {gaps_g}"
+db.close()
+print("cadência da conta (2 a cada 3h): espaçamento ~1h30 entre posts ok ->", gaps_g)
+
+# cadência global: conta H sem override usa o padrão do usuário (3 a cada 6h → ~2h entre posts)
+r = client.put(
+    "/api/v1/publishing/defaults",
+    json={
+        "posts_por_hora": 4,
+        "janela_inicio": "00:00",
+        "janela_fim": "23:59",
+        "timezone": "America/Sao_Paulo",
+        "posts_por_ciclo": 3,
+        "horas_por_ciclo": 6.0,
+    },
+)
+assert r.status_code == 200 and r.json()["posts_por_ciclo"] == 3
+r = client.post("/api/v1/publishing/accounts", json={"nome_interno": "Perfil H", "username": "perfil08", **WIDE_WINDOW})
+acc_h = r.json()
+r = client.post(f"/api/v1/publishing/accounts/{acc_h['id']}/ready")
+assert r.status_code == 200
+db = SessionLocal()
+conta_h = db.get(Account, acc_h["id"])
+for i in range(3):
+    gv_h = GeneratedVideo(user_id=USER_ID, caminho=f"generated/fake_h{i}.mp4", duracao=8.0)
+    db.add(gv_h)
+    db.flush()
+    db.add(
+        Content(
+            user_id=USER_ID,
+            kind="reel",
+            origem="gerador",
+            generated_video_id=gv_h.id,
+            caminho=gv_h.caminho,
+            duracao=8.0,
+            account_id=acc_h["id"],
+            approval_status="aprovado",
+        )
+    )
+db.commit()
+pubs_h = build_schedule_for_account(db, conta_h, now=AGORA_FIXO)
+assert len(pubs_h) == 3, len(pubs_h)
+tempos_h = sorted(_aware(p.scheduled_at) for p in pubs_h)
+gaps_h = [(tempos_h[i + 1] - tempos_h[i]).total_seconds() for i in range(len(tempos_h) - 1)]
+assert all(g >= 2 * 3600 - 200 for g in gaps_h), f"cadência global 3 a cada 6h deveria dar ~2h entre posts: {gaps_h}"
+# devolve o padrão global para não afetar nada depois
+r = client.put(
+    "/api/v1/publishing/defaults",
+    json={
+        "posts_por_hora": 4,
+        "janela_inicio": "00:00",
+        "janela_fim": "23:59",
+        "timezone": "America/Sao_Paulo",
+        "posts_por_ciclo": 0,
+        "horas_por_ciclo": 0.0,
+    },
+)
+assert r.status_code == 200
+db.close()
+print("cadência global (padrão do usuário) respeitada pela conta sem override ok")
 
 print(">>> PUBLICAÇÃO (multicontas) OK")

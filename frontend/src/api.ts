@@ -465,6 +465,8 @@ export interface PubAccount {
   session_configurada: boolean;
   proxy_id: number | null;
   posts_por_hora: number | null;
+  posts_por_ciclo: number | null;
+  horas_por_ciclo: number | null;
   janela_inicio: string | null;
   janela_fim: string | null;
   timezone: string | null;
@@ -490,6 +492,8 @@ export interface AccountBody {
   sessionid?: string;
   proxy_id?: number | null;
   posts_por_hora?: number | null;
+  posts_por_ciclo?: number | null;
+  horas_por_ciclo?: number | null;
   janela_inicio?: string | null;
   janela_fim?: string | null;
   timezone?: string | null;
@@ -529,6 +533,8 @@ export function resumeAccount(id: number): Promise<PubAccount> {
 
 export interface PublishingDefaults {
   posts_por_hora: number;
+  posts_por_ciclo: number;
+  horas_por_ciclo: number;
   janela_inicio: string;
   janela_fim: string;
   timezone: string;

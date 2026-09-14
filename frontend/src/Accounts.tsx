@@ -295,6 +295,8 @@ function AccountForm({
   const [sessionid, setSessionid] = useState("");
   const [proxyId, setProxyId] = useState<number | "">(initial?.proxy_id ?? "");
   const [postsHora, setPostsHora] = useState<number | "">(initial?.posts_por_hora ?? "");
+  const [postsCiclo, setPostsCiclo] = useState<number | "">(initial?.posts_por_ciclo ?? "");
+  const [horasCiclo, setHorasCiclo] = useState<number | "">(initial?.horas_por_ciclo ?? "");
   const [janelaInicio, setJanelaInicio] = useState(initial?.janela_inicio ?? "");
   const [janelaFim, setJanelaFim] = useState(initial?.janela_fim ?? "");
   const [captionMode, setCaptionMode] = useState<AccountBody["caption_mode"]>(initial?.caption_mode ?? "automatica");
@@ -310,6 +312,8 @@ function AccountForm({
       ...(sessionid.trim() ? { sessionid: sessionid.trim() } : {}),
       proxy_id: proxyId === "" ? null : proxyId,
       posts_por_hora: postsHora === "" ? null : postsHora,
+      posts_por_ciclo: postsCiclo === "" ? null : postsCiclo,
+      horas_por_ciclo: horasCiclo === "" ? null : horasCiclo,
       janela_inicio: janelaInicio || null,
       janela_fim: janelaFim || null,
       caption_mode: captionMode,
@@ -380,6 +384,32 @@ function AccountForm({
               onChange={(e) => setPostsHora(e.target.value ? Number(e.target.value) : "")}
             />
           </label>
+        </div>
+        <div className="checkrow" style={{ gap: 12 }}>
+          <label className="field" style={{ flex: 1 }}>
+            Posts por ciclo — X
+            <input
+              type="number"
+              min={1}
+              value={postsCiclo}
+              onChange={(e) => setPostsCiclo(e.target.value ? Number(e.target.value) : "")}
+            />
+          </label>
+          <label className="field" style={{ flex: 1 }}>
+            A cada (horas) — Y
+            <input
+              type="number"
+              min={0.5}
+              step={0.5}
+              value={horasCiclo}
+              onChange={(e) => setHorasCiclo(e.target.value ? Number(e.target.value) : "")}
+            />
+          </label>
+        </div>
+        <div className="hint">
+          Cadência profissional: ex. <strong>2 posts a cada 3 horas</strong> mantém um ritmo mais
+          natural/humano (posts/hora fixo cai em spam). Quando preenchida (X e Y), ela substitui o limite
+          de posts/hora no agendamento.
         </div>
         <div className="checkrow" style={{ gap: 12 }}>
           <label className="field" style={{ flex: 1 }}>
@@ -564,6 +594,25 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
               onChange={(e) => setD({ ...d, posts_por_hora: Number(e.target.value) })}
             />
           </label>
+          <label className="field" style={{ width: 130 }}>
+            Posts por ciclo — X
+            <input
+              type="number"
+              min={0}
+              value={d.posts_por_ciclo}
+              onChange={(e) => setD({ ...d, posts_por_ciclo: Number(e.target.value) })}
+            />
+          </label>
+          <label className="field" style={{ width: 140 }}>
+            A cada (horas) — Y
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={d.horas_por_ciclo}
+              onChange={(e) => setD({ ...d, horas_por_ciclo: Number(e.target.value) })}
+            />
+          </label>
           <label className="field">
             Janela — início
             <input type="time" value={d.janela_inicio} onChange={(e) => setD({ ...d, janela_inicio: e.target.value })} />
@@ -580,6 +629,10 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
             Salvar global
           </button>
         </div>
+        <p className="hint">
+          Cadência “X posts a cada Y horas” (0 em ambos = usa posts/hora): ex. <strong>2 a cada 3h</strong> dá
+          um ritmo natural de um posto a cada ~1h30, em vez de um teto fixo por hora que cai em spam.
+        </p>
       </div>
     </div>
   );
@@ -696,7 +749,10 @@ export default function Accounts() {
                 {a.session_configurada ? "🔑 Sessão salva" : "⚠ Sem sessão"}
                 {a.proxy && <> · {PROXY_DOT[a.proxy.status]} {a.proxy.nome_interno}</>}
                 {" · "}
-                {a.posts_por_hora ?? "padrão"} posts/h · {a.janela_inicio ?? "—"}→{a.janela_fim ?? "—"}
+                {a.posts_por_ciclo && a.horas_por_ciclo
+                  ? `${a.posts_por_ciclo} posts a cada ${a.horas_por_ciclo}h`
+                  : `${a.posts_por_hora ?? "padrão"} posts/h`}{" · "}
+                {a.janela_inicio ?? "—"}→{a.janela_fim ?? "—"}
                 {a.stories_enabled && <> · 📖 Stories ativo</>}
               </div>
               {a.ultimo_erro && <div className="meta" style={{ color: "var(--danger)" }}>⚠ {a.ultimo_erro}</div>}

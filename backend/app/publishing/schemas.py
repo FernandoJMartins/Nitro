@@ -57,6 +57,8 @@ class AccountCreate(BaseModel):
     sessionid: str | None = None
     proxy_id: int | None = None
     posts_por_hora: int | None = None
+    posts_por_ciclo: int | None = None
+    horas_por_ciclo: float | None = None
     janela_inicio: str | None = None
     janela_fim: str | None = None
     timezone: str | None = None
@@ -73,6 +75,8 @@ class AccountUpdate(BaseModel):
     sessionid: str | None = None
     proxy_id: int | None = None
     posts_por_hora: int | None = None
+    posts_por_ciclo: int | None = None
+    horas_por_ciclo: float | None = None
     janela_inicio: str | None = None
     janela_fim: str | None = None
     timezone: str | None = None
@@ -111,6 +115,8 @@ class AccountOut(BaseModel):
     session_configurada: bool
     proxy_id: int | None
     posts_por_hora: int | None
+    posts_por_ciclo: int | None
+    horas_por_ciclo: float | None
     janela_inicio: str | None
     janela_fim: str | None
     timezone: str | None
@@ -132,6 +138,8 @@ class PublishingDefaultsUpdate(BaseModel):
     janela_inicio: str
     janela_fim: str
     timezone: str
+    posts_por_ciclo: int | None = None
+    horas_por_ciclo: float | None = None
 
 
 class PublishingDefaultsOut(PublishingDefaultsUpdate):

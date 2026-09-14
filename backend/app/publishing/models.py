@@ -82,6 +82,11 @@ class Account(Base):
 
     # override do PublishingDefaults do usuário quando setado (null = usa o padrão global)
     posts_por_hora: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # cadência alternativa ao teto por hora: "X posts a cada Y horas" — espaçamento
+    # mais natural/humano (posts/hora fixo cai em spam). Null = usa o padrão global;
+    # quando nenhuma cadência vale, o agendamento cai no posts_por_hora.
+    posts_por_ciclo: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    horas_por_ciclo: Mapped[float | None] = mapped_column(Float, nullable=True)
     janela_inicio: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "HH:MM"
     janela_fim: Mapped[str | None] = mapped_column(String(5), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -128,6 +133,9 @@ class PublishingDefaults(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     posts_por_hora: Mapped[int] = mapped_column(Integer, default=4)
+    # cadência "X posts a cada Y horas" (0 = desativada, usa o posts_por_hora)
+    posts_por_ciclo: Mapped[int] = mapped_column(Integer, default=0)
+    horas_por_ciclo: Mapped[float] = mapped_column(Float, default=0.0)
     janela_inicio: Mapped[str] = mapped_column(String(5), default="08:00")
     janela_fim: Mapped[str] = mapped_column(String(5), default="23:00")
     timezone: Mapped[str] = mapped_column(String(64), default="America/Sao_Paulo")

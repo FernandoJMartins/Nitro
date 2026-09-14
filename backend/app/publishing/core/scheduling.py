@@ -37,6 +37,23 @@ def effective_window(db: Session, account: Account) -> tuple[int, time, time]:
     return posts_hora, inicio, fim
 
 
+def effective_cadence(db: Session, account: Account) -> tuple[int, float] | None:
+    """Resolve a cadência "X posts a cada Y horas": valor da conta, senão o padrão
+    global. Retorna None quando nenhuma cadência está configurada — nesse caso o
+    agendamento usa o teto posts/hora tradicional."""
+    x = account.posts_por_ciclo
+    y = account.horas_por_ciclo
+    if not (x and y):
+        defaults = db.scalar(select(PublishingDefaults).where(PublishingDefaults.user_id == account.user_id))
+        if defaults and defaults.posts_por_ciclo and defaults.horas_por_ciclo:
+            x, y = defaults.posts_por_ciclo, defaults.horas_por_ciclo
+        else:
+            return None
+    if x <= 0 or y <= 0:
+        return None
+    return x, float(y)
+
+
 def _window_tz(db: Session, account: Account):
     """Timezone da conta (ou do padrão global) para interpretar a janela. Fallback: UTC."""
     defaults = db.scalar(select(PublishingDefaults).where(PublishingDefaults.user_id == account.user_id))
@@ -90,9 +107,16 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
     if not account.ativa:
         return []
     posts_hora, janela_inicio, janela_fim = effective_window(db, account)
-    if posts_hora <= 0:
-        return []
-    min_gap = timedelta(seconds=max(3600 // posts_hora, 60))
+    cadencia = effective_cadence(db, account)
+    if cadencia:
+        # "X posts a cada Y horas": espaço médio de Y/X horas entre publicações —
+        # um ritmo mais natural/humano que o teto fixo por hora (que cai em spam).
+        posts_x, horas_y = cadencia
+        min_gap = timedelta(seconds=max(horas_y * 3600 / posts_x, 60))
+    else:
+        if posts_hora <= 0:
+            return []
+        min_gap = timedelta(seconds=max(3600 // posts_hora, 60))
     tz = _window_tz(db, account)
     # o dia é o LOCAL da conta — aprovar de madrugada agenda para HOJE, não para amanhã
     day = now.astimezone(tz).date()
