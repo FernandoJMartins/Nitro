@@ -12,6 +12,7 @@ import io
 import os
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 os.environ["DATABASE_URL"] = "sqlite:///./_smoke_pub.db"
 os.environ["STORAGE_DIR"] = "./_smoke_pub_storage"
@@ -747,5 +748,159 @@ r = client.put(
 assert r.status_code == 200
 db.close()
 print("cadência global (padrão do usuário) respeitada pela conta sem override ok")
+
+# ---------- horários selecionados: agendar só nos horários escolhidos, com offset ----------
+# conta I: 3 horários fixos + cadência apertada de propósito (1 a cada 6h) — os horários
+# selecionados devem ter PRIORIDADE sobre a cadência (3 posts no mesmo dia)
+r = client.post(
+    "/api/v1/publishing/accounts",
+    json={
+        "nome_interno": "Perfil I",
+        "username": "perfil09",
+        "horarios_selecionados": ["10:00", "11:00", "12:00"],
+        "posts_por_ciclo": 1,
+        "horas_por_ciclo": 6.0,
+        **WIDE_WINDOW,
+    },
+)
+acc_i = r.json()
+assert r.status_code == 200 and acc_i["horarios_selecionados"] == ["10:00", "11:00", "12:00"], r.text
+r = client.post(f"/api/v1/publishing/accounts/{acc_i['id']}/ready")
+assert r.status_code == 200
+
+db = SessionLocal()
+conta_i = db.get(Account, acc_i["id"])
+for i in range(4):
+    gv_i = GeneratedVideo(user_id=USER_ID, caminho=f"generated/fake_i{i}.mp4", duracao=8.0)
+    db.add(gv_i)
+    db.flush()
+    db.add(
+        Content(
+            user_id=USER_ID,
+            kind="reel",
+            origem="gerador",
+            generated_video_id=gv_i.id,
+            caminho=gv_i.caminho,
+            duracao=8.0,
+            account_id=acc_i["id"],
+            approval_status="aprovado",
+        )
+    )
+db.commit()
+pubs_i = build_schedule_for_account(db, conta_i, now=AGORA_FIXO)
+assert len(pubs_i) == 4, len(pubs_i)
+
+tz_sp = ZoneInfo("America/Sao_Paulo")
+locais_i = sorted(_aware(p.scheduled_at).astimezone(tz_sp) for p in pubs_i)
+db.close()
+# AGORA_FIXO = 12:00 UTC = 09:00 em SP: os 3 primeiros caem hoje em 10/11/12h (±15min de offset)
+# e o 4º transborda para amanhã às 10h
+minutos = lambda d: d.hour * 60 + d.minute  # noqa: E731
+esperado_hoje = [(585, 615), (645, 675), (705, 735)]  # 10:00, 11:00, 12:00 ±15min
+for local, (lo, hi) in zip(locais_i[:3], esperado_hoje):
+    assert local.date().isoformat() == "2099-05-01" and lo <= minutos(local) <= hi, local
+quarto = locais_i[3]
+assert quarto.date().isoformat() == "2099-05-02" and 585 <= minutos(quarto) <= 615, quarto
+print(
+    "horários selecionados: 3 hoje + transbordo amanhã, com offset ±15min e prioridade sobre cadência ok ->",
+    [l.strftime("%d %H:%M") for l in locais_i],
+)
+
+# horário selecionado FORA da janela configurada não gera agendamento
+r = client.post(
+    "/api/v1/publishing/accounts",
+    json={
+        "nome_interno": "Perfil J",
+        "username": "perfil10",
+        "horarios_selecionados": ["03:00"],
+        "janela_inicio": "08:00",
+        "janela_fim": "23:59",
+    },
+)
+acc_j = r.json()
+assert r.status_code == 200
+r = client.post(f"/api/v1/publishing/accounts/{acc_j['id']}/ready")
+assert r.status_code == 200
+db = SessionLocal()
+conta_j = db.get(Account, acc_j["id"])
+gv_j = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_j.mp4", duracao=8.0)
+db.add(gv_j)
+db.flush()
+db.add(
+    Content(
+        user_id=USER_ID,
+        kind="reel",
+        origem="gerador",
+        generated_video_id=gv_j.id,
+        caminho=gv_j.caminho,
+        duracao=8.0,
+        account_id=acc_j["id"],
+        approval_status="aprovado",
+    )
+)
+db.commit()
+assert build_schedule_for_account(db, conta_j, now=AGORA_FIXO) == [], "03:00 fora da janela 08–23:59 não deveria agendar"
+db.close()
+print("horário selecionado fora da janela: sem agendamento ok")
+
+# padrão global de horários selecionados vale para contas sem override
+r = client.put(
+    "/api/v1/publishing/defaults",
+    json={
+        "posts_por_hora": 4,
+        "janela_inicio": "00:00",
+        "janela_fim": "23:59",
+        "timezone": "America/Sao_Paulo",
+        "posts_por_ciclo": 0,
+        "horas_por_ciclo": 0.0,
+        "horarios_selecionados": ["15:00", "16:00"],
+    },
+)
+assert r.status_code == 200 and r.json()["horarios_selecionados"] == ["15:00", "16:00"]
+r = client.post("/api/v1/publishing/accounts", json={"nome_interno": "Perfil K", "username": "perfil11", **WIDE_WINDOW})
+acc_k = r.json()
+r = client.post(f"/api/v1/publishing/accounts/{acc_k['id']}/ready")
+assert r.status_code == 200
+db = SessionLocal()
+conta_k = db.get(Account, acc_k["id"])
+for i in range(2):
+    gv_k = GeneratedVideo(user_id=USER_ID, caminho=f"generated/fake_k{i}.mp4", duracao=8.0)
+    db.add(gv_k)
+    db.flush()
+    db.add(
+        Content(
+            user_id=USER_ID,
+            kind="reel",
+            origem="gerador",
+            generated_video_id=gv_k.id,
+            caminho=gv_k.caminho,
+            duracao=8.0,
+            account_id=acc_k["id"],
+            approval_status="aprovado",
+        )
+    )
+db.commit()
+pubs_k = build_schedule_for_account(db, conta_k, now=AGORA_FIXO)
+assert len(pubs_k) == 2, len(pubs_k)
+locais_k = sorted(_aware(p.scheduled_at).astimezone(tz_sp) for p in pubs_k)
+esperado_k = [(885, 915), (945, 975)]  # 15:00 e 16:00 ±15min
+for local, (lo, hi) in zip(locais_k, esperado_k):
+    assert local.date().isoformat() == "2099-05-01" and lo <= minutos(local) <= hi, local
+# devolve o padrão global para não afetar nada depois
+r = client.put(
+    "/api/v1/publishing/defaults",
+    json={
+        "posts_por_hora": 4,
+        "janela_inicio": "00:00",
+        "janela_fim": "23:59",
+        "timezone": "America/Sao_Paulo",
+        "posts_por_ciclo": 0,
+        "horas_por_ciclo": 0.0,
+        "horarios_selecionados": None,
+    },
+)
+assert r.status_code == 200
+db.close()
+print("horários selecionados do padrão global respeitados pela conta sem override ok")
 
 print(">>> PUBLICAÇÃO (multicontas) OK")

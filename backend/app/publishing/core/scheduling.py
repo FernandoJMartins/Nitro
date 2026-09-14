@@ -16,6 +16,8 @@ from ..models import Account, Content, Publication, PublishingDefaults
 DEFAULT_POSTS_PER_HOUR = 4
 DEFAULT_WINDOW = ("08:00", "23:00")
 JITTER_SECONDS = 90  # pequena variação natural entre posts, evita intervalos idênticos
+SELECTED_OFFSET_SECONDS = 15 * 60  # offset aleatório (±15min) em torno do horário selecionado
+SELECTED_MIN_GAP = timedelta(minutes=30)  # colisão com publicação existente perto do horário selecionado
 
 
 def _parse_hhmm(value: str) -> time:
@@ -98,6 +100,98 @@ def _next_free_slot(taken: list[datetime], candidate: datetime, min_gap: timedel
     return candidate
 
 
+def effective_selected_hours(db: Session, account: Account) -> list[time] | None:
+    """Resolve os horários selecionados da conta (senão do padrão global). None quando
+    nada foi selecionado — nesse caso o agendamento usa cadência/posts-hora."""
+    selecionados = account.horarios_selecionados
+    if not selecionados:
+        defaults = db.scalar(select(PublishingDefaults).where(PublishingDefaults.user_id == account.user_id))
+        selecionados = defaults.horarios_selecionados if defaults else None
+    if not selecionados:
+        return None
+    horas: list[time] = []
+    for item in selecionados:
+        try:
+            horas.append(_parse_hhmm(item))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return sorted(set(horas)) or None
+
+
+def _build_selected_hours_schedule(
+    db: Session, account: Account, pendentes: list[Content], horarios: list[time], now: datetime
+) -> list[Publication]:
+    """Agenda cada conteúdo em um horário selecionado pelo operador: 1 post por horário
+    por dia, com offset aleatório de ±15min para nunca repetir o horário exato. Só usa
+    horários que caem dentro da janela configurada; o que não couber hoje vai para o
+    próximo dia (mesmo padrão do agendamento por janela).
+    """
+    _, janela_inicio, janela_fim = effective_window(db, account)
+    tz = _window_tz(db, account)
+    day = now.astimezone(tz).date()
+
+    def _dentro_da_janela(cand: datetime) -> bool:
+        # janelas que atravessam a meia-noite: o horário pode pertencer à janela
+        # do próprio dia OU à do dia anterior (que invade hoje de madrugada).
+        cday = cand.astimezone(tz).date()
+        s1, e1 = _window_bounds_utc(cday, janela_inicio, janela_fim, tz)
+        s0, e0 = _window_bounds_utc(cday - timedelta(days=1), janela_inicio, janela_fim, tz)
+        return (s1 <= cand < e1) or (s0 <= cand < e0)
+
+    def _iter_candidatos():
+        d = day
+        dias = 0
+        while dias < 370:  # horizonte de ~1 ano — só defesa contra fuso/DST bizarro
+            for hora in horarios:
+                cand = datetime.combine(d, hora, tzinfo=tz).astimezone(timezone.utc)
+                if _dentro_da_janela(cand):
+                    yield cand
+            d += timedelta(days=1)
+            dias += 1
+
+    # nenhum horário selecionado cai dentro da janela em dia algum? sem agendamento.
+    # (validar antes evita iterar o gerador para sempre nesse caso)
+    w1 = _window_bounds_utc(day, janela_inicio, janela_fim, tz)
+    w0 = _window_bounds_utc(day - timedelta(days=1), janela_inicio, janela_fim, tz)
+    algum_valido = any(
+        (w1[0] <= datetime.combine(day, hora, tzinfo=tz).astimezone(timezone.utc) < w1[1])
+        or (w0[0] <= datetime.combine(day, hora, tzinfo=tz).astimezone(timezone.utc) < w0[1])
+        for hora in horarios
+    )
+    if not algum_valido:
+        return []
+
+    candidatos = _iter_candidatos()
+    # pula o passado (aprovou depois do horário de hoje — vai para o próximo)
+    cand = next(candidatos, None)
+    while cand is not None and cand < now:
+        cand = next(candidatos, None)
+    if cand is None:
+        return []  # nenhum horário selecionado cai dentro da janela
+
+    created: list[Publication] = []
+    for content in pendentes:
+        # evita colidir com publicações já existentes (agendadas à mão, ex.)
+        while True:
+            if cand is None:
+                return created
+            if not _existing_slots(db, account.id, cand - SELECTED_MIN_GAP, cand + SELECTED_MIN_GAP):
+                break
+            cand = next(candidatos, None)
+
+        offset = timedelta(seconds=random.randint(-SELECTED_OFFSET_SECONDS, SELECTED_OFFSET_SECONDS))
+        final_slot = max(cand + offset, now)
+
+        content.scheduled_at = final_slot
+        pub = Publication(content_id=content.id, account_id=account.id, status="PENDING", scheduled_at=final_slot)
+        db.add(pub)
+        created.append(pub)
+        cand = next(candidatos, None)
+
+    db.commit()
+    return created
+
+
 def build_schedule_for_account(db: Session, account: Account, *, now: datetime | None = None) -> list[Publication]:
     """Cria Publication (PENDING) para os Content aprovados, atribuídos a esta conta, ainda
     sem publicação e com schedule_mode='automatico'. Distribui os horários dentro da janela
@@ -106,6 +200,27 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
     now = now or datetime.now(timezone.utc)
     if not account.ativa:
         return []
+
+    pendentes = list(
+        db.scalars(
+            select(Content).where(
+                Content.account_id == account.id,
+                Content.approval_status == "aprovado",
+                Content.schedule_mode == "automatico",
+                Content.kind == "reel",
+                ~Content.publications.any(),
+            )
+        )
+    )
+    if not pendentes:
+        return []
+
+    # horários selecionados pelo operador têm prioridade: 1 post por horário/dia,
+    # com offset aleatório — substituem cadência e posts/hora.
+    horarios = effective_selected_hours(db, account)
+    if horarios:
+        return _build_selected_hours_schedule(db, account, pendentes, horarios, now)
+
     posts_hora, janela_inicio, janela_fim = effective_window(db, account)
     cadencia = effective_cadence(db, account)
     if cadencia:
@@ -121,19 +236,6 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
     # o dia é o LOCAL da conta — aprovar de madrugada agenda para HOJE, não para amanhã
     day = now.astimezone(tz).date()
 
-    pendentes = list(
-        db.scalars(
-            select(Content).where(
-                Content.account_id == account.id,
-                Content.approval_status == "aprovado",
-                Content.schedule_mode == "automatico",
-                Content.kind == "reel",
-                ~Content.publications.any(),
-            )
-        )
-    )
-    if not pendentes:
-        return []
 
     def window_for(d: date) -> tuple[datetime, datetime]:
         return _window_bounds_utc(d, janela_inicio, janela_fim, tz)

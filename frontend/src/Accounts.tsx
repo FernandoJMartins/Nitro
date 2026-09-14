@@ -30,6 +30,57 @@ import {
 
 const PROXY_DOT: Record<string, string> = { verde: "🟢", amarelo: "🟡", vermelho: "🔴", cinza: "⚪" };
 
+function HourPicker({
+  selecionados,
+  onChange,
+}: {
+  selecionados: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const horas = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
+  function toggle(h: string) {
+    const next = new Set(selecionados);
+    next.has(h) ? next.delete(h) : next.add(h);
+    onChange(next);
+  }
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div className="checkrow" style={{ gap: 6, marginBottom: 6 }}>
+        <button className="btn sm" onClick={() => onChange(new Set(horas))}>
+          Todos
+        </button>
+        <button className="btn sm" onClick={() => onChange(new Set())}>
+          Limpar
+        </button>
+        <span className="hint">{selecionados.size} selecionado(s)</span>
+      </div>
+      <div className="checkrow" style={{ gap: 4, flexWrap: "wrap" }}>
+        {horas.map((h) => {
+          const on = selecionados.has(h);
+          return (
+            <button
+              key={h}
+              type="button"
+              onClick={() => toggle(h)}
+              style={{
+                padding: "3px 8px",
+                fontSize: 12,
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: on ? "var(--blue)" : "var(--surface)",
+                color: on ? "#fff" : "var(--text)",
+                cursor: "pointer",
+              }}
+            >
+              {h}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Converte uma URL de proxy numa linha só nos campos que o backend espera.
  * Aceita dois formatos:
@@ -297,6 +348,7 @@ function AccountForm({
   const [postsHora, setPostsHora] = useState<number | "">(initial?.posts_por_hora ?? "");
   const [postsCiclo, setPostsCiclo] = useState<number | "">(initial?.posts_por_ciclo ?? "");
   const [horasCiclo, setHorasCiclo] = useState<number | "">(initial?.horas_por_ciclo ?? "");
+  const [horarios, setHorarios] = useState<Set<string>>(new Set(initial?.horarios_selecionados ?? []));
   const [janelaInicio, setJanelaInicio] = useState(initial?.janela_inicio ?? "");
   const [janelaFim, setJanelaFim] = useState(initial?.janela_fim ?? "");
   const [captionMode, setCaptionMode] = useState<AccountBody["caption_mode"]>(initial?.caption_mode ?? "automatica");
@@ -314,6 +366,7 @@ function AccountForm({
       posts_por_hora: postsHora === "" ? null : postsHora,
       posts_por_ciclo: postsCiclo === "" ? null : postsCiclo,
       horas_por_ciclo: horasCiclo === "" ? null : horasCiclo,
+      horarios_selecionados: horarios.size ? [...horarios].sort() : null,
       janela_inicio: janelaInicio || null,
       janela_fim: janelaFim || null,
       caption_mode: captionMode,
@@ -410,6 +463,15 @@ function AccountForm({
           Cadência profissional: ex. <strong>2 posts a cada 3 horas</strong> mantém um ritmo mais
           natural/humano (posts/hora fixo cai em spam). Quando preenchida (X e Y), ela substitui o limite
           de posts/hora no agendamento.
+        </div>
+        <div className="field">
+          Horários selecionados — 1 post por horário/dia, com offset de ±15min
+          <HourPicker selecionados={horarios} onChange={setHorarios} />
+          <span className="hint">
+            Com horários marcados, o agendamento usa <strong>somente</strong> esses horários (com um offset
+            aleatório para nunca repetir o horário exato todo dia) e ignora cadência/posts-hora. O que não
+            couber hoje vai para o dia seguinte, na mesma ordem.
+          </span>
         </div>
         <div className="checkrow" style={{ gap: 12 }}>
           <label className="field" style={{ flex: 1 }}>
@@ -629,9 +691,17 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
             Salvar global
           </button>
         </div>
+        <div className="field">
+          Horários selecionados (padrão global) — 1 post por horário/dia, com offset de ±15min
+          <HourPicker
+            selecionados={new Set(d.horarios_selecionados ?? [])}
+            onChange={(next) => setD({ ...d, horarios_selecionados: next.size ? [...next].sort() : null })}
+          />
+        </div>
         <p className="hint">
           Cadência “X posts a cada Y horas” (0 em ambos = usa posts/hora): ex. <strong>2 a cada 3h</strong> dá
-          um ritmo natural de um posto a cada ~1h30, em vez de um teto fixo por hora que cai em spam.
+          um ritmo natural de um posto a cada ~1h30, em vez de um teto fixo por hora que cai em spam. Com
+          horários selecionados marcados, eles têm prioridade e substituem cadência e posts/hora.
         </p>
       </div>
     </div>
@@ -749,9 +819,11 @@ export default function Accounts() {
                 {a.session_configurada ? "🔑 Sessão salva" : "⚠ Sem sessão"}
                 {a.proxy && <> · {PROXY_DOT[a.proxy.status]} {a.proxy.nome_interno}</>}
                 {" · "}
-                {a.posts_por_ciclo && a.horas_por_ciclo
-                  ? `${a.posts_por_ciclo} posts a cada ${a.horas_por_ciclo}h`
-                  : `${a.posts_por_hora ?? "padrão"} posts/h`}{" · "}
+                {a.horarios_selecionados?.length
+                  ? `⏰ ${a.horarios_selecionados.length} horário(s) fixo(s)`
+                  : a.posts_por_ciclo && a.horas_por_ciclo
+                    ? `${a.posts_por_ciclo} posts a cada ${a.horas_por_ciclo}h`
+                    : `${a.posts_por_hora ?? "padrão"} posts/h`}{" · "}
                 {a.janela_inicio ?? "—"}→{a.janela_fim ?? "—"}
                 {a.stories_enabled && <> · 📖 Stories ativo</>}
               </div>

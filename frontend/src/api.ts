@@ -467,6 +467,7 @@ export interface PubAccount {
   posts_por_hora: number | null;
   posts_por_ciclo: number | null;
   horas_por_ciclo: number | null;
+  horarios_selecionados: string[] | null;
   janela_inicio: string | null;
   janela_fim: string | null;
   timezone: string | null;
@@ -494,6 +495,7 @@ export interface AccountBody {
   posts_por_hora?: number | null;
   posts_por_ciclo?: number | null;
   horas_por_ciclo?: number | null;
+  horarios_selecionados?: string[] | null;
   janela_inicio?: string | null;
   janela_fim?: string | null;
   timezone?: string | null;
@@ -535,6 +537,7 @@ export interface PublishingDefaults {
   posts_por_hora: number;
   posts_por_ciclo: number;
   horas_por_ciclo: number;
+  horarios_selecionados: string[] | null;
   janela_inicio: string;
   janela_fim: string;
   timezone: string;

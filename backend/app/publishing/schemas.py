@@ -59,6 +59,7 @@ class AccountCreate(BaseModel):
     posts_por_hora: int | None = None
     posts_por_ciclo: int | None = None
     horas_por_ciclo: float | None = None
+    horarios_selecionados: list[str] | None = None
     janela_inicio: str | None = None
     janela_fim: str | None = None
     timezone: str | None = None
@@ -77,6 +78,7 @@ class AccountUpdate(BaseModel):
     posts_por_hora: int | None = None
     posts_por_ciclo: int | None = None
     horas_por_ciclo: float | None = None
+    horarios_selecionados: list[str] | None = None
     janela_inicio: str | None = None
     janela_fim: str | None = None
     timezone: str | None = None
@@ -117,6 +119,7 @@ class AccountOut(BaseModel):
     posts_por_hora: int | None
     posts_por_ciclo: int | None
     horas_por_ciclo: float | None
+    horarios_selecionados: list[str] | None
     janela_inicio: str | None
     janela_fim: str | None
     timezone: str | None
@@ -140,6 +143,7 @@ class PublishingDefaultsUpdate(BaseModel):
     timezone: str
     posts_por_ciclo: int | None = None
     horas_por_ciclo: float | None = None
+    horarios_selecionados: list[str] | None = None
 
 
 class PublishingDefaultsOut(PublishingDefaultsUpdate):

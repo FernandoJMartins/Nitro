@@ -7,6 +7,7 @@ botão/seletor/URL de rede social deve vazar para cá.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
@@ -87,6 +88,11 @@ class Account(Base):
     # quando nenhuma cadência vale, o agendamento cai no posts_por_hora.
     posts_por_ciclo: Mapped[int | None] = mapped_column(Integer, nullable=True)
     horas_por_ciclo: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # horários escolhidos pelo operador (ex.: ["10:00", "14:00", "20:00"]): quando
+    # preenchido, o agendamento só usa esses horários (1 post por horário/dia, com
+    # offset aleatório) e SUBSTITUI cadência/posts-hora. Null = usa o padrão global.
+    # Guardado como JSON num TEXT — a API expõe a lista via property.
+    horarios_selecionados_json: Mapped[str | None] = mapped_column("horarios_selecionados", Text, nullable=True)
     janela_inicio: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "HH:MM"
     janela_fim: Mapped[str | None] = mapped_column(String(5), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -124,6 +130,21 @@ class Account(Base):
     def session_configurada(self) -> bool:
         return bool(self.session_data)
 
+    @property
+    def horarios_selecionados(self) -> list[str] | None:
+        """Lista de horários escolhidos (ex.: ["10:00", "14:00"]) ou None quando vazio."""
+        if not self.horarios_selecionados_json:
+            return None
+        try:
+            valor = json.loads(self.horarios_selecionados_json)
+            return [str(v) for v in valor] if isinstance(valor, list) else None
+        except (ValueError, TypeError):
+            return None
+
+    @horarios_selecionados.setter
+    def horarios_selecionados(self, valor: list[str] | None) -> None:
+        self.horarios_selecionados_json = json.dumps(valor) if valor else None
+
 
 class PublishingDefaults(Base):
     """Configuração global do usuário (posts/hora e janela padrão). Cada conta pode sobrepor."""
@@ -136,9 +157,26 @@ class PublishingDefaults(Base):
     # cadência "X posts a cada Y horas" (0 = desativada, usa o posts_por_hora)
     posts_por_ciclo: Mapped[int] = mapped_column(Integer, default=0)
     horas_por_ciclo: Mapped[float] = mapped_column(Float, default=0.0)
+    # horários selecionados do padrão global (JSON no TEXT; vazio = sem seleção)
+    horarios_selecionados_json: Mapped[str | None] = mapped_column("horarios_selecionados", Text, nullable=True)
     janela_inicio: Mapped[str] = mapped_column(String(5), default="08:00")
     janela_fim: Mapped[str] = mapped_column(String(5), default="23:00")
     timezone: Mapped[str] = mapped_column(String(64), default="America/Sao_Paulo")
+
+    @property
+    def horarios_selecionados(self) -> list[str] | None:
+        """Lista de horários escolhidos ou None quando vazio."""
+        if not self.horarios_selecionados_json:
+            return None
+        try:
+            valor = json.loads(self.horarios_selecionados_json)
+            return [str(v) for v in valor] if isinstance(valor, list) else None
+        except (ValueError, TypeError):
+            return None
+
+    @horarios_selecionados.setter
+    def horarios_selecionados(self, valor: list[str] | None) -> None:
+        self.horarios_selecionados_json = json.dumps(valor) if valor else None
 
 
 class CaptionTemplate(Base):
