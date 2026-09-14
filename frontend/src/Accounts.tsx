@@ -135,7 +135,19 @@ function parseProxyUrl(raw: string): { protocolo: string; host: string; porta: n
   }
 }
 
+function ManagerHead({ titulo, aberto, onToggle }: { titulo: string; aberto: boolean; onToggle: () => void }) {
+  return (
+    <div className="selbar" style={{ padding: 0, background: "none", marginBottom: aberto ? 10 : 0 }}>
+      <strong>{titulo}</strong>
+      <button type="button" className="btn sm" onClick={onToggle}>
+        {aberto ? "Fechar" : "Abrir"}
+      </button>
+    </div>
+  );
+}
+
 function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () => void }) {
+  const [visivel, setVisivel] = useState(false);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [nomeInterno, setNomeInterno] = useState("");
@@ -211,7 +223,9 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <div className="card-main" style={{ width: "100%" }}>
-        <strong>Proxies (SOCKS5, opcional)</strong>
+        <ManagerHead titulo="🛡️ Proxies (SOCKS5, opcional)" aberto={visivel} onToggle={() => setVisivel((v) => !v)} />
+        {visivel && (
+          <>
         <ul className="list" style={{ marginTop: 10 }}>
           {proxies.map((p) => (
             <li key={p.id} className="card">
@@ -337,6 +351,8 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
               </button>
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
     </div>
@@ -626,6 +642,7 @@ function CaptionsManager({
   const [texto, setTexto] = useState("");
   const [accountId, setAccountId] = useState<number | "">("");
   const [error, setError] = useState<string | null>(null);
+  const [visivel, setVisivel] = useState(false);
 
   function nomeConta(id: number | null): string {
     if (id === null) return "Global";
@@ -649,7 +666,9 @@ function CaptionsManager({
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-main" style={{ width: "100%" }}>
-        <strong>Legendas (modelos globais e por conta)</strong>
+        <ManagerHead titulo="✍️ Legendas (modelos globais e por conta)" aberto={visivel} onToggle={() => setVisivel((v) => !v)} />
+        {visivel && (
+          <>
         <p className="hint">
           Use variáveis: {"{{username}} {{date}} {{number}} {{random_emoji}}"} · A legenda específica da conta tem
           prioridade sobre a global.
@@ -696,6 +715,8 @@ function CaptionsManager({
             ＋ Adicionar
           </button>
         </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -768,28 +789,27 @@ function VerificationModal({
 function DefaultsManager({ onChange }: { onChange: () => void }) {
   const [d, setD] = useState<PublishingDefaults | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [visivel, setVisivel] = useState(false);
   // aba escolhida é ESTADO próprio (não derivado de d): trocar para "ciclo" com X/Y ainda
   // em 0 não pode fazer a aba voltar sozinha para "hora" — senão o usuário nunca
   // consegue preencher os campos do modo novo.
   const [modo, setModoTab] = useState<ScheduleMode>("hora");
-  const modoCarregado = useRef(false);
+  const carregado = useRef(false);
 
   useEffect(() => {
-    getPublishingDefaults()
-      .then((data) => {
-        setD(data);
-        // sincroniza a aba com o que já está salvo (apenas na 1ª carga)
-        if (!modoCarregado.current) {
-          modoCarregado.current = true;
-          setModoTab(inferScheduleMode(data));
-        }
-      })
-      .catch((e) => setMsg(`⚠ ${String(e)}`));
-  }, []);
-
-  if (!d) return <div className="card" style={{ marginTop: 16 }}>Carregando configuração global…</div>;
+    if (visivel && !carregado.current) {
+      carregado.current = true;
+      getPublishingDefaults()
+        .then((data) => {
+          setD(data);
+          setModoTab(inferScheduleMode(data)); // sincroniza a aba com o que já está salvo
+        })
+        .catch((e) => setMsg(`⚠ ${String(e)}`));
+    }
+  }, [visivel]);
 
   const escolherModo = (m: ScheduleMode) => {
+    if (!d) return;
     setModoTab(m);
     if (m === "hora") setD({ ...d, posts_por_ciclo: 0, horas_por_ciclo: 0, horarios_selecionados: null });
     if (m === "ciclo") setD({ ...d, horarios_selecionados: null });
@@ -797,6 +817,7 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
   };
 
   const salvar = async () => {
+    if (!d) return;
     setMsg(null);
     if (modo === "ciclo" && (!d.posts_por_ciclo || !d.horas_por_ciclo)) {
       setMsg("⚠ Modo “por ciclo”: preencha X e Y (ou escolha outro modo).");
@@ -818,7 +839,10 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-main" style={{ width: "100%" }}>
-        <strong>Configuração global de publicação</strong>
+        <ManagerHead titulo="⚙️ Configuração global de publicação" aberto={visivel} onToggle={() => setVisivel((v) => !v)} />
+        {visivel && !d && <div className="hint">Carregando configuração…</div>}
+        {visivel && d && (
+          <>
         <p className="hint">Vale para todas as contas, exceto quando a conta define um valor próprio.</p>
         {msg && <div className={msg.startsWith("⚠") ? "error" : "hint"}>{msg}</div>}
         <div className="checkrow" style={{ gap: 12, marginTop: 10, flexWrap: "wrap" }}>
@@ -903,6 +927,8 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
           Cada conta pode escolher o próprio modo de agendamento — o que estiver aqui vale como padrão
           (janela, timezone e modo) para as contas sem override.
         </p>
+          </>
+        )}
       </div>
     </div>
   );
