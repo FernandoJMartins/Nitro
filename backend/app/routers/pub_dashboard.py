@@ -91,7 +91,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     )
 
     accounts = list(db.scalars(select(Account).where(Account.user_id == user.id)))
-    contas_ativas = sum(1 for a in accounts if a.status == "pronta" and a.automation_status != "pausada")
+    contas_ativas = sum(1 for a in accounts if a.status == "pronta" and a.automation_status != "pausada" and a.ativa)
 
     # estado real das automações por conta
     sessoes_validas = sum(1 for a in accounts if a.status == "pronta" and a.session_data)
@@ -300,6 +300,8 @@ def post_now_publications(
     for p in pubs:
         if p.status in ("PUBLISHED", "UPLOADING", "PROCESSING"):
             continue
+        if not p.account.ativa:
+            continue  # conta desativada pelo operador — não adianta "postar agora"
         p.status = "PENDING"
         p.erro = None
         p.scheduled_at = agora

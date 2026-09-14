@@ -11,6 +11,7 @@ substituído por um fake registrado no registro de adapters, sem tocar na rede.
 import io
 import os
 import uuid
+from datetime import datetime, timezone
 
 os.environ["DATABASE_URL"] = "sqlite:///./_smoke_pub.db"
 os.environ["STORAGE_DIR"] = "./_smoke_pub_storage"
@@ -23,11 +24,12 @@ from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import GeneratedVideo  # noqa: E402
 from app.publishing.core import publications  # noqa: E402
+from app.publishing.core.distribution import eligible_accounts  # noqa: E402
 from app.publishing.core.publications import execute_publication  # noqa: E402
 from app.publishing.core.scheduling import build_schedule_for_account  # noqa: E402
 from app.publishing.core.stories import ensure_daily_stories  # noqa: E402
 from app.publishing.core.workers import run_cycle  # noqa: E402
-from app.publishing.models import Account, ContentMedia, Publication, Proxy, StoryPlan  # noqa: E402
+from app.publishing.models import Account, Content, ContentMedia, Publication, Proxy, StoryPlan  # noqa: E402
 from app.publishing.platforms.base import PlatformAdapter, PublishContext, PublishResult, ThrottledError  # noqa: E402
 
 
@@ -465,5 +467,119 @@ logs = client.get("/api/v1/publishing/logs").json()
 assert len(logs) > 0
 assert any("confirmada" in log_["mensagem"].lower() for log_ in logs)
 print("logs de auditoria ok ->", len(logs), "entradas")
+
+# ---------- ativar/desativar conta: bloqueia distribuição, agendamento, stories e execução ----------
+r = client.post(
+    "/api/v1/publishing/accounts", json={"nome_interno": "Perfil F", "username": "perfil06", **WIDE_WINDOW}
+)
+acc_f = r.json()
+assert r.status_code == 200 and acc_f["ativa"] is True, "conta nova nasce ativa"
+r = client.post(f"/api/v1/publishing/accounts/{acc_f['id']}/ready")
+assert r.status_code == 200
+
+# story-config da conta F (1 plan) para validar o bloqueio de stories
+r = client.put(
+    f"/api/v1/publishing/accounts/{acc_f['id']}/story-config",
+    json={"enabled": True, "plans": [{"horario": "00:00", "texto": "Story da F", "frames": [{"media_id": media_id_1}]}]},
+)
+assert r.status_code == 200, r.text
+plan_f_id = r.json()["plans"][0]["id"]
+
+# desativa a conta via PATCH (mesmo caminho do botão na UI)
+r = client.patch(f"/api/v1/publishing/accounts/{acc_f['id']}", json={"ativa": False})
+assert r.status_code == 200 and r.json()["ativa"] is False
+print("conta desativada via API ok")
+
+db = SessionLocal()
+conta_f = db.get(Account, acc_f["id"])
+assert conta_f.ativa is False
+
+# distribuição ignora conta desativada
+assert acc_f["id"] not in {a.id for a in eligible_accounts(db, USER_ID)}
+
+# conteúdo aprovado atribuído à conta desativada não é agendado nem gera stories
+gv_f = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_f.mp4", duracao=8.0)
+db.add(gv_f)
+db.flush()
+content_f = Content(
+    user_id=USER_ID,
+    kind="reel",
+    origem="gerador",
+    generated_video_id=gv_f.id,
+    caminho=gv_f.caminho,
+    duracao=8.0,
+    account_id=acc_f["id"],
+    approval_status="aprovado",
+)
+db.add(content_f)
+db.commit()
+db.refresh(content_f)
+assert build_schedule_for_account(db, conta_f) == [], "conta desativada não deveria criar agendamento"
+assert ensure_daily_stories(db, conta_f) == [], "conta desativada não deveria gerar stories"
+
+# execução direta recusa a conta desativada (garantia dura do núcleo)
+pub_f = Publication(
+    content_id=content_f.id, account_id=acc_f["id"], status="PENDING", scheduled_at=datetime.now(timezone.utc)
+)
+db.add(pub_f)
+db.commit()
+db.refresh(pub_f)
+try:
+    execute_publication(db, pub_f)
+    raise AssertionError("conta desativada não deveria executar publicação")
+except ValueError as exc:
+    assert "desativada" in str(exc)
+db.close()
+print("conta desativada: sem distribuição, sem agendamento, sem stories e sem execução ok")
+
+# endpoints de postar agora / agendar manual recusam conta desativada (409)
+r = client.post(f"/api/v1/publishing/accounts/{acc_f['id']}/stories/{plan_f_id}/post-now")
+assert r.status_code == 409 and "desativada" in r.text, (r.status_code, r.text)
+r = client.post(f"/api/v1/publishing/content/{content_f.id}/schedule", json={"scheduled_at": "2099-01-02T12:00:00"})
+assert r.status_code == 409 and "desativada" in r.text, (r.status_code, r.text)
+print("postar agora / agendar manual recusam conta desativada (409) ok")
+
+# dashboard não conta a conta desativada como ativa
+dash = client.get("/api/v1/publishing/dashboard").json()
+assert dash["contas_total"] == 5, dash
+assert dash["contas_ativas"] == 2, dash  # A e B apenas (C pausada, D em erro, F desativada)
+print("dashboard não conta a conta desativada como ativa ok")
+
+# reativa a conta e tudo volta a funcionar
+r = client.patch(f"/api/v1/publishing/accounts/{acc_f['id']}", json={"ativa": True})
+assert r.status_code == 200 and r.json()["ativa"] is True
+db = SessionLocal()
+conta_f = db.get(Account, acc_f["id"])
+gv_f2 = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_f2.mp4", duracao=8.0)
+db.add(gv_f2)
+db.flush()
+content_f2 = Content(
+    user_id=USER_ID,
+    kind="reel",
+    origem="gerador",
+    generated_video_id=gv_f2.id,
+    caminho=gv_f2.caminho,
+    duracao=8.0,
+    account_id=acc_f["id"],
+    approval_status="aprovado",
+)
+db.add(content_f2)
+db.commit()
+db.refresh(content_f2)
+criadas = build_schedule_for_account(db, conta_f)
+existentes_f2 = list(
+    db.scalars(
+        select(Publication).where(Publication.content_id == content_f2.id, Publication.account_id == acc_f["id"])
+    )
+)
+assert any(p.content_id == content_f2.id for p in criadas) or existentes_f2, "conta reativada deve agendar conteúdo novo"
+# stories voltam a ser gerados (ou o worker já gerou em segundo plano)
+if ensure_daily_stories(db, conta_f) == []:
+    plan_f = db.get(StoryPlan, plan_f_id)
+    assert plan_f.ultima_geracao_em is not None, "story do plano deveria ter sido gerado após reativar"
+db.close()
+dash = client.get("/api/v1/publishing/dashboard").json()
+assert dash["contas_ativas"] == 3, dash
+print("conta reativada: agendamento, stories e dashboard voltam a funcionar ok")
 
 print(">>> PUBLICAÇÃO (multicontas) OK")

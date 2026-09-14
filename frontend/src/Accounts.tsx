@@ -687,6 +687,7 @@ export default function Accounts() {
               </strong>
               <div className="meta">
                 {STATUS_BADGE[a.status]}
+                {!a.ativa && <> · ⛔ Conta desativada</>}
                 {a.automation_status === "pausada" && a.status === "pronta" && <> · ⏸️ Automação pausada</>}
                 {" · "}
                 {a.senha_configurada ? "🔒 Senha configurada" : "⚠ Sem senha"}
@@ -703,6 +704,17 @@ export default function Accounts() {
             <div className="card-actions" style={{ flexWrap: "wrap" }}>
               <button className="btn primary sm" onClick={() => conectar(a)} disabled={connecting === a.id}>
                 {connecting === a.id ? "Conectando…" : "🔗 Conectar"}
+              </button>
+              <button
+                className={a.ativa ? "btn sm" : "btn primary sm"}
+                onClick={() => updateAccount(a.id, { ativa: !a.ativa }).then(refreshAll)}
+                title={
+                  a.ativa
+                    ? "Desativar a conta: ela não participa de distribuição, não agenda e não publica nada (nem story, nem reel) enquanto desativada"
+                    : "Reativar a conta: volta a participar de distribuição, agendamento e publicação"
+                }
+              >
+                {a.ativa ? "⛔ Desativar" : "✅ Ativar"}
               </button>
               {a.session_configurada && (
                 <button className="btn sm" onClick={() => verificar(a)} disabled={verifying === a.id}>

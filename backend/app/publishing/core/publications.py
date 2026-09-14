@@ -97,6 +97,9 @@ def execute_publication(db: Session, publication: Publication) -> None:
     content = publication.content
     account = publication.account
 
+    if not account.ativa:
+        raise ValueError(f"Conta @{account.username} está desativada — publicação não será executada.")
+
     publication.tentativas += 1
     publication.status = "UPLOADING"
     publication.iniciado_em = datetime.now(timezone.utc)

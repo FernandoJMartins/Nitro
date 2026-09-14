@@ -40,10 +40,10 @@ def _run_account_queue(account_id: int, pub_ids: list[int]) -> None:
     db = SessionLocal()
     try:
         account = db.get(Account, account_id)
-        if account is None or account.automation_status == "pausada":
+        if account is None or not account.ativa or account.automation_status == "pausada":
             return
         for pub_id in pub_ids:
-            if account.status != "pronta" or account.automation_status == "pausada":
+            if account.status != "pronta" or not account.ativa or account.automation_status == "pausada":
                 # sessão/proxy quebrou no meio da fila desta conta — as demais publicações
                 # dela ficam para depois da reautenticação; outras contas seguem normalmente.
                 break
@@ -68,7 +68,7 @@ def run_cycle() -> None:
 
         accounts = list(db.scalars(select(Account).where(Account.status == "pronta")))
         for account in accounts:
-            if account.automation_status == "pausada":
+            if not account.ativa or account.automation_status == "pausada":
                 continue
             try:
                 if account.stories_enabled:

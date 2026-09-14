@@ -79,6 +79,7 @@ class AccountUpdate(BaseModel):
     caption_mode: str | None = None
     audio_mode: str | None = None
     stories_enabled: bool | None = None
+    ativa: bool | None = None
     automation_status: str | None = None
     session_data: str | None = None
 
@@ -116,6 +117,7 @@ class AccountOut(BaseModel):
     caption_mode: str
     audio_mode: str
     stories_enabled: bool
+    ativa: bool
     automation_status: str
     ultimo_acesso_em: datetime | None
     ultimo_post_em: datetime | None

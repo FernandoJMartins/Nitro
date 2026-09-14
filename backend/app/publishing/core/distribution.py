@@ -24,6 +24,7 @@ def eligible_accounts(db: Session, user_id: int, platform: str = "instagram") ->
                 Account.user_id == user_id,
                 Account.platform == platform,
                 Account.status.in_(ELIGIBLE_STATUSES),
+                Account.ativa.is_(True),
                 Account.automation_status != "pausada",
             )
         )

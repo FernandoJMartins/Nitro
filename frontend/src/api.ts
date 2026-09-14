@@ -471,6 +471,7 @@ export interface PubAccount {
   caption_mode: "manual" | "automatica";
   audio_mode: "manual" | "automatica" | "nenhum";
   stories_enabled: boolean;
+  ativa: boolean;
   automation_status: "ociosa" | "pausada" | "erro";
   ultimo_acesso_em: string | null;
   ultimo_post_em: string | null;
@@ -495,6 +496,7 @@ export interface AccountBody {
   caption_mode?: "manual" | "automatica";
   audio_mode?: "manual" | "automatica" | "nenhum";
   stories_enabled?: boolean;
+  ativa?: boolean;
 }
 
 export function listAccounts(): Promise<PubAccount[]> {

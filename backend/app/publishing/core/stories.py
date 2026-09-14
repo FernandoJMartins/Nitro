@@ -94,6 +94,9 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
     if cfg is None:
         return []
 
+    if not account.ativa:
+        return []
+
     tz = _window_tz(db, account)
     today = today or datetime.now(timezone.utc).astimezone(tz).date()
     agora = datetime.now(timezone.utc)

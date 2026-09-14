@@ -90,6 +90,11 @@ class Account(Base):
     audio_mode: Mapped[str] = mapped_column(String(16), default="nenhum")  # 'manual' | 'automatica' | 'nenhum'
     stories_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # conta desativada pelo operador: não participa de distribuição, não agenda e
+    # não publica nada (nem story nem reel) enquanto estiver desativada. Independe
+    # de automation_status, que é o estado interno do worker (ociosa/pausada/erro).
+    ativa: Mapped[bool] = mapped_column(Boolean, default=True)
+
     # automação: 'ociosa' | 'pausada' | 'erro' — controla se o worker pode processar a fila
     automation_status: Mapped[str] = mapped_column(String(16), default="ociosa")
 

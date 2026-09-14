@@ -87,6 +87,8 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
     configurada, respeitando o intervalo de posts/hora e o que já está agendado.
     """
     now = now or datetime.now(timezone.utc)
+    if not account.ativa:
+        return []
     posts_hora, janela_inicio, janela_fim = effective_window(db, account)
     if posts_hora <= 0:
         return []
@@ -146,6 +148,11 @@ def schedule_specific(db: Session, content: Content, when: datetime) -> Publicat
     """Agendamento manual: horário específico escolhido pelo usuário para um Content já aprovado."""
     if content.account_id is None:
         raise ValueError("conteúdo sem conta destinada")
+    account = db.get(Account, content.account_id)
+    if account is None:
+        raise ValueError("conta destinada não encontrada")
+    if not account.ativa:
+        raise ValueError(f"Conta @{account.username} está desativada — reative-a para programar publicações.")
     content.schedule_mode = "especifico"
     content.scheduled_at = when
     pub = Publication(content_id=content.id, account_id=content.account_id, status="PENDING", scheduled_at=when)

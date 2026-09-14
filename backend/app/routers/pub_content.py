@@ -185,4 +185,7 @@ def schedule_content(
     content = _get_content(db, user, content_id)
     if content.approval_status != "aprovado":
         raise HTTPException(409, "Só é possível agendar conteúdo aprovado.")
-    return schedule_specific(db, content, body.scheduled_at)
+    try:
+        return schedule_specific(db, content, body.scheduled_at)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc

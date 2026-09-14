@@ -577,6 +577,8 @@ def post_story_now(account_id: int, plan_id: int, user: User = Depends(get_curre
     scheduler assume no ciclo seguinte. Se der certo, o plano conta como "já
     gerado hoje" — o horário normal do dia não repete o story."""
     account = _get_account(db, user, account_id)
+    if not account.ativa:
+        raise HTTPException(409, "Conta desativada — reative-a em Contas para publicar stories.")
     if account.status != "pronta":
         raise HTTPException(409, "Conta não está pronta para publicação — confira sessão/proxy em Contas.")
 
