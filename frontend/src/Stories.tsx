@@ -105,9 +105,13 @@ function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<numb
         ) : (
           <div className="preview-bg preview-bg-empty">9:16</div>
         )}
-        {modelo.texto && <div className="story-preview-texto">{modelo.texto}</div>}
-        {modelo.texto_extra && <div className="story-preview-extra">{modelo.texto_extra}</div>}
-        {modelo.link && <div className={`story-preview-link pos-${modelo.link_posicao || "inferior"}`}>🔗 Link</div>}
+        {!modelo.link && modelo.texto && <div className="story-preview-texto">{modelo.texto}</div>}
+        {!modelo.link && modelo.texto_extra && <div className="story-preview-extra">{modelo.texto_extra}</div>}
+        {modelo.link && (
+          <div className={`story-preview-link pos-${modelo.link_posicao || "inferior"}`}>
+            {modelo.texto.trim() || "Link"}
+          </div>
+        )}
       </div>
       {n > 1 && (
         <div className="checkrow" style={{ gap: 4, marginTop: 6, justifyContent: "center", flexWrap: "wrap" }}>
@@ -184,6 +188,9 @@ function ModelEditorModal({
               />
             </label>
           </div>
+          <p className="hint" style={{ marginTop: 6 }}>
+            O texto é o rótulo do botão do link. Sem link (opcional), o texto vira a legenda nativa do story.
+          </p>
 
           <p className="hint" style={{ marginTop: 10 }}>
             Sequência do story — a ordem abaixo é a ordem da publicação:
@@ -659,7 +666,9 @@ export default function Stories() {
                     </div>
                     <p className="hint" style={{ margin: "2px 0 0" }}>
                       Publica todo dia às {m.horario}
-                      {m.link.trim() !== "" ? ` · o texto vira o botão do link (posição: ${m.link_posicao})` : ""}
+                      {m.link.trim() !== ""
+                        ? ` · o texto vira o botão do link (posição: ${m.link_posicao})`
+                        : " · sem link — o texto vira a legenda do story"}
                     </p>
                   </div>
                   <div className="card-actions" style={{ flexWrap: "wrap" }}>
