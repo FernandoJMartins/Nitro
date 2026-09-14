@@ -1704,6 +1704,9 @@ code {
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 .chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }
 

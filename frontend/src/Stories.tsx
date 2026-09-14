@@ -1,4 +1,26 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  AlertTriangle,
+  BookImage,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Layers,
+  Library,
+  Link2,
+  Loader,
+  MessageSquare,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+  UploadCloud,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { ConfirmDialog, Modal } from "./Dialog";
 import {
   cancelPublications,
@@ -34,14 +56,14 @@ const LINK_POSICOES = [
 
 const VIDEO_RE = /\.(mp4|mov|mkv|webm|avi)$/i;
 
-const STORY_STATUS_ICON: Record<string, string> = {
-  PENDING: "⏰",
-  UPLOADING: "⏳",
-  PROCESSING: "⏳",
-  PUBLISHED: "✓",
-  FAILED: "⚠",
-  RETRYING: "↻",
-  CANCELLED: "✕",
+const STORY_STATUS_ICON: Record<string, LucideIcon> = {
+  PENDING: Clock,
+  UPLOADING: UploadCloud,
+  PROCESSING: Loader,
+  PUBLISHED: Check,
+  FAILED: AlertTriangle,
+  RETRYING: RefreshCw,
+  CANCELLED: X,
 };
 
 const STORY_STATUS_COLOR: Record<string, string> = {
@@ -209,7 +231,7 @@ function ModelEditorModal({
                     {j + 1}. {media?.nome_original ?? `mídia #${id} (removida)`}
                   </span>
                   <button className="btn sm" title="Mover para cima" disabled={j === 0} onClick={() => moverFrame(j, -1)}>
-                    ▲
+                    <ChevronUp size={14} />
                   </button>
                   <button
                     className="btn sm"
@@ -217,14 +239,14 @@ function ModelEditorModal({
                     disabled={j === d.frames.length - 1}
                     onClick={() => moverFrame(j, 1)}
                   >
-                    ▼
+                    <ChevronDown size={14} />
                   </button>
                   <button
                     className="btn danger sm"
                     title="Remover"
                     onClick={() => setD({ ...d, frames: d.frames.filter((_, k) => k !== j) })}
                   >
-                    ✕
+                    <X size={14} />
                   </button>
                 </div>
               );
@@ -255,11 +277,16 @@ function ModelEditorModal({
             })
           }
         >
-          Salvar modelo
+          <Save size={14} /> Salvar modelo
         </button>
       </div>
     </Modal>
   );
+}
+
+interface HistoryItem extends StoryHistory {
+  account_id: number;
+  account_username: string;
 }
 
 export default function Stories() {
@@ -276,10 +303,10 @@ export default function Stories() {
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [postando, setPostando] = useState<number | null>(null);
-  const [historico, setHistorico] = useState<StoryHistory[]>([]);
-  const [bibliotecaAberta, setBibliotecaAberta] = useState(true);
+  const [historico, setHistorico] = useState<HistoryItem[]>([]);
   const [histFiltro, setHistFiltro] = useState<"todos" | "PENDING" | "PUBLISHED" | "erro">("todos");
-  // índice do modelo sendo editado em MODAL (a lista fica só com linhas-resumo)
+  // modal dos modelos do dia (lista + novo + salvar) e índice do modelo em edição
+  const [modelosAbertos, setModelosAbertos] = useState(false);
   const [editModelo, setEditModelo] = useState<number | null>(null);
   const [confirma, setConfirma] = useState<null | {
     titulo: string;
@@ -333,11 +360,9 @@ export default function Stories() {
     if (accountId === "") {
       setModelos([]);
       setTarget(0);
-      setHistorico([]);
       return;
     }
     setMsg(null);
-    listStoryHistory(accountId).then(setHistorico).catch(() => {});
     getStoryConfig(accountId)
       .then((cfg) => {
         setModelos(mapearConfig(cfg));
@@ -346,6 +371,22 @@ export default function Stories() {
       })
       .catch((e) => setError(String(e)));
   }, [accountId]);
+
+  // histórico de TODAS as contas, sempre visível (uma chamada por conta, mesclado)
+  useEffect(() => {
+    if (accounts.length === 0) return;
+    Promise.all(
+      accounts.map((a) =>
+        listStoryHistory(a.id).then((xs) =>
+          xs.map((x) => ({ ...x, account_id: a.id, account_username: a.username }))
+        )
+      )
+    )
+      .then((xs) =>
+        setHistorico(xs.flat().sort((a, b) => +new Date(b.scheduled_at) - +new Date(a.scheduled_at)))
+      )
+      .catch((e) => setError(String(e)));
+  }, [accounts]);
 
   const mediaMap = useMemo(() => new Map(library.map((m) => [m.id, m])), [library]);
 
@@ -404,7 +445,18 @@ export default function Stories() {
   }
 
   function atualizarHistorico() {
-    if (accountId !== "") listStoryHistory(accountId).then(setHistorico).catch(() => {});
+    if (accounts.length === 0) return;
+    Promise.all(
+      accounts.map((a) =>
+        listStoryHistory(a.id).then((xs) =>
+          xs.map((x) => ({ ...x, account_id: a.id, account_username: a.username }))
+        )
+      )
+    )
+      .then((xs) =>
+        setHistorico(xs.flat().sort((a, b) => +new Date(b.scheduled_at) - +new Date(a.scheduled_at)))
+      )
+      .catch((e) => setError(String(e)));
   }
 
   async function cancelarStory(id: number) {
@@ -536,10 +588,21 @@ export default function Stories() {
             </label>
             {acc && (
               <span className={`badge ${acc.stories_enabled ? "st-ok" : "st-danger"}`}>
-                {acc.stories_enabled
-                  ? "📖 Automação de stories ativa"
-                  : "⚠ Automação desativada — ligue o check em Contas (Publicação → Contas)."}
+                {acc.stories_enabled ? (
+                  <>
+                    <BookImage size={13} /> Automação de stories ativa
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle size={13} /> Automação desativada — ligue o check em Contas (Publicação → Contas).
+                  </>
+                )}
               </span>
+            )}
+            {acc && (
+              <button className="btn sm" onClick={() => setModelosAbertos(true)}>
+                <Layers size={14} /> Modelos do dia ({modelos.length})
+              </button>
             )}
           </div>
         </div>
@@ -547,31 +610,14 @@ export default function Stories() {
 
       {accountId !== "" && acc && (
         <>
-          <Secao n={2} titulo="Modelos do dia" dica={`cada modelo vira 1 story por dia em @${acc.username}`} />
+          <Secao n={2} titulo="Biblioteca de mídias" dica="escolha as imagens e adicione ao modelo selecionado" />
 
           <div className="card">
             <div className="card-main" style={{ width: "100%" }}>
-              <div
-                className={`panel-head${bibliotecaAberta ? " open" : ""}`}
-                onClick={() => setBibliotecaAberta((v) => !v)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setBibliotecaAberta((v) => !v);
-                  }
-                }}
-              >
-                <strong>📚 Biblioteca de mídias — escolha as imagens dos modelos</strong>
-                <span className="caret">▶</span>
-              </div>
-              {bibliotecaAberta && (
-                <>
-                  <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              <div className="checkrow" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                 <input
                   type="search"
-                  placeholder="🔎 Buscar imagem…"
+                  placeholder="Buscar imagem…"
                   value={busca}
                   onChange={(e) => setBusca(e.target.value)}
                   style={{ flex: 2, minWidth: 180 }}
@@ -601,14 +647,6 @@ export default function Stories() {
                     ))}
                   </select>
                 </label>
-                <button
-                  className="btn primary sm"
-                  onClick={addSelecionadas}
-                  disabled={selected.size === 0}
-                  style={{ alignSelf: "flex-end" }}
-                >
-                  ＋ Adicionar {selected.size > 0 ? `${selected.size}` : ""}
-                </button>
               </div>
 
               <div className="sgrid">
@@ -643,125 +681,100 @@ export default function Stories() {
                 })}
                 {filtradas.length === 0 && <div className="empty">Nenhuma imagem encontrada para esse filtro.</div>}
               </div>
-                </>
-              )}
-            </div>
-          </div>
 
-          <div className="card" style={{ marginTop: 12 }}>
-            <div className="card-main" style={{ width: "100%" }}>
-              <div className="checkrow" style={{ gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
-                <strong>🕒 {modelos.length} modelo(s) do dia</strong>
-                <span className="hint">clique em ✏️ Editar para abrir o modelo</span>
-              </div>
-              {modelos.map((m, i) => (
-                <div key={m.key} className="card" style={{ padding: 12, marginTop: 10 }}>
-                  <div className="card-main" style={{ flex: 1, minWidth: 0 }}>
-                    <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
-                      <strong>🕒 {m.horario} — {m.texto.trim() || `Modelo ${i + 1}`}</strong>
-                      <span className="badge st-ok">{m.frames.length} img</span>
-                      {m.link.trim() !== "" && (
-                        <span className="badge" style={{ color: "var(--blue)" }}>🔗 com link</span>
-                      )}
-                    </div>
-                    <p className="hint" style={{ margin: "2px 0 0" }}>
-                      Publica todo dia às {m.horario}
-                      {m.link.trim() !== ""
-                        ? ` · o texto vira o botão do link (posição: ${m.link_posicao})`
-                        : " · sem link — o texto vira a legenda do story"}
-                    </p>
-                  </div>
-                  <div className="card-actions" style={{ flexWrap: "wrap" }}>
-                    {m.planId != null && (
-                      <button
-                        className="btn primary sm"
-                        onClick={() => pedirPostar(m)}
-                        disabled={postando === m.planId}
-                        title="Publica este story imediatamente"
-                      >
-                        {postando === m.planId ? "Publicando…" : "▶ Postar agora"}
-                      </button>
-                    )}
-                    <button className="btn sm" onClick={() => setEditModelo(i)}>
-                      ✏️ Editar
-                    </button>
-                    <button className="btn danger sm" onClick={() => removerModelo(i)}>
-                      Excluir
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              <div className="card-actions" style={{ marginTop: 10 }}>
-                <button className="btn sm" onClick={() => setModelos((prev) => [...prev, novoModelo()])}>
-                  ＋ Novo modelo
+              {/* botão de adicionar em evidência, DEPOIS das opções e do grid de imagens */}
+              <div className="selbar" style={{ marginTop: 10 }}>
+                <span className="hint">
+                  {selected.size > 0
+                    ? `${selected.size} imagem(ns) selecionada(s) → Modelo ${target + 1} · ${modelos[target]?.horario ?? "—"}`
+                    : "Selecione as imagens acima para adicionar ao modelo"}
+                </span>
+                <button className="btn primary" onClick={addSelecionadas} disabled={selected.size === 0}>
+                  <Plus size={15} /> Adicionar ao Modelo {target + 1}
                 </button>
-                <button className="btn primary" onClick={salvar} disabled={saving}>
-                  {saving ? "Salvando…" : "Salvar stories"}
-                </button>
-                {msg && <span className="hint">{msg}</span>}
               </div>
             </div>
           </div>
+        </>
+      )}
 
-          <Secao n={3} titulo="Histórico" dica="stories gerados e o resultado de cada publicação" />
-          <div className="card">
-            <div className="card-main" style={{ width: "100%" }}>
-              <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-                <strong>📖 Histórico — @{acc.username}</strong>
-                <div className="checkrow" style={{ gap: 6 }}>
-                  <button className="btn sm" onClick={atualizarHistorico}>
-                    ↻ Atualizar
-                  </button>
-                  <button className="btn danger sm" onClick={pedirCancelarTodos} disabled={!historico.some((h) => h.status !== "PUBLISHED")}>
-                    ✕ Cancelar todos
-                  </button>
-                </div>
-              </div>
-              <div className="checkrow" style={{ gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-                {(
-                  [
-                    ["todos", "Todos"],
-                    ["PENDING", "⏰ Pendentes"],
-                    ["PUBLISHED", "✓ Publicados"],
-                    ["erro", "⚠ Com erro"],
-                  ] as const
-                ).map(([f, label]) => (
-                  <button
-                    key={f}
-                    className={histFiltro === f ? "chip active" : "chip"}
-                    onClick={() => setHistFiltro(f)}
-                  >
-                    {label}
-                  </button>
-                ))}
+      <Secao n={3} titulo="Histórico" dica="stories de todas as contas, mais recente primeiro" />
+      <div className="card">
+        <div className="card-main" style={{ width: "100%" }}>
+          <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+            <strong>
+              <Library size={15} /> Histórico — todas as contas ({historico.length})
+            </strong>
+            <div className="checkrow" style={{ gap: 6 }}>
+              <button className="btn sm" onClick={atualizarHistorico}>
+                <RefreshCw size={13} /> Atualizar
+              </button>
+              <button className="btn danger sm" onClick={pedirCancelarTodos} disabled={!historico.some((h) => h.status !== "PUBLISHED")}>
+                <Trash2 size={13} /> Cancelar todos
+              </button>
+            </div>
+          </div>
+          <div className="checkrow" style={{ gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+            {(
+              [
+                ["todos", "Todos", null],
+                ["PENDING", "Pendentes", Clock],
+                ["PUBLISHED", "Publicados", Check],
+                ["erro", "Com erro", AlertTriangle],
+              ] as const
+            ).map(([f, label, Icon]) => (
+              <button
+                key={f}
+                className={histFiltro === f ? "chip active" : "chip"}
+                onClick={() => setHistFiltro(f)}
+              >
+                {Icon && <Icon size={12} />} {label}
+              </button>
+            ))}
               </div>
               <ul className="list" style={{ marginTop: 10, maxHeight: 480, overflowY: "auto" }}>
-                {historicoFiltrado.map((h) => (
-                  <li key={h.id} className="card" style={{ padding: 10 }}>
-                    <div className="card-main" style={{ width: "100%" }}>
-                      <strong>
-                        {STORY_STATUS_ICON[h.status] ?? "·"} {new Date(h.scheduled_at).toLocaleString("pt-BR")}
-                        <span className={`badge ${STORY_STATUS_COLOR[h.status] ?? "st-muted"}`} style={{ marginLeft: 8 }}>
-                          {h.status}
-                        </span>
-                      </strong>
-                      {h.legenda && <div className="meta">💬 {h.legenda}</div>}
-                      {h.link && <div className="meta">🔗 {h.link}</div>}
-                      {h.confirmado_em && (
-                        <div className="meta">
-                          Postado e confirmado em {new Date(h.confirmado_em).toLocaleString("pt-BR")}
-                        </div>
+                {historicoFiltrado.map((h) => {
+                  const StatusIcon = STORY_STATUS_ICON[h.status] ?? Clock;
+                  return (
+                    <li key={h.id} className="card" style={{ padding: 10 }}>
+                      <div className="card-main" style={{ width: "100%" }}>
+                        <strong>
+                          <span className={STORY_STATUS_COLOR[h.status] ?? "st-muted"}>
+                            <StatusIcon size={14} />
+                          </span>{" "}
+                          {new Date(h.scheduled_at).toLocaleString("pt-BR")}
+                          <span className="badge" style={{ marginLeft: 8 }}>
+                            @{h.account_username}
+                          </span>
+                          <span className={`badge ${STORY_STATUS_COLOR[h.status] ?? "st-muted"}`} style={{ marginLeft: 4 }}>
+                            {h.status}
+                          </span>
+                        </strong>
+                        {h.legenda && (
+                          <div className="meta">
+                            <MessageSquare size={12} /> {h.legenda}
+                          </div>
+                        )}
+                        {h.link && (
+                          <div className="meta">
+                            <Link2 size={12} /> {h.link}
+                          </div>
+                        )}
+                        {h.confirmado_em && (
+                          <div className="meta">
+                            Postado e confirmado em {new Date(h.confirmado_em).toLocaleString("pt-BR")}
+                          </div>
+                        )}
+                        {h.erro && <div className="error" style={{ marginTop: 4 }}>{h.erro}</div>}
+                      </div>
+                      {h.status !== "PUBLISHED" && (
+                        <button className="btn danger sm" onClick={() => pedirCancelarStory(h.id)} title="Cancelar story">
+                          <X size={14} />
+                        </button>
                       )}
-                      {h.erro && <div className="error" style={{ marginTop: 4 }}>{h.erro}</div>}
-                    </div>
-                    {h.status !== "PUBLISHED" && (
-                      <button className="btn danger sm" onClick={() => pedirCancelarStory(h.id)} title="Cancelar story">
-                        ✕
-                      </button>
-                    )}
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
                 {historicoFiltrado.length === 0 && (
                   <li className="empty">
                     {historico.length === 0
@@ -770,13 +783,72 @@ export default function Stories() {
                   </li>
                 )}
               </ul>
-            </div>
-          </div>
-        </>
-      )}
+        </div>
+      </div>
 
       {accounts.length === 0 && (
         <div className="empty">Nenhuma conta cadastrada ainda — crie uma em Publicação → Contas.</div>
+      )}
+
+      {modelosAbertos && acc && (
+        <Modal title={`Modelos do dia — @${acc.username}`} onClose={() => setModelosAbertos(false)} wide scroll>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Cada modelo vira 1 story por dia no horário dele. Edite para mudar texto, link, posição e a
+            sequência de imagens.
+          </p>
+          {modelos.map((m, i) => (
+            <div key={m.key} className="card" style={{ padding: 12, marginTop: 10 }}>
+              <div className="card-main" style={{ flex: 1, minWidth: 0 }}>
+                <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <strong>
+                    <Clock size={14} /> {m.horario} — {m.texto.trim() || `Modelo ${i + 1}`}
+                  </strong>
+                  <span className="badge st-ok">{m.frames.length} img</span>
+                  {m.link.trim() !== "" && (
+                    <span className="badge" style={{ color: "var(--blue)" }}>
+                      <Link2 size={11} /> com link
+                    </span>
+                  )}
+                </div>
+                <p className="hint" style={{ margin: "2px 0 0" }}>
+                  Publica todo dia às {m.horario}
+                  {m.link.trim() !== ""
+                    ? ` · o texto vira o botão do link (posição: ${m.link_posicao})`
+                    : " · sem link — o texto vira a legenda do story"}
+                </p>
+              </div>
+              <div className="card-actions" style={{ flexWrap: "wrap" }}>
+                {m.planId != null && (
+                  <button
+                    className="btn primary sm"
+                    onClick={() => pedirPostar(m)}
+                    disabled={postando === m.planId}
+                    title="Publica este story imediatamente"
+                  >
+                    <Play size={13} /> {postando === m.planId ? "Publicando…" : "Postar agora"}
+                  </button>
+                )}
+                <button className="btn sm" onClick={() => setEditModelo(i)}>
+                  <Pencil size={13} /> Editar
+                </button>
+                <button className="btn danger sm" onClick={() => removerModelo(i)}>
+                  <Trash2 size={13} /> Excluir
+                </button>
+              </div>
+            </div>
+          ))}
+          <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+            <button className="btn sm" onClick={() => setModelos((prev) => [...prev, novoModelo()])}>
+              <Plus size={14} /> Novo modelo
+            </button>
+            <div className="checkrow" style={{ gap: 8, alignItems: "center" }}>
+              {msg && <span className="hint">{msg}</span>}
+              <button className="btn primary" onClick={salvar} disabled={saving}>
+                <Save size={14} /> {saving ? "Salvando…" : "Salvar stories"}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {editModelo !== null && modelos[editModelo] && (
