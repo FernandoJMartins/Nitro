@@ -668,6 +668,62 @@ const STATUS_BADGE: Record<string, string> = {
   erro: "🔴 Erro",
 };
 
+function VerificationModal({
+  account,
+  onClose,
+  onConfirm,
+}: {
+  account: PubAccount;
+  onClose: () => void;
+  onConfirm: (codigo: string) => Promise<void>;
+}) {
+  const [codigo, setCodigo] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function enviar() {
+    if (!codigo.trim() || enviando) return;
+    setEnviando(true);
+    setErro(null);
+    try {
+      await onConfirm(codigo.trim());
+      // sucesso: o pai fecha o modal
+    } catch (e) {
+      setErro(String(e));
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <Modal title={`Verificação de login — @${account.username}`} onClose={onClose}>
+      <p className="hint" style={{ marginTop: 0 }}>
+        O Instagram pediu uma verificação extra para <strong>@{account.username}</strong>. Confira o
+        código enviado por <strong>SMS, e-mail ou app autenticador</strong> e cole abaixo.
+      </p>
+      {erro && <div className="error">⚠️ {erro}</div>}
+      <label className="field">
+        Código de verificação
+        <input
+          value={codigo}
+          onChange={(e) => setCodigo(e.target.value)}
+          placeholder="Ex.: 123456"
+          autoFocus
+          autoComplete="one-time-code"
+          onKeyDown={(e) => e.key === "Enter" && enviar()}
+        />
+      </label>
+      <div className="modal-actions">
+        <button type="button" className="btn ghost" onClick={onClose}>
+          Cancelar
+        </button>
+        <button type="button" className="btn primary" disabled={!codigo.trim() || enviando} onClick={enviar}>
+          {enviando ? "Verificando…" : "Enviar código"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function DefaultsManager({ onChange }: { onChange: () => void }) {
   const [d, setD] = useState<PublishingDefaults | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -818,6 +874,7 @@ export default function Accounts() {
   const [error, setError] = useState<string | null>(null);
   const [formFor, setFormFor] = useState<PubAccount | "new" | null>(null);
   const [toDelete, setToDelete] = useState<PubAccount | null>(null);
+  const [verifPara, setVerifPara] = useState<PubAccount | null>(null);
   const [connecting, setConnecting] = useState<number | null>(null);
   const [verifying, setVerifying] = useState<number | null>(null);
 
@@ -854,18 +911,9 @@ export default function Accounts() {
       refreshAll();
     } catch (e) {
       const msg = String(e);
-      // 2FA/desafio: pede o código de verificação e tenta de novo (login real)
+      // 2FA/desafio: abre o modal de código de verificação e tenta de novo (login real)
       if (/challenge|twofactor|two-factor|verifica|2fa|recaptcha/i.test(msg)) {
-        const codigo = window.prompt(`@${a.username} pediu verificação. Código (SMS/e-mail/app):`);
-        if (codigo?.trim()) {
-          try {
-            await connectAccount(a.id, codigo.trim());
-            setError(null);
-            refreshAll();
-          } catch (e2) {
-            setError(String(e2));
-          }
-        }
+        setVerifPara(a);
       } else {
         setError(msg);
       }
@@ -873,6 +921,14 @@ export default function Accounts() {
     } finally {
       setConnecting(null);
     }
+  }
+
+  async function confirmarCodigo(codigo: string) {
+    if (!verifPara) return;
+    await connectAccount(verifPara.id, codigo); // erro rejeita e o modal mostra
+    setVerifPara(null);
+    setError(null);
+    refreshAll();
   }
 
   async function verificar(a: PubAccount) {
@@ -1000,6 +1056,13 @@ export default function Accounts() {
             });
           }}
           onClose={() => setToDelete(null)}
+        />
+      )}
+      {verifPara && (
+        <VerificationModal
+          account={verifPara}
+          onClose={() => setVerifPara(null)}
+          onConfirm={confirmarCodigo}
         />
       )}
     </>
