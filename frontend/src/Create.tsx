@@ -235,6 +235,154 @@ function FontSizeControl({ value, onChange }: { value: number; onChange: (v: num
 type Pos = { x: number; y: number };
 type Size = { w: number; h: number };
 
+// ---- Distorção de texto estilo "Fisheye" (Instagram Edits, opcional) ----
+type FisheyeId = "fisheye" | "curve" | "bulge" | "warp" | "wave" | "stretch";
+
+const FISHEYE_OPTIONS: { id: FisheyeId; label: string }[] = [
+  { id: "fisheye", label: "Fisheye" },
+  { id: "curve", label: "Curve" },
+  { id: "bulge", label: "Bulge" },
+  { id: "warp", label: "Warp" },
+  { id: "wave", label: "Wave" },
+  { id: "stretch", label: "Stretch" },
+];
+
+// MESMOS valores do backend (TEXT_FISHEYE_PRESETS em video.py). O preview renderiza
+// o texto num canvas e aplica EXATAMENTE as mesmas fórmulas do render/export.
+interface FisheyeCfg {
+  kx: number; sx: number; sy: number; cy: number; vs: number; vb: number;
+  wave: number; wave_cycles: number; wx: number; wx_cycles: number; jitter: number;
+}
+const FISHEYE_PRESETS: Record<FisheyeId, FisheyeCfg> = {
+  fisheye: { kx: 0.28, sx: 1.0, sy: 1.05, cy: 0.18, vs: 0.0, vb: 0.22, wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
+  curve:   { kx: 0.0,  sx: 1.0, sy: 1.05, cy: 0.26, vs: 0.0, vb: 0.0,  wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
+  bulge:   { kx: 0.18, sx: 1.0, sy: 1.0,  cy: 0.0,  vs: 0.0, vb: 0.35, wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
+  warp:    { kx: 0.1,  sx: 1.0, sy: 1.0,  cy: 0.06, vs: 0.0, vb: 0.0,  wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.06 },
+  wave:    { kx: 0.0,  sx: 1.0, sy: 1.0,  cy: 0.0,  vs: 0.0, vb: 0.0,  wave: 0.16, wave_cycles: 1.6, wx: 0.008, wx_cycles: 1.5, jitter: 0.0 },
+  stretch: { kx: 0.0,  sx: 0.62, sy: 1.45, cy: 0.0, vs: 0.0, vb: 0.0, wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
+};
+
+// ============ renderizador em canvas (mesma transformação do backend) ============
+const SS = 2; // supersampling — igual ao backend (video.py)
+
+function makeCanvas(w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  return c;
+}
+
+function scaleCanvas(src: HTMLCanvasElement, w: number, h: number): HTMLCanvasElement {
+  const out = makeCanvas(w, h);
+  const ctx = out.getContext("2d")!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, out.width, out.height);
+  return out;
+}
+
+function downscaleCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const out = makeCanvas(src.width / SS, src.height / SS);
+  const ctx = out.getContext("2d")!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, out.width, out.height);
+  return out;
+}
+
+function drawTextCanvas(text: string, family: string, sizePx: number): HTMLCanvasElement {
+  const probe = makeCanvas(8, 8);
+  const pctx = probe.getContext("2d")!;
+  pctx.font = `800 ${sizePx}px ${family}`;
+  const m = pctx.measureText(text);
+  const asc = m.actualBoundingBoxAscent ?? sizePx * 0.95;
+  const desc = m.actualBoundingBoxDescent ?? sizePx * 0.25;
+  const pad = 4;
+  const c = makeCanvas(Math.ceil(m.width) + pad * 2, Math.ceil(asc + desc) + pad * 2);
+  const ctx = c.getContext("2d")!;
+  ctx.font = `800 ${sizePx}px ${family}`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(1, 3 * (sizePx / 64)); // STROKE do backend proporcional ao tamanho
+  ctx.strokeStyle = "rgba(0,0,0,0.9)";
+  ctx.strokeText(text, pad, pad);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(text, pad, pad);
+  return c;
+}
+
+// réplica exata de _apply_fisheye (video.py): remapeamento NÃO-LINEAR por coluna
+function fisheyePassCanvas(src: HTMLCanvasElement, cfg: FisheyeCfg): HTMLCanvasElement {
+  const w0 = src.width, h0 = src.height;
+  const W = Math.max(1, w0 * SS), H = Math.max(1, h0 * SS);
+  const big = scaleCanvas(src, W, H);
+  const out_w = Math.max(1, Math.round(w0 * cfg.sx * SS * (1 + cfg.kx)));
+  const out_h = Math.max(1, Math.round(h0 * cfg.sy * SS));
+  const maxVs = 1 + Math.max(cfg.vs, cfg.vb);
+  const maxDisp = (Math.abs(cfg.cy) + Math.abs(cfg.wave) + cfg.jitter) * out_h;
+  const canvasH = Math.max(1, Math.round(out_h * maxVs)) + 2 * (Math.max(1, Math.round(maxDisp)) + SS);
+  const out = makeCanvas(out_w, canvasH);
+  const ctx = out.getContext("2d")!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  let walk = 0;
+  let seed = 11; // jitter DETERMINÍSTICO (estável entre renders do preview)
+  // LCG com mul/inc escolhidos para o produto ficar < 2^53 (exato em double)
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+  for (let x = 0; x < out_w; x++) {
+    const u = (x / Math.max(1, out_w - 1)) * 2 - 1;
+    let us = (u * (1 + cfg.kx * u * u)) / (1 + cfg.kx) + cfg.wx * Math.sin(cfg.wx_cycles * Math.PI * u);
+    us = Math.max(-1, Math.min(1, us));
+    const xs = ((us + 1) / 2) * (W - 1);
+    let vscale = 1 - cfg.vs * u * u + cfg.vb * (1 - u * u);
+    vscale = Math.max(0.1, Math.min(2, vscale));
+    const colH = Math.max(1, Math.round(out_h * vscale));
+    let disp = cfg.cy * out_h * u * u + cfg.wave * out_h * Math.sin(cfg.wave_cycles * Math.PI * u);
+    if (cfg.jitter) {
+      walk = Math.max(-1, Math.min(1, walk + (rnd() * 0.8 - 0.4)));
+      disp += walk * cfg.jitter * out_h;
+    }
+    const yTop = Math.round(canvasH / 2 + disp - colH / 2);
+    ctx.drawImage(big, xs, 0, 1, H, x, yTop, 1, colH);
+  }
+  return downscaleCanvas(out);
+}
+
+// Preview da "Distorção de texto": canvas com o MESMO remapeamento do backend
+function DistortedTextCanvas({
+  text,
+  fontCss,
+  fontSize,
+  fisheye,
+}: {
+  text: string;
+  fontCss: string;
+  fontSize: number;
+  fisheye: FisheyeId;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [css, setCss] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const sizePx = 13 * (fontSize / 64);
+    let cur = drawTextCanvas(text, fontCss, sizePx);
+    cur = fisheyePassCanvas(cur, FISHEYE_PRESETS[fisheye]);
+    const cv = ref.current;
+    if (cv) {
+      cv.width = cur.width;
+      cv.height = cur.height;
+      cv.getContext("2d")?.drawImage(cur, 0, 0);
+    }
+    setCss({ w: Math.round(cur.width / SS), h: Math.round(cur.height / SS) });
+  }, [text, fontCss, fontSize, fisheye]);
+
+  return <canvas ref={ref} className="dist-canvas" style={{ width: `${css.w}px`, height: `${css.h}px` }} />;
+}
+
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const SNAP = 0.025; // distância (fração) para "grudar" no centro
 const CENTERED = 0.004; // tolerância para considerar centralizado
@@ -271,6 +419,7 @@ function PreviewCanvas({
   ovPos,
   setOvPos,
   ovScale,
+  fisheye,
 }: {
   bg: Media | undefined;
   sampleText: string;
@@ -284,6 +433,7 @@ function PreviewCanvas({
   ovPos: Pos;
   setOvPos: (p: Pos) => void;
   ovScale: number;
+  fisheye: FisheyeId | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const textElRef = useRef<HTMLDivElement>(null);
@@ -413,11 +563,15 @@ function PreviewCanvas({
         {hasText && (
           <div
             ref={textElRef}
-            className="drag-el txt"
+            className={fisheye ? "drag-el txt distorted" : "drag-el txt"}
             style={{ left: `${textPos.x * 100}%`, top: `${textPos.y * 100}%` }}
             onPointerDown={start("text")}
           >
-            <span style={{ fontFamily: fontCss, fontSize: `${13 * (fontSize / 64)}px` }}>{sampleText}</span>
+            {fisheye ? (
+              <DistortedTextCanvas text={sampleText} fontCss={fontCss} fontSize={fontSize} fisheye={fisheye} />
+            ) : (
+              <span style={{ fontFamily: fontCss, fontSize: `${13 * (fontSize / 64)}px` }}>{sampleText}</span>
+            )}
           </div>
         )}
       </div>
@@ -488,6 +642,9 @@ export default function Create() {
   const [fsTexto, setFsTexto] = useState(64);
   const [useIaTexto, setUseIaTexto] = useState(false);
   const [legendaIa, setLegendaIa] = useState(false);
+  // Distorção de texto estilo "Fisheye" (Instagram Edits, opcional)
+  const [fisheyeOn, setFisheyeOn] = useState(false);
+  const [fisheyePreset, setFisheyePreset] = useState<FisheyeId>("fisheye");
 
   const [job, setJob] = useState<Job | null>(null);
   const [results, setResults] = useState<GeneratedVideo[]>([]);
@@ -620,6 +777,7 @@ export default function Create() {
         overlay_x: ovPos.x,
         overlay_y: ovPos.y,
         overlay_scale: ovScale,
+        text_fisheye: fisheyeOn ? fisheyePreset : null,
       });
       setJob(j);
       startPolling(j.id);
@@ -707,6 +865,7 @@ export default function Create() {
           ovPos={ovPos}
           setOvPos={setOvPos}
           ovScale={ovScale}
+          fisheye={fisheyeOn ? fisheyePreset : null}
         />
 
       <div className="form create-form-col">
@@ -752,6 +911,29 @@ export default function Create() {
           </select>
           <div className="hint">Para adicionar fontes (ex.: um .ttf que você tenha), solte o arquivo em <code>storage/fonts</code>.</div>
         </label>
+
+        <div className="field">
+          <label className="checkrow">
+            <input type="checkbox" checked={fisheyeOn} onChange={(e) => setFisheyeOn(e.target.checked)} />
+            <span>Distorção de texto (Fisheye)</span>
+          </label>
+          {fisheyeOn && (
+            <label className="field">
+              <span>Preset de distorção</span>
+              <select value={fisheyePreset} onChange={(e) => setFisheyePreset(e.target.value as FisheyeId)}>
+                {FISHEYE_OPTIONS.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <div className="hint">
+                Deformação não-linear do texto renderizado (estilo Instagram Edits): o centro fica expandido e
+                as pontas comprimidas/curvadas. O preview mostra exatamente a mesma transformação do vídeo.
+              </div>
+            </label>
+          )}
+        </div>
 
         <label className="field checkrow">
           <input type="checkbox" checked={useIaTexto} onChange={(e) => setUseIaTexto(e.target.checked)} />

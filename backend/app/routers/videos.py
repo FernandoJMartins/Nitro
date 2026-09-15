@@ -152,6 +152,19 @@ def generate_bulk(
     if invalidos:
         raise HTTPException(status_code=400, detail=f"Tipos de vídeo inválidos: {invalidos}")
 
+    # preset de distorção estilo "Fisheye" (Instagram Edits) — opcional e validado
+    fisheye_preset = None
+    if body.text_fisheye:
+        fisheye_preset = body.text_fisheye.strip().lower()
+        if fisheye_preset not in video.TEXT_FISHEYE_PRESETS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Preset de distorção Fisheye inválido: {fisheye_preset}. "
+                    f"Use um de: {', '.join(sorted(video.TEXT_FISHEYE_PRESETS))}"
+                ),
+            )
+
     # tipo de frase efetivo por tipo de vídeo (o do tipo, ou o global como fallback)
     text_types = {k: v for k, v in body.text_types.items() if v}
 
@@ -226,6 +239,7 @@ def generate_bulk(
         overlay_x=_clamp01(body.overlay_x),
         overlay_y=_clamp01(body.overlay_y),
         overlay_scale=max(0.3, min(2.5, body.overlay_scale)),
+        text_fisheye=fisheye_preset,
     )
     background.add_task(bulk.run_bulk_job, job.id, cfg)
     return job

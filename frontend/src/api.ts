@@ -268,6 +268,7 @@ export interface BulkBody {
   overlay_x: number;
   overlay_y: number;
   overlay_scale: number; // multiplicador de tamanho da imagem estática
+  text_fisheye: string | null;                    // preset "fisheye"/"curve"/... ou null (sem distorção)
 }
 
 export interface Font {

@@ -167,6 +167,11 @@ class BulkRequest(BaseModel):
     overlay_y: float = 0.22
     overlay_scale: float = 1.0  # multiplicador de tamanho da imagem estática
 
+    # ---- Distorção de texto estilo "Fisheye" (Instagram Edits, opcional) ----
+    # preset: "fisheye" | "curve" | "bulge" | "warp" | "wave" | "stretch"
+    # None/ausente = sem distorção (comportamento antigo — vídeos existentes não mudam)
+    text_fisheye: str | None = None
+
     # compatibilidade: versão antiga mandava só use_flash (equivale a video_types=["pause"])
     use_flash: bool = False
 

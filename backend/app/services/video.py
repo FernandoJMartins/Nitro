@@ -17,6 +17,8 @@ sistema) e qualquer .ttf/.otf solto em ``STORAGE_DIR/fonts`` também vira opçã
 """
 from __future__ import annotations
 
+import math
+import random
 import re
 import shutil
 import subprocess
@@ -304,6 +306,101 @@ def _render_text_seg(seg: str, font: ImageFont.FreeTypeFont) -> Image.Image:
     return img
 
 
+# ---- Distorção de texto estilo "Fisheye" (Instagram Edits) ----
+# Remapeamento NÃO-LINEAR do raster final do texto, por coluna. u ∈ [-1, 1] é a
+# posição horizontal normalizada (0 = centro). Parâmetros (o preview em canvas do
+# frontend usa EXATAMENTE os mesmos valores):
+#   kx   -> compressão/expansão não-linear horizontal (u_s = u*(1+kx*u²)/(1+kx)):
+#           centro visualmente expandido, extremidades comprimidas (fisheye);
+#   sx   -> escala horizontal linear (Stretch);  sy -> escala vertical constante;
+#   cy   -> curvatura das pontas em fração da altura (positivo: pontas descem);
+#   vs   -> encolhimento vertical das pontas (u²); vb -> inchaço vertical do centro;
+#   wave -> amplitude de onda senoidal vertical; wave_cycles -> ciclos da onda;
+#   wx   -> ondulação horizontal; wx_cycles -> ciclos da ondulação;
+#   jitter -> irregularidade aleatória por coluna (passeio aleatório).
+TEXT_FISHEYE_PRESETS: dict[str, dict] = {
+    "fisheye": {"kx": 0.28, "sx": 1.0,  "sy": 1.05, "cy": 0.18,  "vs": 0.0,  "vb": 0.22,
+                "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.0},
+    "curve":   {"kx": 0.0,  "sx": 1.0,  "sy": 1.05, "cy": 0.26,  "vs": 0.0,  "vb": 0.0,
+                "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.0},
+    "bulge":   {"kx": 0.18, "sx": 1.0,  "sy": 1.0,  "cy": 0.0,   "vs": 0.0,  "vb": 0.35,
+                "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.0},
+    "warp":    {"kx": 0.10, "sx": 1.0,  "sy": 1.0,  "cy": 0.06,  "vs": 0.0,  "vb": 0.0,
+                "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.06},
+    "wave":    {"kx": 0.0,  "sx": 1.0,  "sy": 1.0,  "cy": 0.0,   "vs": 0.0,  "vb": 0.0,
+                "wave": 0.16, "wave_cycles": 1.6, "wx": 0.008, "wx_cycles": 1.5, "jitter": 0.0},
+    "stretch": {"kx": 0.0,  "sx": 0.62, "sy": 1.45, "cy": 0.0,   "vs": 0.0,  "vb": 0.0,
+                "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.0},
+}
+
+
+def _apply_fisheye(img: Image.Image, cfg: dict) -> Image.Image:
+    """Deformação NÃO-LINEAR estilo "Fisheye" (Instagram Edits) numa linha de texto.
+
+    Remapeia o raster por coluna: cada coluna de destino amostra uma coluna da
+    fonte em posição horizontal não-linear (``u_s = u*(1+kx*u²)/(1+kx)`` → centro
+    visualmente expandido, pontas comprimidas), com escala vertical variável
+    (``vs`` encolhe as pontas, ``vb`` incha o centro), curvatura das pontas
+    (``cy``), onda senoidal (``wave``) e irregularidade por coluna (``jitter``).
+    Trabalha em 2x (supersampling) e devolve uma NOVA imagem. O preview em canvas
+    do frontend replica EXATAMENTE estas mesmas fórmulas (mesmos parâmetros,
+    mesma ordem de arredondamento).
+    """
+    SS = 2
+    w0, h0 = img.size
+    W, H = w0 * SS, h0 * SS
+    big = img.resize((W, H), Image.LANCZOS)
+
+    kx = float(cfg.get("kx") or 0.0)
+    sx = float(cfg.get("sx") or 1.0)
+    sy = float(cfg.get("sy") or 1.0)
+    cy = float(cfg.get("cy") or 0.0)
+    vs = float(cfg.get("vs") or 0.0)
+    vb = float(cfg.get("vb") or 0.0)
+    wave = float(cfg.get("wave") or 0.0)
+    wc = float(cfg.get("wave_cycles") or 1.0)
+    wx = float(cfg.get("wx") or 0.0)
+    wxc = float(cfg.get("wx_cycles") or 1.0)
+    jitter = float(cfg.get("jitter") or 0.0)
+
+    out_w = max(1, round(w0 * sx * SS * (1.0 + kx)))
+    out_h = max(1, round(h0 * sy * SS))
+    max_vs = 1.0 + max(vs, vb)
+    max_disp = (abs(cy) + abs(wave) + jitter) * out_h
+    canvas_h = max(1, round(out_h * max_vs)) + 2 * (max(1, round(max_disp)) + SS)
+    out = Image.new("RGBA", (out_w, canvas_h), (0, 0, 0, 0))
+
+    rng = random.Random()
+    walk = 0.0
+    for x in range(out_w):
+        u = (x / max(1, out_w - 1)) * 2.0 - 1.0
+        us = u * (1.0 + kx * u * u) / (1.0 + kx) + wx * math.sin(wxc * math.pi * u)
+        us = max(-1.0, min(1.0, us))
+        xs = (us + 1.0) / 2.0 * (W - 1)
+        x0 = max(0, min(W - 2, int(xs)))
+        fx = xs - x0
+        vscale = max(0.1, min(2.0, 1.0 - vs * u * u + vb * (1.0 - u * u)))
+        col_h = max(1, round(out_h * vscale))
+        disp = cy * out_h * u * u + wave * out_h * math.sin(wc * math.pi * u)
+        if jitter:
+            walk = max(-1.0, min(1.0, walk + rng.uniform(-0.4, 0.4)))
+            disp += walk * jitter * out_h
+        y_top = round(canvas_h / 2.0 + disp - col_h / 2.0)
+        colA = big.crop((x0, 0, x0 + 1, H)).resize((1, col_h), Image.LANCZOS)
+        if fx <= 0.001:
+            col = colA
+        elif fx >= 0.999:
+            col = big.crop((x0 + 1, 0, x0 + 2, H)).resize((1, col_h), Image.LANCZOS)
+        else:
+            colB = big.crop((x0 + 1, 0, x0 + 2, H)).resize((1, col_h), Image.LANCZOS)
+            col = Image.blend(colA, colB, fx)
+        out.paste(col, (x, y_top))
+
+    final_w = max(1, round(out.width / SS))
+    final_h = max(1, round(out.height / SS))
+    return out.resize((final_w, final_h), Image.LANCZOS)
+
+
 def _render_line_png(
     line: str, text_font_path: str, out_dir: Path, font_size: int = DEFAULT_FONTSIZE
 ) -> tuple[Path, int, int] | None:
@@ -353,6 +450,7 @@ def _draw_text_chain(
     text_y: float = 0.72,
     font_size: int = DEFAULT_FONTSIZE,
     prefix: str = "txt",
+    fisheye: str | None = None,
 ) -> str:
     """Desenha o texto linha a linha e devolve o label final do vídeo.
 
@@ -360,26 +458,55 @@ def _draw_text_chain(
     PNG transparente, sobreposto via ``movie``. O bloco é centrado no ponto
     (text_x, text_y) — frações da tela [0..1] definidas no preview. Se o Pillow falhar
     numa linha, cai no ``drawtext`` do ffmpeg (sem emoji, mas sem quebrar).
+
+    ``fisheye`` é o preset OPCIONAL estilo Instagram Edits ("Distorção de texto"):
+    cada linha PNG é deformada antes de entrar no vídeo. Sem preset (None) o
+    comportamento é EXATAMENTE o de antes — vídeos existentes não mudam.
     """
     if not text:
         return cur
     raw_font = font.replace("\\:", ":")  # o `font` chega escapado p/ o ffmpeg
     lines = [ln for ln in wrap_text(text, wrap_width).split("\n") if ln.strip()]
-    line_h = round(font_size * LINE_H_RATIO)  # espaçamento acompanha o tamanho escolhido
+
+    fisheye_cfg = TEXT_FISHEYE_PRESETS.get(fisheye) if fisheye else None
+
+    # 1ª passada: renderiza (e distorce) todas as linhas para calcular o espaçamento
+    # vertical que acomode as linhas deformadas sem sobreposição.
+    rendered: list[tuple[str, Path | None, int, int]] = []
+    for line in lines:
+        line_png = _render_line_png(line, raw_font, out_dir, font_size)
+        if line_png is None:
+            rendered.append(("fallback", None, 0, 0))
+            continue
+        path, pw, ph = line_png
+        if fisheye_cfg is not None:
+            with Image.open(path) as base:
+                out_img = _apply_fisheye(base, fisheye_cfg)
+            dpath = out_dir / f".line_{uuid.uuid4().hex}.png"
+            out_img.save(dpath)
+            path.unlink(missing_ok=True)
+            path, pw, ph = dpath, out_img.width, out_img.height
+        rendered.append(("png", path, pw, ph))
+
+    sy_eff = fisheye_cfg.get("sy", 1.0) if fisheye_cfg is not None else 1.0
+    line_h = round(font_size * LINE_H_RATIO * max(1.0, sy_eff))
+    if fisheye_cfg is not None:
+        tallest = max((ph for kind, _, _, ph in rendered if kind == "png"), default=0)
+        gap = round(font_size * LINE_H_RATIO * 0.15)  # respiro entre linhas deformadas
+        line_h = max(line_h, tallest + gap)
+
     cx = int(text_x * width)  # centro horizontal em px
     y0 = height * text_y - (len(lines) * line_h) / 2  # bloco centrado no ponto escolhido
-    for i, line in enumerate(lines):
+    for i, (kind, path, _pw, ph) in enumerate(rendered):
         lbl = f"{prefix}{i}"
-        rendered = _render_line_png(line, raw_font, out_dir, font_size)
-        if rendered is not None:
-            png, _pw, ph = rendered
-            temp_files.append(png)
+        if kind == "png":
+            temp_files.append(path)
             y = int(y0 + i * line_h + (line_h - ph) / 2)
-            parts.append(f"movie='{_esc_filter_path(png.as_posix())}'[{lbl}src]")
+            parts.append(f"movie='{_esc_filter_path(path.as_posix())}'[{lbl}src]")
             parts.append(f"[{cur}][{lbl}src]overlay=x={cx}-w/2:y={y}[{lbl}]")
         else:  # fallback: drawtext (sem emoji)
             lf = out_dir / f".txt_{uuid.uuid4().hex}.txt"
-            lf.write_bytes(line.encode("utf-8"))
+            lf.write_bytes(lines[i].encode("utf-8"))
             temp_files.append(lf)
             y = int(y0 + i * line_h)
             parts.append(
@@ -430,6 +557,8 @@ def build_video(
     height: int = 1920,
     text_file: Path | None = None,
     wrap_width: int = 25,
+    # distorção OPCIONAL estilo "Fisheye" (Instagram Edits): preset ou None
+    text_fisheye: str | None = None,
 ) -> None:
     """Gera um .mp4 aplicando (no máximo) um tipo de vídeo especial.
 
@@ -483,7 +612,8 @@ def build_video(
         )
         a = _draw_text_chain(parts, "a0", text, font=font, width=width, height=height,
                              wrap_width=wrap_width, out_dir=out_dir, temp_files=temp_files,
-                             text_x=text_x, text_y=text_y, font_size=font_size, prefix="at")
+                             text_x=text_x, text_y=text_y, font_size=font_size, prefix="at",
+                             fisheye=text_fisheye)
         # segmento B: o clipe final, cortado na duração dele.
         # SEM texto: quando o clipe final começa, o texto principal some.
         parts.append(
@@ -571,7 +701,8 @@ def build_video(
     # texto (por cima da base/imagem), no ponto (text_x, text_y)
     cur = _draw_text_chain(parts, cur, text, font=font, width=width, height=height,
                            wrap_width=wrap_width, out_dir=out_dir, temp_files=temp_files,
-                           text_x=text_x, text_y=text_y, font_size=font_size, prefix="txt")
+                           text_x=text_x, text_y=text_y, font_size=font_size, prefix="txt",
+                           fisheye=text_fisheye)
 
     # flash hot subliminar no meio
     if hot_idx is not None:

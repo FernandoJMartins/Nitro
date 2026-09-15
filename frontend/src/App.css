@@ -883,6 +883,11 @@ code {
   text-shadow: 0 0 3px #000, 1px 1px 2px #000, -1px -1px 2px #000;
   word-break: break-word;
 }
+/* preview da "Distorção de texto" (Fisheye): o div encolhe para o tamanho do
+   canvas (fit-content) para o centro do div coincidir com o centro do texto —
+   o canvas é bloco e não seria centralizado por text-align */
+.drag-el.txt.distorted { width: fit-content; }
+.drag-el.txt .dist-canvas { display: block; pointer-events: none; }
 .drag-el.ov { width: 55%; }
 .drag-el.ov img {
   width: 100%; height: auto; display: block; border-radius: 4px;

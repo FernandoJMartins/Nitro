@@ -53,6 +53,8 @@ class BulkConfig:
     overlay_scale: float = 1.0
     # tamanho da fonte (px) por tipo de vídeo (ex.: {"pause": 64, "imagem": 80})
     font_sizes: dict[str, int] = field(default_factory=dict)
+    # distorção OPCIONAL estilo "Fisheye" (Instagram Edits): preset ou None (sem mudança)
+    text_fisheye: str | None = None
 
 
 def _eff_phrase_type(cfg: BulkConfig, modo: str | None) -> int | None:
@@ -175,6 +177,7 @@ def run_bulk_job(job_id: int, cfg: BulkConfig) -> None:
                     font_size=font_size,
                     text_x=cfg.text_x,
                     text_y=cfg.text_y,
+                    text_fisheye=cfg.text_fisheye,
                     **kwargs,
                 )
 
