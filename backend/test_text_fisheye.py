@@ -53,6 +53,12 @@ def test_stretch_keeps_exact_dims():
     assert out.height == round(H * 1.45), (out.height, round(H * 1.45))
 
 
+def test_fisheye_preserves_total_width():
+    # com o mesmo tamanho de fonte, o fisheye deforma mas NÃO infla a largura total
+    out = _apply_fisheye(make_gradient(), TEXT_FISHEYE_PRESETS["fisheye"])
+    assert out.width == W, (out.width, W)
+
+
 def test_fisheye_center_expanded_edges_compressed():
     # gradiente suave: o perfil de saída p(x) ≈ 220 * x_fonte/W, então dp/dx mede
     # a magnificação — pequeno no centro (expandido), grande nas pontas (comprimido).

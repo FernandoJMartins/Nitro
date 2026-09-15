@@ -254,8 +254,8 @@ interface FisheyeCfg {
   wave: number; wave_cycles: number; wx: number; wx_cycles: number; jitter: number;
 }
 const FISHEYE_PRESETS: Record<FisheyeId, FisheyeCfg> = {
-  fisheye: { kx: 0.28, sx: 1.0, sy: 1.05, cy: 0.18, vs: 0.0, vb: 0.22, wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
-  curve:   { kx: 0.0,  sx: 1.0, sy: 1.05, cy: 0.26, vs: 0.0, vb: 0.0,  wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
+  fisheye: { kx: 0.28, sx: 1.0, sy: 1.0,  cy: 0.18, vs: 0.0, vb: 0.2,  wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
+  curve:   { kx: 0.0,  sx: 1.0, sy: 1.0,  cy: 0.26, vs: 0.0, vb: 0.0,  wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
   bulge:   { kx: 0.18, sx: 1.0, sy: 1.0,  cy: 0.0,  vs: 0.0, vb: 0.35, wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.0 },
   warp:    { kx: 0.1,  sx: 1.0, sy: 1.0,  cy: 0.06, vs: 0.0, vb: 0.0,  wave: 0.0, wave_cycles: 1.0, wx: 0.0, wx_cycles: 1.0, jitter: 0.06 },
   wave:    { kx: 0.0,  sx: 1.0, sy: 1.0,  cy: 0.0,  vs: 0.0, vb: 0.0,  wave: 0.16, wave_cycles: 1.6, wx: 0.008, wx_cycles: 1.5, jitter: 0.0 },
@@ -317,7 +317,7 @@ function fisheyePassCanvas(src: HTMLCanvasElement, cfg: FisheyeCfg): HTMLCanvasE
   const w0 = src.width, h0 = src.height;
   const W = Math.max(1, w0 * SS), H = Math.max(1, h0 * SS);
   const big = scaleCanvas(src, W, H);
-  const out_w = Math.max(1, Math.round(w0 * cfg.sx * SS * (1 + cfg.kx)));
+  const out_w = Math.max(1, Math.round(w0 * cfg.sx * SS));
   const out_h = Math.max(1, Math.round(h0 * cfg.sy * SS));
   const maxVs = 1 + Math.max(cfg.vs, cfg.vb);
   const maxDisp = (Math.abs(cfg.cy) + Math.abs(cfg.wave) + cfg.jitter) * out_h;
@@ -335,7 +335,7 @@ function fisheyePassCanvas(src: HTMLCanvasElement, cfg: FisheyeCfg): HTMLCanvasE
   };
   for (let x = 0; x < out_w; x++) {
     const u = (x / Math.max(1, out_w - 1)) * 2 - 1;
-    let us = (u * (1 + cfg.kx * u * u)) / (1 + cfg.kx) + cfg.wx * Math.sin(cfg.wx_cycles * Math.PI * u);
+    let us = u * (1 - cfg.kx + cfg.kx * u * u) + cfg.wx * Math.sin(cfg.wx_cycles * Math.PI * u);
     us = Math.max(-1, Math.min(1, us));
     const xs = ((us + 1) / 2) * (W - 1);
     let vscale = 1 - cfg.vs * u * u + cfg.vb * (1 - u * u);
@@ -369,15 +369,20 @@ function DistortedTextCanvas({
 
   useEffect(() => {
     const sizePx = 13 * (fontSize / 64);
-    let cur = drawTextCanvas(text, fontCss, sizePx);
+    // Supersampling do texto (2x): os glifos são rasterizados MAIORES e reduzidos
+    // no final — mantém o texto nítido após o remapeamento do fisheye (rasterizar
+    // no tamanho exibido deixaria os contornos borrados).
+    const PREVIEW_SS = 2;
+    let cur = drawTextCanvas(text, fontCss, sizePx * PREVIEW_SS);
     cur = fisheyePassCanvas(cur, FISHEYE_PRESETS[fisheye]);
     const cv = ref.current;
     if (cv) {
+      // o resultado já está em PREVIEW_SS (2x o tamanho exibido) → backing nítido
       cv.width = cur.width;
       cv.height = cur.height;
       cv.getContext("2d")?.drawImage(cur, 0, 0);
     }
-    setCss({ w: Math.round(cur.width / SS), h: Math.round(cur.height / SS) });
+    setCss({ w: Math.round(cur.width / PREVIEW_SS), h: Math.round(cur.height / PREVIEW_SS) });
   }, [text, fontCss, fontSize, fisheye]);
 
   return <canvas ref={ref} className="dist-canvas" style={{ width: `${css.w}px`, height: `${css.h}px` }} />;

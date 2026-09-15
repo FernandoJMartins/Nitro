@@ -310,8 +310,9 @@ def _render_text_seg(seg: str, font: ImageFont.FreeTypeFont) -> Image.Image:
 # Remapeamento NÃO-LINEAR do raster final do texto, por coluna. u ∈ [-1, 1] é a
 # posição horizontal normalizada (0 = centro). Parâmetros (o preview em canvas do
 # frontend usa EXATAMENTE os mesmos valores):
-#   kx   -> compressão/expansão não-linear horizontal (u_s = u*(1+kx*u²)/(1+kx)):
-#           centro visualmente expandido, extremidades comprimidas (fisheye);
+#   kx   -> compressão/expansão não-linear horizontal (u_s = u*(1-kx+kx*u²)):
+#           centro visualmente expandido, extremidades comprimidas, LARGURA
+#           TOTAL PRESERVADA — o texto não fica maior, só deformado (fisheye);
 #   sx   -> escala horizontal linear (Stretch);  sy -> escala vertical constante;
 #   cy   -> curvatura das pontas em fração da altura (positivo: pontas descem);
 #   vs   -> encolhimento vertical das pontas (u²); vb -> inchaço vertical do centro;
@@ -319,9 +320,9 @@ def _render_text_seg(seg: str, font: ImageFont.FreeTypeFont) -> Image.Image:
 #   wx   -> ondulação horizontal; wx_cycles -> ciclos da ondulação;
 #   jitter -> irregularidade aleatória por coluna (passeio aleatório).
 TEXT_FISHEYE_PRESETS: dict[str, dict] = {
-    "fisheye": {"kx": 0.28, "sx": 1.0,  "sy": 1.05, "cy": 0.18,  "vs": 0.0,  "vb": 0.22,
+    "fisheye": {"kx": 0.28, "sx": 1.0,  "sy": 1.0,  "cy": 0.18,  "vs": 0.0,  "vb": 0.20,
                 "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.0},
-    "curve":   {"kx": 0.0,  "sx": 1.0,  "sy": 1.05, "cy": 0.26,  "vs": 0.0,  "vb": 0.0,
+    "curve":   {"kx": 0.0,  "sx": 1.0,  "sy": 1.0,  "cy": 0.26,  "vs": 0.0,  "vb": 0.0,
                 "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.0},
     "bulge":   {"kx": 0.18, "sx": 1.0,  "sy": 1.0,  "cy": 0.0,   "vs": 0.0,  "vb": 0.35,
                 "wave": 0.0, "wave_cycles": 1.0, "wx": 0.0,   "wx_cycles": 1.0, "jitter": 0.0},
@@ -338,8 +339,9 @@ def _apply_fisheye(img: Image.Image, cfg: dict) -> Image.Image:
     """Deformação NÃO-LINEAR estilo "Fisheye" (Instagram Edits) numa linha de texto.
 
     Remapeia o raster por coluna: cada coluna de destino amostra uma coluna da
-    fonte em posição horizontal não-linear (``u_s = u*(1+kx*u²)/(1+kx)`` → centro
-    visualmente expandido, pontas comprimidas), com escala vertical variável
+    fonte em posição horizontal não-linear (``u_s = u*(1-kx+kx*u²)`` → centro
+    visualmente expandido, pontas comprimidas, com a MESMA largura total do texto
+    original), com escala vertical variável
     (``vs`` encolhe as pontas, ``vb`` incha o centro), curvatura das pontas
     (``cy``), onda senoidal (``wave``) e irregularidade por coluna (``jitter``).
     Trabalha em 2x (supersampling) e devolve uma NOVA imagem. O preview em canvas
@@ -363,7 +365,7 @@ def _apply_fisheye(img: Image.Image, cfg: dict) -> Image.Image:
     wxc = float(cfg.get("wx_cycles") or 1.0)
     jitter = float(cfg.get("jitter") or 0.0)
 
-    out_w = max(1, round(w0 * sx * SS * (1.0 + kx)))
+    out_w = max(1, round(w0 * sx * SS))
     out_h = max(1, round(h0 * sy * SS))
     max_vs = 1.0 + max(vs, vb)
     max_disp = (abs(cy) + abs(wave) + jitter) * out_h
@@ -374,7 +376,7 @@ def _apply_fisheye(img: Image.Image, cfg: dict) -> Image.Image:
     walk = 0.0
     for x in range(out_w):
         u = (x / max(1, out_w - 1)) * 2.0 - 1.0
-        us = u * (1.0 + kx * u * u) / (1.0 + kx) + wx * math.sin(wxc * math.pi * u)
+        us = u * (1.0 - kx + kx * u * u) + wx * math.sin(wxc * math.pi * u)
         us = max(-1.0, min(1.0, us))
         xs = (us + 1.0) / 2.0 * (W - 1)
         x0 = max(0, min(W - 2, int(xs)))
