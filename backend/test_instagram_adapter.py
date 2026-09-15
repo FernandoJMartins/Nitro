@@ -515,7 +515,7 @@ def _com_instagrapi() -> bool:
         return False
 
 
-def _factory_legado(sucesso_na_versao=None, login_do_caa=None, erro_do_caa=None):
+def _factory_legado(sucesso_na_versao=None, login_do_caa=None, erro_do_caa=None, erro_do_legado=None):
     """Factory dos testes de login (roda só com instagrapi instalado): cria
     clientes REAIS (init offline) com `login` (fluxo CAA do fork 3.x) e
     `login_legacy` substituídos por fakes que decidem por versão de app — sem
@@ -544,6 +544,8 @@ def _factory_legado(sucesso_na_versao=None, login_do_caa=None, erro_do_caa=None)
             return login_do_caa(client, username, password)
 
         def _login_legado(username, password, **kwargs):
+            if erro_do_legado is not None:
+                raise erro_do_legado
             if client.device_settings.get("app_version") == sucesso_na_versao:
                 # o fork serializa self.authorization_data (get_settings) — é o que o adapter persiste
                 client.authorization_data = {"ds_user_id": "1", "user": username}
@@ -628,9 +630,69 @@ def test_login_caa_com_erro_de_conta_nao_tenta_o_legado():
     assert len(criados) == 2
 
 
+def test_login_caa_senha_errada_em_clienterror_generico_vira_senha_incorreta():
+    """Senha errada NO FLUXO REAL: o CAA/bloks do fork não levanta BadPassword —
+    devolve ClientError genérico com a mensagem real aninhada no payload (atributo
+    `result`). O adapter precisa reconhecer o conteúdo e mostrar "senha incorreta"
+    em vez de cair no legado e exibir a mensagem genérica de needs_upgrade."""
+    if not _com_instagrapi():
+        return
+    erro = ClientError("CAA login did not return a session")
+    erro.result = {
+        "layout": {
+            "bloks_payload": {
+                "action": '{"screens": ["The password you entered is incorrect. Please try again."]}'
+            }
+        }
+    }
+    factory, criados = _factory_legado(sucesso_na_versao=None, erro_do_caa=erro)
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except SessionExpiredError as exc:
+        assert "senha incorreta" in str(exc)
+        assert "needs_upgrade" not in str(exc)
+    assert len(criados) == 2  # inicial + CAA — as versões legadas não foram queimadas
+
+
+def test_login_legado_senha_incorreta_para_na_primeira_versao():
+    """O legado devolveu mensagem de senha errada: para na primeira versão com
+    "senha incorreta" — trocar de versão de app não conserta a senha."""
+    if not _com_instagrapi():
+        return
+    erro = UnknownError("The password you entered is incorrect. Please try again.")
+    factory, criados = _factory_legado(sucesso_na_versao=None, erro_do_legado=erro)
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except SessionExpiredError as exc:
+        assert "senha incorreta" in str(exc)
+    assert len(criados) == 2  # inicial + CAA — parou na 1ª tentativa legada
+
+
+def test_login_legado_unknown_error_sem_needs_upgrade_e_devolvido():
+    """UnknownError do legado por OUTRO motivo (não needs_upgrade) não é
+    engolido: a causa real chega ao operador em vez de virar a mensagem
+    genérica do fim do fluxo."""
+    if not _com_instagrapi():
+        return
+    erro = UnknownError("erro inesperado do endpoint legado")
+    factory, criados = _factory_legado(sucesso_na_versao=None, erro_do_legado=erro)
+    adapter = InstagramAdapter(client_factory=factory)
+    try:
+        adapter.login(_ctx())
+        raise AssertionError("deveria ter levantado")
+    except AdapterError as exc:
+        assert "erro inesperado do endpoint legado" in str(exc)
+        assert "needs_upgrade" not in str(exc)
+    assert len(criados) == 2
+
+
 def test_login_legado_todas_rejeitadas_erro_claro():
     """CAA genérico falhou e TODAS as versões legadas foram rejeitadas
-    (needs_upgrade) → erro claro para o operador."""
+    (needs_upgrade) → erro claro para o operador, incluindo a causa do CAA."""
     if not _com_instagrapi():
         return
     factory, criados = _factory_legado(sucesso_na_versao=None)
@@ -640,6 +702,7 @@ def test_login_legado_todas_rejeitadas_erro_claro():
         raise AssertionError("deveria ter levantado")
     except AdapterError as exc:
         assert "needs_upgrade" in str(exc)
+        assert "CAA login did not return a session" in str(exc)
     assert len(criados) == 5  # inicial + CAA + 3 clientes das versões seguintes
 
 

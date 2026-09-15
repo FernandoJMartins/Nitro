@@ -330,8 +330,96 @@ def _default_client_factory(proxy_url: str | None):
     return _ThrottleAwareClient(**kwargs)
 
 
+# Trechos de mensagem do Instagram que indicam senha/credencial errada. O fluxo
+# CAA/bloks do fork NÃO levanta BadPassword para senha errada: devolve um
+# ClientError genérico ("CAA login did not return a session") com o payload
+# bruto pendurado em atributos da exceção — a mensagem real ("The password you
+# entered is incorrect") só existe aninhada ali. Sem esse reconhecimento o
+# adapter caía no plano B legado (morto: needs_upgrade) e o operador via a
+# mensagem genérica do fim do fluxo em vez de "senha incorreta".
+_PASSWORD_HINTS = (
+    "password you entered is incorrect",
+    "password was incorrect",
+    "incorrect password",
+    "wrong password",
+    "double-check your password",
+    "check your password",
+    "bad_password",
+    "senha incorreta",
+    "senha inválida",
+    "senha errada",
+    "instagram rejected the login credentials",
+)
+
+
+def _texto_da_excecao(exc: Exception) -> str:
+    """Concatena os textos legíveis de uma exceção do transporte: a mensagem E
+    os atributos anexados (o fork pendura o payload bruto do CAA — ex. `result`
+    — como atributos da exceção). Ignora objetos HTTP (`response`, cookies crus)
+    e limita tamanho/profundidade para não varrer payloads gigantes."""
+    partes: list[str] = []
+    orcamento = 8000
+    visitados: set[int] = set()
+    ignorar = {"response", "raw_cookies"}
+
+    def coleta(valor, profundidade: int = 0) -> None:
+        nonlocal orcamento
+        if orcamento <= 0 or profundidade > 6:
+            return
+        if isinstance(valor, str):
+            texto = valor.strip()
+            if texto and len(texto) <= 2000:
+                partes.append(texto)
+                orcamento -= len(texto)
+            return
+        if isinstance(valor, (dict, list, tuple, set)):
+            if id(valor) in visitados:
+                return
+            visitados.add(id(valor))
+            itens = valor.items() if isinstance(valor, dict) else valor
+            for item in itens:
+                chave, v = item if isinstance(valor, dict) else (None, item)
+                if isinstance(chave, str) and chave in ignorar:
+                    continue
+                coleta(v, profundidade + 1)
+                if orcamento <= 0:
+                    return
+            return
+        if isinstance(valor, Exception):
+            coleta(str(valor), profundidade + 1)
+
+    coleta(str(exc))
+    try:
+        coleta(vars(exc))
+    except Exception:  # noqa: BLE001 — exceção sem __dict__ não é crítico
+        pass
+    return " ".join(partes)
+
+
+def _erro_de_senha(exc: Exception, etapa: str) -> SessionExpiredError | None:
+    """Reconhece erro de senha PELO CONTEÚDO da exceção (mensagem + atributos
+    anexados), além do nome — cobre o ClientError genérico do CAA/bloks que
+    carrega "The password you entered is incorrect" aninhado no payload."""
+    nome = type(exc).__name__
+    por_nome = nome in {"BadPassword", "BadCredentials"}
+    texto = _texto_da_excecao(exc).lower()
+    if not por_nome and not any(dica in texto for dica in _PASSWORD_HINTS):
+        return None
+    detalhe = f"{nome}: {exc}".strip() if por_nome else ""
+    if len(detalhe) > 220:
+        detalhe = detalhe[:220] + "…"
+    return SessionExpiredError(
+        f"senha incorreta ({etapa}): o Instagram recusou a senha desta conta. "
+        "Confira a senha cadastrada e tente novamente."
+        + (f" Detalhe do Instagram: {detalhe}" if detalhe else "")
+    )
+
+
 def _error_from_exception(exc: Exception, etapa: str) -> AdapterError:
     """Mapeia exceções do transporte para o contrato do núcleo (AdapterError x SessionExpiredError)."""
+    erro_senha = _erro_de_senha(exc, etapa)
+    if erro_senha is not None:
+        return erro_senha
     if type(exc).__name__ in _THROTTLE_NAMES:
         return ThrottledError(
             f"{etapa}: Instagram limitou as tentativas desta conta/IP (429 Too Many Requests). "
@@ -688,6 +776,7 @@ class InstagramAdapter(PlatformAdapter):
             # sem retry de desafio: aplica a fingerprint persistida da conta
             # (o desafio anterior já carrega o device correto dentro do blob).
             self._apply_fingerprint(caa, ctx.fingerprint)
+        caa_erro: Exception | None = None
         try:
             caa.login(ctx.account_username, ctx.account_password, **kwargs)
         except Exception as exc:  # noqa: BLE001 — mapeado por nome
@@ -709,6 +798,13 @@ class InstagramAdapter(PlatformAdapter):
                 raise erro from exc
             if nome in _SESSION_EXPIRED_NAMES:
                 raise _error_from_exception(exc, "login CAA") from exc
+            erro_senha = _erro_de_senha(exc, "login CAA")
+            if erro_senha is not None:
+                # Senha errada não se resolve no legado (morto: needs_upgrade) —
+                # devolve a causa real em vez de queimar as versões e exibir a
+                # mensagem genérica do fim do fluxo.
+                raise erro_senha from exc
+            caa_erro = exc
             logger.warning("login CAA falhou (%s): %s — tentando o login legado", nome, exc)
         else:
             self._client = caa
@@ -740,7 +836,17 @@ class InstagramAdapter(PlatformAdapter):
                 nome = type(exc).__name__
                 if nome in _THROTTLE_NAMES or nome in _SESSION_EXPIRED_NAMES:
                     raise _error_from_exception(exc, "login legado") from exc
+                erro_senha = _erro_de_senha(exc, "login legado")
+                if erro_senha is not None:
+                    # Senha errada não muda de versão para versão — para já com
+                    # a causa real em vez de esgotar a lista e esconder o motivo.
+                    raise erro_senha from exc
                 if nome != "UnknownError":
+                    raise _error_from_exception(exc, "login legado") from exc
+                if "needs_upgrade" not in _texto_da_excecao(exc):
+                    # UnknownError por OUTRO motivo (não é a versão descontinuada)
+                    # também não se resolve trocando de versão de app — mostra a
+                    # causa real em vez de engolir o erro.
                     raise _error_from_exception(exc, "login legado") from exc
                 logger.warning("login legado (app %s) rejeitado: %s — %s", versao, nome, exc)
                 continue
@@ -748,8 +854,13 @@ class InstagramAdapter(PlatformAdapter):
             logger.info("login legado OK (app %s)", versao)
             return self._serialize_session(cliente)
 
+        causa_caa = _texto_da_excecao(caa_erro) if caa_erro is not None else ""
+        if len(causa_caa) > 300:
+            causa_caa = causa_caa[:300] + "…"
         raise AdapterError(
-            "login: o fluxo CAA/bloks falhou e todas as versões de app foram "
+            "login: o fluxo CAA/bloks falhou"
+            + (f" ({causa_caa})" if causa_caa else "")
+            + " e todas as versões de app foram "
             "rejeitadas pelo login legado (needs_upgrade) — o login legado foi "
             "descontinuado pelo Instagram; use a senha pelo fluxo CAA ou o cookie sessionid"
         )
