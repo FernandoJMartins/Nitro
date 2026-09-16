@@ -7,12 +7,15 @@ export function Modal({
   onClose,
   wide,
   scroll,
+  top,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
   scroll?: boolean;
+  /** Modal aberto por cima de outro modal (ex.: biblioteca sobre o editor de story) — precisa de z-index bem maior. */
+  top?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -24,7 +27,7 @@ export function Modal({
 
   const cls = `modal${wide ? " wide" : ""}${scroll ? " scroll" : ""}`;
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
+    <div className={`modal-backdrop${top ? " modal-backdrop--top" : ""}`} onMouseDown={onClose}>
       <div className={cls} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{title}</h3>

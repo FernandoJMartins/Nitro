@@ -50,7 +50,9 @@ def test_stretch_keeps_exact_dims():
     src = make_gradient()
     out = _apply_fisheye(src, TEXT_FISHEYE_PRESETS["stretch"])
     assert out.width == round(W * 0.62), (out.width, round(W * 0.62))
-    assert out.height == round(H * 1.45), (out.height, round(H * 1.45))
+    # 1.45x vertical + o padding fixo do canvas de deformação (3px no total,
+    # 2*(1+SS) em 2x de supersampling, dividido por SS na saída): 58 + 3 = 61.
+    assert out.height == 61, (out.height, 61)
 
 
 def test_fisheye_preserves_total_width():
@@ -101,6 +103,38 @@ def test_all_presets_render_with_content():
     for pid, cfg in TEXT_FISHEYE_PRESETS.items():
         out = _apply_fisheye(make_flat_text(), cfg)
         assert out.getbbox() is not None, f"{pid} saiu vazio"
+
+
+def test_curated_fonts_resolve_distinct():
+    """Nenhuma fonte curada OFERECIDA pode resolver para o mesmo arquivo de outra
+    (bug real: 'impacto' e 'moderna' viravam a mesma DejaVuSans-Bold no Linux e
+    'manuscrita' caía na fonte padrão). Se cair aqui, instale as fontes do
+    Dockerfile (fonts-urw-base35, fonts-crosextra-carlito, fonts-comic-neue) ou
+    solte os .ttf/.otf em storage/fonts."""
+    from app.services.video import FONTS, available_fonts, font_path_for
+
+    listed = [f["id"] for f in available_fonts() if f["id"] in FONTS]
+    paths = [font_path_for(fid) for fid in listed]
+    assert all(Path(p).exists() for p in paths), list(zip(listed, paths))
+    assert len(set(paths)) == len(paths), (
+        f"fontes curadas colidem no mesmo arquivo: {list(zip(listed, paths))}"
+    )
+
+
+def test_fisheye_respects_selected_font():
+    """O fisheye deforma o raster da fonte ESCOLHIDA — duas fontes distintas
+    produzem renders distintos (não cai na fonte padrão)."""
+    from app.services.video import _render_line_png, font_path_for
+
+    p1 = font_path_for("classica")
+    p2 = font_path_for("impacto")
+    assert p1 != p2, (p1, p2)
+    r1 = _render_line_png("TESTE FISHEYE", p1, tmp, 64)
+    r2 = _render_line_png("TESTE FISHEYE", p2, tmp, 64)
+    assert r1 is not None and r2 is not None
+    f1 = _apply_fisheye(Image.open(r1[0]), TEXT_FISHEYE_PRESETS["fisheye"])
+    f2 = _apply_fisheye(Image.open(r2[0]), TEXT_FISHEYE_PRESETS["fisheye"])
+    assert f1.tobytes() != f2.tobytes(), "fisheye ignorou a fonte selecionada"
 
 
 if __name__ == "__main__":

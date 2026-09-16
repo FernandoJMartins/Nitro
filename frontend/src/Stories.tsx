@@ -43,7 +43,7 @@ import {
 /**
  * Tab "Stories": monta os stories automáticos DE CADA CONTA.
  *
- * O check "Stories automáticos" continua em Contas (Publicação → Contas) — lá só
+ * O check "Stories automáticos" continua em Contas — lá só
  * liga/desliga a automação. Aqui o usuário procura as imagens no banco (por pasta
  * e busca), e as atribui a "modelos": cada modelo = 1 story no dia, com horário,
  * texto, link, posição do link e texto extra opcional, e uma sequência de imagens.
@@ -187,7 +187,7 @@ function BibliotecaModal({
   }
 
   return (
-    <Modal title={titulo} onClose={onClose} wide scroll>
+    <Modal title={titulo} onClose={onClose} wide scroll top>
       <div className="checkrow" style={{ gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         <label className="field" style={{ width: 220 }}>
           Pasta
@@ -322,12 +322,12 @@ function ModelEditorModal({
             O texto é o rótulo do botão do link. Sem link (opcional), o texto vira a legenda nativa do story.
           </p>
 
-          <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-            <p className="hint" style={{ margin: "10px 0 0" }}>
-              Sequência do story — a ordem abaixo é a ordem da publicação:
-            </p>
-            {onAddImages && (
-              <button className="btn sm" onClick={onAddImages}>
+          <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", marginTop: 10 }}>
+            <strong style={{ fontSize: 13 }}>
+              Sequência do story <span className="hint">— a ordem abaixo é a ordem da publicação</span>
+            </strong>
+            {onAddImages && d.frames.length > 0 && (
+              <button className="btn primary sm" onClick={onAddImages}>
                 <ImagePlus size={14} /> Adicionar imagens
               </button>
             )}
@@ -345,11 +345,11 @@ function ModelEditorModal({
                   <span className="sframe-nome" title={media?.nome_original}>
                     {j + 1}. {media?.nome_original ?? `mídia #${id} (removida)`}
                   </span>
-                  <button className="btn sm" title="Mover para cima" disabled={j === 0} onClick={() => moverFrame(j, -1)}>
+                  <button className="btn ghost sm" title="Mover para cima" disabled={j === 0} onClick={() => moverFrame(j, -1)}>
                     <ChevronUp size={14} />
                   </button>
                   <button
-                    className="btn sm"
+                    className="btn ghost sm"
                     title="Mover para baixo"
                     disabled={j === d.frames.length - 1}
                     onClick={() => moverFrame(j, 1)}
@@ -366,10 +366,11 @@ function ModelEditorModal({
                 </div>
               );
             })}
-            {d.frames.length === 0 && (
-              <div className="empty">
-                Sem imagens ainda — feche este modal, escolha na biblioteca e clique em “＋ Adicionar”.
-              </div>
+            {d.frames.length === 0 && onAddImages && (
+              <button type="button" className="sframes-empty" onClick={onAddImages}>
+                <ImagePlus size={22} />
+                Nenhuma imagem ainda — clique para escolher na biblioteca
+              </button>
             )}
           </div>
         </div>
@@ -671,7 +672,7 @@ export default function Stories() {
     <div>
       <p className="sub">
         Stories de todas as contas em um lugar: crie ou edite o story ativo de cada conta e acompanhe o
-        histórico. O check de ativar/desativar a automação fica em Publicação → Contas.
+        histórico. O check de ativar/desativar a automação fica em Contas.
       </p>
       {error && <div className="error">⚠️ {error}</div>}
 
@@ -775,16 +776,16 @@ export default function Stories() {
       ) : (
         <>
           <div className="selbar" style={{ marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-            <button className="btn sm" onClick={() => setEditando(false)}>
+            <button className="btn ghost sm" onClick={() => setEditando(false)}>
               <ArrowLeft size={14} /> Voltar
             </button>
             <span className="hint">Editor de stories</span>
+            {msg && <span className="hint">{msg}</span>}
             {acc && (
-              <button className="btn primary sm" onClick={salvar} disabled={saving}>
+              <button className="btn primary" onClick={salvar} disabled={saving} style={{ marginLeft: "auto" }}>
                 <Save size={14} /> {saving ? "Salvando…" : "Salvar stories"}
               </button>
             )}
-            {msg && <span className="hint">{msg}</span>}
           </div>
 
           <Secao n={1} titulo="Conta" dica="de qual perfil saem os stories" />
@@ -810,7 +811,7 @@ export default function Stories() {
                       </>
                     ) : (
                       <>
-                        <AlertTriangle size={13} /> Automação desativada — ligue o check em Contas (Publicação → Contas).
+                        <AlertTriangle size={13} /> Automação desativada — ligue o check em Contas.
                       </>
                     )}
                   </span>
@@ -824,19 +825,19 @@ export default function Stories() {
               <Secao n={2} titulo="Stories ativos" dica={`o que já está programado em @${acc.username}`} />
               <div className="card">
                 <div className="card-main" style={{ width: "100%" }}>
-                  <div className="checkrow" style={{ gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
-                    <strong>{modelos.length} story(s) ativo(s)</strong>
+                  <strong>{modelos.length} story(s) ativo(s)</strong>
+                  <div className="smodels-grid">
                     <button
-                      className="btn primary sm"
+                      type="button"
+                      className="smodel-add"
                       onClick={() => {
                         setBibliotecaPara(null);
                         setBibliotecaAberta(true);
                       }}
                     >
-                      <Plus size={14} /> Novo story
+                      <Plus size={26} />
+                      Novo story
                     </button>
-                  </div>
-                  <div className="smodels-grid">
                     {modelos.map((m, i) => (
                       <div key={m.key} className="card smodel-card">
                         <div style={{ display: "flex", justifyContent: "center" }}>
@@ -883,7 +884,7 @@ export default function Stories() {
       )}
 
       {accounts.length === 0 && (
-        <div className="empty">Nenhuma conta cadastrada ainda — crie uma em Publicação → Contas.</div>
+        <div className="empty">Nenhuma conta cadastrada ainda — crie uma em Contas.</div>
       )}
 
       {bibliotecaAberta && (

@@ -1,17 +1,13 @@
 import { useEffect, useState } from "react";
-import Accounts from "./Accounts";
 import Approval from "./Approval";
-import Calendar from "./Calendar";
 import PublishDashboard from "./PublishDashboard";
 import { listContent } from "./api";
 
-type SubTab = "dashboard" | "aprovacao" | "calendario" | "contas";
+type SubTab = "dashboard" | "aprovacao";
 
 const TABS: { id: SubTab; label: string; icon: string }[] = [
   { id: "dashboard", label: "Visão geral", icon: "📊" },
   { id: "aprovacao", label: "Aprovação", icon: "✅" },
-  { id: "calendario", label: "Calendário", icon: "📅" },
-  { id: "contas", label: "Contas", icon: "👤" },
 ];
 
 export default function Publishing() {
@@ -47,8 +43,6 @@ export default function Publishing() {
 
       {tab === "dashboard" && <PublishDashboard />}
       {tab === "aprovacao" && <Approval />}
-      {tab === "calendario" && <Calendar />}
-      {tab === "contas" && <Accounts />}
     </>
   );
 }

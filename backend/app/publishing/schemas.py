@@ -293,6 +293,11 @@ class ContentOut(BaseModel):
 class ImportFromGeneratorRequest(BaseModel):
     generated_video_ids: list[int]
     auto_distribute: bool = True
+    # Seleção manual de perfis: vazio/None = todas as contas elegíveis (padrão atual).
+    # Quando preenchido, a distribuição continua uniforme, mas restrita às contas escolhidas.
+    account_ids: list[int] | None = None
+    # True = aprova direto (fluxo "Criar → aprovar na própria página"), pulando a fila de aprovação.
+    approve: bool = False
 
 
 class ApprovalAction(BaseModel):

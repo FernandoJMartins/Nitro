@@ -915,6 +915,22 @@ code {
   gap: 8px;
 }
 .smodel-card .story-preview { align-self: center; }
+.smodel-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 220px;
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.smodel-add:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
 .modal .sgrid { max-height: none; }
 .story-preview { flex-shrink: 0; width: 200px; }
 .story-preview-texto {
@@ -1132,6 +1148,9 @@ code {
   justify-content: center;
   padding: 20px;
   z-index: 1000;
+}
+.modal-backdrop--top {
+  z-index: 100000;
 }
 .modal {
   background: var(--surface);
@@ -1674,6 +1693,24 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.sframes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 26px 12px;
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+}
+.sframes-empty:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
 .sframe .mini-thumb {
   display: flex;
   align-items: center;

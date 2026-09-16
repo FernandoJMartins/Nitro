@@ -903,4 +903,116 @@ assert r.status_code == 200
 db.close()
 print("horários selecionados do padrão global respeitados pela conta sem override ok")
 
+# ---------- importação com seleção manual de perfis (default: todos) ----------
+acc_s1 = client.post(
+    "/api/v1/publishing/accounts", json={"nome_interno": "Perfil Sel 1", "username": "perfil_sel1", **WIDE_WINDOW}
+).json()
+acc_s2 = client.post(
+    "/api/v1/publishing/accounts", json={"nome_interno": "Perfil Sel 2", "username": "perfil_sel2", **WIDE_WINDOW}
+).json()
+
+db = SessionLocal()
+gv_s = []
+for i in range(3):
+    g = GeneratedVideo(user_id=USER_ID, caminho=f"generated/fake_sel{i}.mp4", duracao=8.0)
+    db.add(g)
+    db.flush()
+    gv_s.append(g.id)
+db.commit()
+db.close()
+
+# subconjunto escolhido manualmente: distribuição uniforme APENAS entre os escolhidos
+r = client.post(
+    "/api/v1/publishing/content",
+    json={"generated_video_ids": gv_s, "auto_distribute": True, "account_ids": [acc_s1["id"], acc_s2["id"]]},
+)
+assert r.status_code == 200, r.text
+sel_contents = r.json()
+assert len(sel_contents) == 3
+assert all(c["account_id"] in (acc_s1["id"], acc_s2["id"]) for c in sel_contents), sel_contents
+assert all(c["approval_status"] == "pendente" for c in sel_contents)
+counts_sel: dict[int, int] = {}
+for c in sel_contents:
+    counts_sel[c["account_id"]] = counts_sel.get(c["account_id"], 0) + 1
+assert max(counts_sel.values()) - min(counts_sel.values()) <= 1, counts_sel
+print("importação com perfis selecionados (subconjunto uniforme, default pendente) ok ->", counts_sel)
+
+# seleção com apenas 1 perfil: tudo vai para ele
+r = client.post(
+    "/api/v1/publishing/content",
+    json={"generated_video_ids": [gv_s[0]], "auto_distribute": True, "account_ids": [acc_s1["id"]]},
+)
+assert r.status_code == 404, "vídeo já importado não pode entrar duas vezes"
+
+db = SessionLocal()
+gv_solo = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_solo.mp4", duracao=8.0)
+db.add(gv_solo)
+db.commit()
+db.refresh(gv_solo)
+db.close()
+r = client.post(
+    "/api/v1/publishing/content",
+    json={"generated_video_ids": [gv_solo.id], "auto_distribute": True, "account_ids": [acc_s1["id"]]},
+)
+assert r.status_code == 200 and r.json()[0]["account_id"] == acc_s1["id"], r.text
+print("seleção de 1 perfil único envia tudo para ele ok")
+
+# conta inexistente é rejeitada antes de criar conteúdo
+r = client.post(
+    "/api/v1/publishing/content",
+    json={"generated_video_ids": gv_s, "auto_distribute": True, "account_ids": [999999]},
+)
+assert r.status_code == 404
+print("validação de conta inexistente na seleção manual ok")
+
+# conta desativada é rejeitada
+client.patch(f"/api/v1/publishing/accounts/{acc_s2['id']}", json={"ativa": False})
+db = SessionLocal()
+gv_off = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_off.mp4", duracao=8.0)
+db.add(gv_off)
+db.commit()
+db.refresh(gv_off)
+db.close()
+r = client.post(
+    "/api/v1/publishing/content",
+    json={"generated_video_ids": [gv_off.id], "auto_distribute": True, "account_ids": [acc_s2["id"]]},
+)
+assert r.status_code == 409, r.text
+print("conta desativada bloqueada na seleção manual ok")
+
+# ---------- aprovação direta (fluxo "Criar"): importa + aprova + distribui no mesmo request ----------
+client.patch(f"/api/v1/publishing/accounts/{acc_s2['id']}", json={"ativa": True})
+db = SessionLocal()
+gv_d1 = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_d1.mp4", duracao=8.0)
+gv_d2 = GeneratedVideo(user_id=USER_ID, caminho="generated/fake_d2.mp4", duracao=8.0)
+db.add_all([gv_d1, gv_d2])
+db.commit()
+db.refresh(gv_d1)
+db.refresh(gv_d2)
+db.close()
+
+r = client.post(
+    "/api/v1/publishing/content",
+    json={
+        "generated_video_ids": [gv_d1.id, gv_d2.id],
+        "auto_distribute": True,
+        "account_ids": [acc_s2["id"]],
+        "approve": True,
+    },
+)
+assert r.status_code == 200, r.text
+direct = r.json()
+assert all(c["approval_status"] == "aprovado" for c in direct), direct
+assert all(c["account_id"] == acc_s2["id"] for c in direct), direct
+# nada vai para a fila de aprovação — já nasce aprovado e o scheduler agenda sozinho
+db = SessionLocal()
+ids_direct = {c["id"] for c in direct}
+conta_s2 = db.get(Account, acc_s2["id"])
+existentes = {p.content_id for p in db.scalars(select(Publication).where(Publication.content_id.in_(ids_direct)))}
+novos = build_schedule_for_account(db, conta_s2)
+com_pub = existentes | {p.content_id for p in novos}
+assert com_pub == ids_direct, com_pub
+db.close()
+print("aprovação direta (import + aprovar) distribui e agenda automaticamente ok ->", len(direct), "vídeos")
+
 print(">>> PUBLICAÇÃO (multicontas) OK")

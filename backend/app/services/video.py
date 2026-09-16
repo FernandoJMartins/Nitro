@@ -79,10 +79,18 @@ _EMOJI_FONT_CANDIDATES = [
 # empacotada. "Impacto" é o estilo mais próximo do negrito forte dos Stories.
 # Para adicionar outras fontes, basta soltar o .ttf/.otf em STORAGE_DIR/fonts.
 # "css" é a família aproximada para o navegador renderizar a fonte no <select>/preview.
+#
+# Resolução de cada fonte (em _resolve_font):
+#   1) arquivo solto em STORAGE_DIR/fonts com nome convencional ("files") — o
+#      usuário pode soltar a fonte REAL (impact.ttf, comic.ttf, verdanab.ttf...)
+#      e ela vence qualquer fallback;
+#   2) caminhos do sistema ("paths") — Windows no dev, pacotes Linux no container;
+#      cada id tem um fallback DISTINTO no Linux para não cair tudo na fonte padrão.
 FONTS: dict[str, dict] = {
     "classica": {
         "nome": "Clássica (Arial negrito)",
         "css": 'Arial, Helvetica, sans-serif',
+        "files": ["arialbd.ttf", "Arial Bold.ttf"],
         "paths": [
             "C:/Windows/Fonts/arialbd.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -92,22 +100,32 @@ FONTS: dict[str, dict] = {
     "impacto": {
         "nome": "Impacto (estilo Stories)",
         "css": 'Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif',
+        "files": ["impact.ttf", "Impact.ttf"],
         "paths": [
             "C:/Windows/Fonts/impact.ttf",
+            # NimbusSansNarrow (fonts-urw-base35): condensada e pesada — o
+            # substituto aberto mais próximo do Impact no Linux.
+            "/usr/share/fonts/opentype/urw-base35/NimbusSansNarrow-Bold.otf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         ],
     },
     "moderna": {
         "nome": "Moderna (Verdana negrito)",
         "css": 'Verdana, Geneva, sans-serif',
+        "files": ["verdanab.ttf", "Verdana Bold.ttf"],
         "paths": [
             "C:/Windows/Fonts/verdanab.ttf",
+            # Carlito (fonts-crosextra-carlito): sans humanista estilo Verdana;
+            # NimbusSans (fonts-urw-base35): Helvetica — fallback distinto.
+            "/usr/share/fonts/truetype/crosextra/Carlito-Bold.ttf",
+            "/usr/share/fonts/opentype/urw-base35/NimbusSans-Bold.otf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         ],
     },
     "elegante": {
         "nome": "Elegante (Georgia negrito)",
         "css": 'Georgia, "Times New Roman", serif',
+        "files": ["georgiab.ttf", "Georgia Bold.ttf"],
         "paths": [
             "C:/Windows/Fonts/georgiab.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
@@ -116,17 +134,25 @@ FONTS: dict[str, dict] = {
     },
     "manuscrita": {
         "nome": "Manuscrita (Comic Sans)",
-        "css": '"Comic Sans MS", "Comic Sans", cursive',
+        "css": '"Comic Sans MS", "Comic Sans", "Comic Neue", cursive',
+        "files": ["comicbd.ttf", "comic.ttf", "Comic Sans MS Bold.ttf", "ComicNeue-Bold.ttf"],
         "paths": [
             "C:/Windows/Fonts/comicbd.ttf",
             "C:/Windows/Fonts/comic.ttf",
+            # Comic Neue (fonts-comic-neue): "Comic Sans menos horrível", OFL.
+            "/usr/share/fonts/truetype/comic-neue/ComicNeue-Bold.ttf",
+            "/usr/share/fonts/truetype/comic-neue/ComicNeue-BoldItalic.ttf",
+            "/usr/share/fonts/truetype/humor-sans/Humor-Sans.ttf",
         ],
     },
     "maquina": {
         "nome": "Máquina de escrever (mono)",
         "css": '"Courier New", Courier, monospace',
+        "files": ["courbd.ttf", "Courier New Bold.ttf"],
         "paths": [
             "C:/Windows/Fonts/courbd.ttf",
+            # NimbusMonoPS (fonts-urw-base35): clone do Courier.
+            "/usr/share/fonts/opentype/urw-base35/NimbusMonoPS-Bold.otf",
             "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
         ],
@@ -154,6 +180,28 @@ def _font_path() -> str:
     return "arial.ttf"
 
 
+def _resolve_font(meta: dict) -> str | None:
+    """Resolve uma entrada curada para um caminho de fonte EXISTENTE (ou None).
+
+    Ordem: (1) arquivo solto em STORAGE_DIR/fonts com nome convencional — a fonte
+    real que o usuário soltou VENCE qualquer fallback; (2) caminhos do sistema
+    (Windows no dev, pacotes Linux no container). Nenhum id curado cai na fonte
+    padrão: ou resolve para uma fonte distinta ou não aparece na lista.
+    """
+    names = list(meta.get("files", []))
+    for p in meta["paths"]:
+        names.append(Path(p).name)  # basename de cada candidato do sistema
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        cand = _fonts_dir() / name
+        if cand.is_file():
+            return cand.as_posix()
+    return _first_existing(meta["paths"])
+
+
 def font_path_for(font_id: str | None) -> str:
     """Resolve o id da fonte para um caminho de arquivo utilizável.
 
@@ -162,7 +210,7 @@ def font_path_for(font_id: str | None) -> str:
     """
     if font_id:
         if font_id in FONTS:
-            got = _first_existing(FONTS[font_id]["paths"])
+            got = _resolve_font(FONTS[font_id])
             if got:
                 return got
         elif font_id.startswith("custom:"):
@@ -173,10 +221,10 @@ def font_path_for(font_id: str | None) -> str:
 
 
 def available_fonts() -> list[dict]:
-    """Lista as fontes que dá para usar de fato (as curadas presentes + as soltas)."""
+    """Lista as fontes que dá para usar de fato (as curadas resolvíveis + as soltas)."""
     out: list[dict] = []
     for fid, meta in FONTS.items():
-        if _first_existing(meta["paths"]):
+        if _resolve_font(meta):
             out.append({"id": fid, "nome": meta["nome"], "origem": "sistema", "css": meta["css"]})
     for ext in ("*.ttf", "*.otf"):
         for f in sorted(_fonts_dir().glob(ext)):

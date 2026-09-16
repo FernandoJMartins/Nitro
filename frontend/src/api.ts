@@ -670,8 +670,23 @@ export interface ImportableVideo {
 export function listImportable(): Promise<ImportableVideo[]> {
   return apiGetAsync(`${PUB}/content/importable`);
 }
-export function importFromGenerator(generated_video_ids: number[], auto_distribute = true): Promise<PubContent[]> {
-  return apiSend(`${PUB}/content`, "POST", { generated_video_ids, auto_distribute });
+export function importFromGenerator(
+  generated_video_ids: number[],
+  opts:
+    | boolean
+    | { auto_distribute?: boolean; account_ids?: number[] | null; approve?: boolean } = {}
+): Promise<PubContent[]> {
+  const o = typeof opts === "boolean" ? { auto_distribute: opts } : opts;
+  return apiSend(`${PUB}/content`, "POST", {
+    generated_video_ids,
+    auto_distribute: o.auto_distribute ?? true,
+    account_ids: o.account_ids ?? null,
+    approve: o.approve ?? false,
+  });
+}
+/** Conta apta a receber conteúdo: conectada, ativa e com automação liberada. */
+export function isEligibleAccount(a: PubAccount): boolean {
+  return a.ativa && a.status === "pronta" && a.automation_status !== "pausada";
 }
 export function listContent(approval_status?: ApprovalStatus): Promise<PubContent[]> {
   const q = approval_status ? `?approval_status=${approval_status}` : "";

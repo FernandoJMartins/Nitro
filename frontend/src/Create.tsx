@@ -5,6 +5,9 @@ import {
   downloadVideoZip,
   getHistory,
   getJob,
+  importFromGenerator,
+  isEligibleAccount,
+  listAccounts,
   listFolders,
   listFonts,
   listMedia,
@@ -16,6 +19,7 @@ import {
   type Job,
   type Media,
   type PhraseType,
+  type PubAccount,
 } from "./api";
 
 const VIDEO_RE = /\.(mp4|mov|mkv|webm|avi)$/i;
@@ -645,8 +649,6 @@ export default function Create() {
   const [fsImagem, setFsImagem] = useState(64);
   const [fsFinal, setFsFinal] = useState(64);
   const [fsTexto, setFsTexto] = useState(64);
-  const [useIaTexto, setUseIaTexto] = useState(false);
-  const [legendaIa, setLegendaIa] = useState(false);
   // Distorção de texto estilo "Fisheye" (Instagram Edits, opcional)
   const [fisheyeOn, setFisheyeOn] = useState(false);
   const [fisheyePreset, setFisheyePreset] = useState<FisheyeId>("fisheye");
@@ -655,6 +657,33 @@ export default function Create() {
   const [results, setResults] = useState<GeneratedVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+
+  // aprovação direta para publicação (contas cadastradas em Contas)
+  const [accounts, setAccounts] = useState<PubAccount[]>([]);
+  const [pubProfiles, setPubProfiles] = useState<Set<number>>(new Set());
+  const [pubSel, setPubSel] = useState<Set<number>>(new Set());
+  const [pubDone, setPubDone] = useState<Set<number>>(new Set());
+  const [pubError, setPubError] = useState<string | null>(null);
+  const [pubOk, setPubOk] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
+
+  // contas para aprovação direta (falha silenciosa: sem contas, sem painel)
+  useEffect(() => {
+    listAccounts().then(setAccounts).catch(() => {});
+  }, []);
+
+  // default de perfis = todas as contas aptas (mesmo padrão da importação pelo histórico)
+  useEffect(() => {
+    setPubProfiles(new Set(accounts.filter(isEligibleAccount).map((a) => a.id)));
+  }, [accounts]);
+
+  // novo lote gerado: seleciona todos os vídeos e limpa o estado de aprovação
+  useEffect(() => {
+    setPubSel(new Set(results.map((v) => v.id)));
+    setPubDone(new Set());
+    setPubOk(null);
+    setPubError(null);
+  }, [results]);
 
   useEffect(() => {
     (async () => {
@@ -736,15 +765,6 @@ export default function Create() {
     if (typeFinal) text_types.final = ptFinal;
     if (typeTexto) text_types.texto = ptTexto;
 
-    if (
-      useIaTexto &&
-      !(typePause && ptPause) &&
-      !(typeImagem && ptImagem) &&
-      !(typeFinal && ptFinal) &&
-      !(typeTexto && ptTexto)
-    )
-      return setError("Para a IA de texto, escolha um tipo de frase em algum tipo de vídeo.");
-
     // tamanho da fonte por tipo de vídeo (só dos tipos habilitados)
     const font_sizes: Record<string, number> = {};
     if (typePause) font_sizes.pause = fsPause;
@@ -767,8 +787,8 @@ export default function Create() {
         music_media_ids: [...musicSel],
         phrase_type_id: null,
         text_types,
-        use_ia_texto: useIaTexto,
-        gerar_legenda_ia: legendaIa,
+        use_ia_texto: false,
+        gerar_legenda_ia: false,
         duration_min: Math.min(durMin, durMax),
         duration_max: Math.max(durMin, durMax),
         video_types: [...video_types],
@@ -817,6 +837,52 @@ export default function Create() {
       a.click();
       a.remove();
       await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  function togglePubProfile(id: number) {
+    setPubProfiles((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function togglePubSel(id: number) {
+    setPubSel((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // aprova direto: importa para publicação (origem gerador) JÁ aprovado e distribuído
+  // uniformemente entre as contas escolhidas — o scheduler agenda sozinho.
+  async function aprovarParaPublicacao() {
+    const ids = [...pubSel];
+    if (ids.length === 0) return;
+    if (pubProfiles.size === 0) {
+      setPubError("Selecione ao menos um perfil para receber os vídeos.");
+      return;
+    }
+    setApproving(true);
+    setPubError(null);
+    setPubOk(null);
+    try {
+      const criados = await importFromGenerator(ids, { account_ids: [...pubProfiles], approve: true });
+      setPubDone((prev) => new Set([...prev, ...ids]));
+      setPubSel((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      setPubOk(
+        `${criados.length} vídeo(s) aprovado(s) e enviado(s) para publicação — serão agendados automaticamente nas contas escolhidas.`
+      );
+    } catch (e) {
+      setPubError(String(e));
+    } finally {
+      setApproving(false);
     }
   }
 
@@ -939,15 +1005,6 @@ export default function Create() {
             </label>
           )}
         </div>
-
-        <label className="field checkrow">
-          <input type="checkbox" checked={useIaTexto} onChange={(e) => setUseIaTexto(e.target.checked)} />
-          <span>Deixar a IA gerar os textos do vídeo (baseada na sua lista)</span>
-        </label>
-        <label className="field checkrow">
-          <input type="checkbox" checked={legendaIa} onChange={(e) => setLegendaIa(e.target.checked)} />
-          <span>Gerar legenda da postagem com IA (opcional)</span>
-        </label>
 
         {/* ---------- Tipos de vídeo ---------- */}
         <div className="field">
@@ -1098,14 +1155,89 @@ export default function Create() {
         </div>
       )}
 
+      {results.length > 0 && accounts.length > 0 && pubSel.size > 0 && (
+        <div className="progress-box" style={{ marginTop: 12 }}>
+          <div>
+            <strong>📤 Aprovar e publicar direto daqui</strong>
+            <div className="hint" style={{ marginTop: 4 }}>
+              Distribui os vídeos uniformemente entre os perfis escolhidos e já os aprova — o agendamento é
+              automático.
+            </div>
+          </div>
+          {pubError && <div className="error">⚠️ {pubError}</div>}
+          <div className="field" style={{ marginTop: 10 }}>
+            <span>
+              Perfis que receberão os vídeos ({pubProfiles.size} de {accounts.length})
+            </span>
+            <div className="checkrow" style={{ gap: 8, marginTop: 6 }}>
+              <button type="button" className="linkbtn" onClick={() => setPubProfiles(new Set(accounts.map((a) => a.id)))}>
+                Todos
+              </button>
+              <button
+                type="button"
+                className="linkbtn"
+                onClick={() => setPubProfiles(new Set(accounts.filter(isEligibleAccount).map((a) => a.id)))}
+              >
+                Apenas aptas
+              </button>
+              <button type="button" className="linkbtn" onClick={() => setPubProfiles(new Set())}>
+                Nenhum
+              </button>
+            </div>
+            <div className="checklist" style={{ marginTop: 6 }}>
+              {accounts.map((a) => (
+                <label key={a.id} className={pubProfiles.has(a.id) ? "chk picked" : "chk"}>
+                  <input
+                    type="checkbox"
+                    checked={pubProfiles.has(a.id)}
+                    disabled={!a.ativa}
+                    onChange={() => togglePubProfile(a.id)}
+                  />
+                  <span className="chk-name">@{a.username}</span>
+                  {!a.ativa ? (
+                    <span className="hint" style={{ fontWeight: 400 }}>(desativada)</span>
+                  ) : a.status !== "pronta" || a.automation_status === "pausada" ? (
+                    <span className="hint" style={{ fontWeight: 400 }}>
+                      ({a.status === "pronta" ? "automação pausada" : a.status})
+                    </span>
+                  ) : null}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="checkrow" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+            <button className="btn primary" disabled={approving || pubSel.size === 0} onClick={aprovarParaPublicacao}>
+              {approving ? "Enviando…" : `✅ Aprovar e enviar (${pubSel.size} vídeo(s))`}
+            </button>
+            <span className="hint">
+              {pubSel.size} de {results.length} selecionado(s) para aprovação
+            </span>
+          </div>
+        </div>
+      )}
+
+      {results.length > 0 && accounts.length === 0 && (
+        <div className="hint" style={{ marginTop: 12 }}>
+          💡 Cadastre contas em <strong>Contas</strong> para aprovar e publicar direto daqui.
+        </div>
+      )}
+
+      {pubOk && <div className="hint" style={{ marginTop: 12, color: "var(--green, #2e7d32)" }}>✓ {pubOk}</div>}
+
       {results.length > 0 && (
         <ul className="grid">
           {results.map((v) => (
-            <li key={v.id} className="vcard">
+            <li key={v.id} className={pubSel.has(v.id) ? "vcard selected" : "vcard"}>
+              {accounts.length > 0 && !pubDone.has(v.id) && (
+                <label className="vsel">
+                  <input type="checkbox" checked={pubSel.has(v.id)} onChange={() => togglePubSel(v.id)} />
+                </label>
+              )}
               <video src={videoDownloadUrl(v.id)} controls />
               <div className="vmeta">
                 {v.texto && <div className="vtext">“{v.texto}”</div>}
                 {v.tipo_video && <span className="badge">{TIPO_BADGE[v.tipo_video] ?? v.tipo_video}</span>}
+                {pubDone.has(v.id) && <span className="badge">✅ aprovado p/ publicação</span>}
                 {v.legenda && <div className="vlegenda">📝 {v.legenda}</div>}
                 <a href={videoDownloadUrl(v.id)} download className="btn sm">
                   Baixar .mp4

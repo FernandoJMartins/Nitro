@@ -21,6 +21,7 @@ import {
   approveContent,
   editContent,
   importFromGenerator,
+  isEligibleAccount,
   listAccounts,
   listContent,
   listImportable,
@@ -65,16 +66,24 @@ function groupByDayAndLote(items: ImportableVideo[]): DayGroup[] {
 
 function LoteImportModal({
   lote,
+  accounts,
   onClose,
   onImported,
 }: {
   lote: LoteGroup;
+  accounts: PubAccount[];
   onClose: () => void;
   onImported: () => void;
 }) {
   const [selected, setSelected] = useState<Set<number>>(new Set(lote.videos.map((v) => v.id)));
+  // perfis destino — default: todas as contas aptas (mesmo comportamento de antes)
+  const [profiles, setProfiles] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    setProfiles(new Set(accounts.filter(isEligibleAccount).map((a) => a.id)));
+  }, [accounts]);
 
   function toggle(id: number) {
     setSelected((prev) => {
@@ -84,12 +93,24 @@ function LoteImportModal({
     });
   }
 
+  function toggleProfile(id: number) {
+    setProfiles((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
   async function confirmar() {
     if (selected.size === 0) return;
+    if (accounts.length > 0 && profiles.size === 0) {
+      setError("Selecione ao menos um perfil para receber os vídeos.");
+      return;
+    }
     setImporting(true);
     setError(null);
     try {
-      await importFromGenerator([...selected], true);
+      await importFromGenerator([...selected], { account_ids: accounts.length ? [...profiles] : null });
       onImported();
       onClose();
     } catch (e) {
@@ -132,6 +153,54 @@ function LoteImportModal({
           </li>
         ))}
       </ul>
+      <div className="field" style={{ marginTop: 14 }}>
+        <span>
+          Perfis que receberão os vídeos ({profiles.size} de {accounts.length})
+        </span>
+        {accounts.length === 0 ? (
+          <div className="hint" style={{ fontWeight: 400 }}>
+            Nenhuma conta cadastrada — os vídeos entram na fila de aprovação sem conta atribuída (cadastre em Contas).
+          </div>
+        ) : (
+          <>
+            <div className="checkrow" style={{ gap: 8, marginTop: 6 }}>
+              <button type="button" className="linkbtn" onClick={() => setProfiles(new Set(accounts.map((a) => a.id)))}>
+                Todos
+              </button>
+              <button
+                type="button"
+                className="linkbtn"
+                onClick={() => setProfiles(new Set(accounts.filter(isEligibleAccount).map((a) => a.id)))}
+              >
+                Apenas aptas
+              </button>
+              <button type="button" className="linkbtn" onClick={() => setProfiles(new Set())}>
+                Nenhum
+              </button>
+            </div>
+            <div className="checklist" style={{ marginTop: 6 }}>
+              {accounts.map((a) => (
+                <label key={a.id} className={profiles.has(a.id) ? "chk picked" : "chk"}>
+                  <input
+                    type="checkbox"
+                    checked={profiles.has(a.id)}
+                    disabled={!a.ativa}
+                    onChange={() => toggleProfile(a.id)}
+                  />
+                  <span className="chk-name">@{a.username}</span>
+                  {!a.ativa ? (
+                    <span className="hint" style={{ fontWeight: 400 }}>(desativada)</span>
+                  ) : a.status !== "pronta" || a.automation_status === "pausada" ? (
+                    <span className="hint" style={{ fontWeight: 400 }}>
+                      ({a.status === "pronta" ? "automação pausada" : a.status})
+                    </span>
+                  ) : null}
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>
           Cancelar
@@ -144,7 +213,7 @@ function LoteImportModal({
   );
 }
 
-function ImportPanel({ onImported }: { onImported: () => void }) {
+function ImportPanel({ onImported, accounts }: { onImported: () => void; accounts: PubAccount[] }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ImportableVideo[]>([]);
   const [openLote, setOpenLote] = useState<LoteGroup | null>(null);
@@ -174,7 +243,8 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
           <History size={14} /> Importar do histórico
         </button>
         <span className="hint">
-          Importa vídeos da geração em massa e já distribui pelas contas — o modal fecha sozinho ao importar.
+          Importa vídeos da geração em massa e distribui entre os perfis escolhidos (padrão: todos os aptos) — o
+          modal fecha sozinho ao importar.
         </span>
       </div>
 
@@ -212,7 +282,9 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
         </Modal>
       )}
 
-      {openLote && <LoteImportModal lote={openLote} onClose={() => setOpenLote(null)} onImported={handleImported} />}
+      {openLote && (
+        <LoteImportModal lote={openLote} accounts={accounts} onClose={() => setOpenLote(null)} onImported={handleImported} />
+      )}
     </>
   );
 }
@@ -406,7 +478,7 @@ export default function Approval() {
       <p className="sub">Fila de aprovação: revise, distribua e aprove antes de agendar a publicação.</p>
       {error && <div className="error">⚠️ {error}</div>}
 
-      <ImportPanel onImported={refresh} />
+      <ImportPanel onImported={refresh} accounts={accounts} />
 
       <nav className="tabs">
         <button className={status === "pendente" ? "tab active" : "tab"} onClick={() => setStatus("pendente")}>

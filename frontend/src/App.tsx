@@ -9,8 +9,20 @@ import ApiKeys from "./ApiKeys";
 import Utils from "./Utils";
 import Publishing from "./Publishing";
 import Stories from "./Stories";
+import Calendar from "./Calendar";
+import Accounts from "./Accounts";
 
-type Section = "midias" | "frases" | "criar" | "historico" | "publicacao" | "stories" | "utilitarios" | "api";
+type Section =
+  | "midias"
+  | "frases"
+  | "criar"
+  | "historico"
+  | "publicacao"
+  | "calendario"
+  | "contas"
+  | "stories"
+  | "utilitarios"
+  | "api";
 
 /* ícones de linha, no estilo Instagram (stroke fino, 24px) */
 function Icon({ name, active }: { name: Section; active: boolean }) {
@@ -78,6 +90,24 @@ function Icon({ name, active }: { name: Section; active: boolean }) {
           <line x1="8" y1="12" x2="16" y2="12" />
         </svg>
       );
+    case "calendario": // calendário
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="18" height="17" rx="2.5" />
+          <line x1="3" y1="9" x2="21" y2="9" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+        </svg>
+      );
+    case "contas": // pessoas (múltiplas contas)
+      return (
+        <svg {...common}>
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" fill={active ? "currentColor" : "none"} />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
     case "api": // perfil / chave
       return (
         <svg {...common} fill={active ? "currentColor" : "none"}>
@@ -94,6 +124,8 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "criar", label: "Criar" },
   { id: "historico", label: "Histórico" },
   { id: "publicacao", label: "Publicação" },
+  { id: "calendario", label: "Calendário" },
+  { id: "contas", label: "Contas" },
   { id: "stories", label: "Stories" },
   { id: "utilitarios", label: "Utilitários" },
   { id: "api", label: "API" },
@@ -105,6 +137,8 @@ const TITLES: Record<Section, string> = {
   criar: "Criar",
   historico: "Histórico",
   publicacao: "Publicação",
+  calendario: "Calendário",
+  contas: "Contas",
   stories: "Stories",
   utilitarios: "Utilitários",
   api: "API",
@@ -112,12 +146,52 @@ const TITLES: Record<Section, string> = {
 
 type Theme = "dark" | "light";
 
+const PATHS: Record<Section, string> = {
+  midias: "/midias",
+  frases: "/frases",
+  criar: "/criar",
+  historico: "/historico",
+  publicacao: "/publicacao",
+  calendario: "/calendario",
+  contas: "/contas",
+  stories: "/stories",
+  utilitarios: "/utilitarios",
+  api: "/api",
+};
+
+function sectionFromPath(path: string): Section {
+  const found = (Object.keys(PATHS) as Section[]).find((s) => PATHS[s] === path);
+  return found ?? "midias";
+}
+
 export default function App() {
   const [logged, setLogged] = useState<boolean>(!!getToken());
-  const [section, setSection] = useState<Section>("midias");
+  const [section, setSection] = useState<Section>(() => sectionFromPath(window.location.pathname));
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem("nitro-theme") as Theme) || "dark"
   );
+
+  // navega para uma seção trocando a URL (permite F5 e voltar/avançar do navegador)
+  function goTo(next: Section) {
+    setSection(next);
+    if (window.location.pathname !== PATHS[next]) {
+      window.history.pushState(null, "", PATHS[next]);
+    }
+  }
+
+  // mantém a URL em sincronia quando o usuário usa voltar/avançar
+  useEffect(() => {
+    const onPop = () => setSection(sectionFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // normaliza a URL inicial (ex.: "/" vira "/midias") sem empilhar no histórico
+  useEffect(() => {
+    if (window.location.pathname !== PATHS[section]) {
+      window.history.replaceState(null, "", PATHS[section]);
+    }
+  }, []);
 
   // Aplica o tema na tag <html> e persiste a escolha.
   useEffect(() => {
@@ -182,6 +256,8 @@ export default function App() {
         {section === "criar" && <Create />}
         {section === "historico" && <History />}
         {section === "publicacao" && <Publishing />}
+        {section === "calendario" && <Calendar />}
+        {section === "contas" && <Accounts />}
         {section === "stories" && <Stories />}
         {section === "utilitarios" && <Utils />}
         {section === "api" && <ApiKeys />}
@@ -192,7 +268,7 @@ export default function App() {
           <button
             key={s.id}
             className={section === s.id ? "igtab-btn active" : "igtab-btn"}
-            onClick={() => setSection(s.id)}
+            onClick={() => goTo(s.id)}
             aria-label={s.label}
           >
             <Icon name={s.id} active={section === s.id} />

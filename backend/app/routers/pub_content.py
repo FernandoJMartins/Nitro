@@ -31,6 +31,26 @@ def _get_content(db: Session, user: User, content_id: int) -> Content:
     return content
 
 
+def _resolve_target_accounts(db: Session, user: User, account_ids: list[int] | None) -> list[Account]:
+    """Resolve as contas destino de uma importação.
+
+    None/vazio = todas as contas elegíveis (comportamento padrão atual).
+    Lista = apenas as contas escolhidas manualmente pelo usuário — precisam
+    existir, pertencer a ele e estar ativas (conta desativada nunca publica).
+    """
+    if not account_ids:
+        return eligible_accounts(db, user.id)
+    accounts = list(
+        db.scalars(select(Account).where(Account.id.in_(account_ids), Account.user_id == user.id))
+    )
+    if len(accounts) != len(set(account_ids)):
+        raise HTTPException(404, "Uma ou mais contas selecionadas não foram encontradas.")
+    inativa = next((a for a in accounts if not a.ativa), None)
+    if inativa is not None:
+        raise HTTPException(409, f"Conta @{inativa.username} está desativada — reative-a ou remova da seleção.")
+    return accounts
+
+
 @router.get("/importable")
 def list_importable(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Vídeos do Sistema A (geração em massa) que ainda não foram importados para publicação."""
@@ -72,8 +92,24 @@ def import_from_generator(
             )
         )
     )
+    # nunca importa um vídeo duas vezes (mesma dedup do /importable) — protege contra
+    # duplo clique/dupla aprovação criando post duplicado.
+    ja_importados = set(
+        db.scalars(
+            select(Content.generated_video_id).where(
+                Content.user_id == user.id, Content.generated_video_id.is_not(None)
+            )
+        )
+    )
+    videos = [v for v in videos if v.id not in ja_importados]
     if not videos:
-        raise HTTPException(404, "Nenhum vídeo encontrado para importar.")
+        raise HTTPException(404, "Nenhum vídeo encontrado para importar (todos já foram importados).")
+
+    # resolve as contas destino ANTES de criar qualquer coisa — seleção inválida
+    # não deixa conteúdo órfão no banco.
+    accounts: list[Account] = []
+    if body.account_ids or body.auto_distribute:
+        accounts = _resolve_target_accounts(db, user, body.account_ids)
 
     created: list[Content] = []
     for video in videos:
@@ -85,6 +121,7 @@ def import_from_generator(
             caminho=video.caminho,
             duracao=video.duracao,
             legenda=video.legenda,
+            approval_status="aprovado" if body.approve else "pendente",
         )
         db.add(content)
         created.append(content)
@@ -92,8 +129,7 @@ def import_from_generator(
     for c in created:
         db.refresh(c)
 
-    if body.auto_distribute:
-        accounts = eligible_accounts(db, user.id)
+    if accounts:
         distribute_uniform(db, created, accounts)
 
     return created

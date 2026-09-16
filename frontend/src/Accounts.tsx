@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Pencil, Plus, Save, Trash2, Wifi } from "lucide-react";
 import { Modal, ConfirmDialog } from "./Dialog";
 import {
   checkProxy,
@@ -227,14 +228,14 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
                 </div>
               </div>
               <div className="card-actions">
-                <button className="btn sm" onClick={() => checkProxy(p.id).then(onChange)}>
-                  Testar
+                <button className="btn ghost sm" onClick={() => checkProxy(p.id).then(onChange)}>
+                  <Wifi size={14} /> Testar
                 </button>
-                <button className="btn sm" onClick={() => startEdit(p)}>
-                  Editar
+                <button className="btn ghost sm" onClick={() => startEdit(p)}>
+                  <Pencil size={14} /> Editar
                 </button>
                 <button className="btn danger sm" onClick={() => deleteProxy(p.id).then(onChange)}>
-                  Excluir
+                  <Trash2 size={14} /> Excluir
                 </button>
               </div>
             </li>
@@ -242,8 +243,8 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
           {proxies.length === 0 && <li className="empty">Nenhum proxy cadastrado — contas sem proxy publicam direto.</li>}
         </ul>
 
-        <button className="btn sm" onClick={() => setNovo(true)}>
-          ＋ Novo proxy
+        <button className="btn primary sm" onClick={() => setNovo(true)}>
+          <Plus size={14} /> Novo proxy
         </button>
       </div>
 
@@ -269,7 +270,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
                 onKeyDown={(e) => e.key === "Enter" && add()}
               />
               <button className="btn primary" onClick={add}>
-                Adicionar proxy
+                <Plus size={14} /> Adicionar proxy
               </button>
             </div>
             <div className="hint" style={{ marginTop: 6 }}>
@@ -337,7 +338,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
                 Cancelar
               </button>
               <button className="btn primary sm" onClick={saveEdit}>
-                Salvar
+                <Save size={14} /> Salvar
               </button>
             </div>
           </div>
@@ -609,7 +610,15 @@ function AccountForm({
             Cancelar
           </button>
           <button className="btn primary" onClick={submit} disabled={!nomeInterno.trim() || !username.trim()}>
-            {initial ? "Salvar" : "Criar conta"}
+            {initial ? (
+              <>
+                <Save size={14} /> Salvar
+              </>
+            ) : (
+              <>
+                <Plus size={14} /> Criar conta
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -653,10 +662,7 @@ function CaptionsManager({
   return (
     <div className="card">
       <div className="card-main" style={{ width: "100%" }}>
-        <p className="hint">
-          Use variáveis: {"{{username}} {{date}} {{number}} {{random_emoji}}"} · A legenda específica da conta tem
-          prioridade sobre a global.
-        </p>
+        <p className="hint">A legenda específica da conta tem prioridade sobre a global.</p>
         {error && <div className="error">⚠️ {error}</div>}
         <ul className="list" style={{ marginTop: 10 }}>
           {captions.map((c) => (
@@ -669,35 +675,52 @@ function CaptionsManager({
                 <div className="meta">{c.texto}</div>
               </div>
               <div className="card-actions">
-                <button className="btn sm" onClick={() => updateCaption(c.id, { ativo: !c.ativo }).then(onChange)}>
+                <button className="btn ghost sm" onClick={() => updateCaption(c.id, { ativo: !c.ativo }).then(onChange)}>
                   {c.ativo ? "Desativar" : "Ativar"}
                 </button>
                 <button className="btn danger sm" onClick={() => deleteCaption(c.id).then(onChange)}>
-                  Excluir
+                  <Trash2 size={14} /> Excluir
                 </button>
               </div>
             </li>
           ))}
           {captions.length === 0 && <li className="empty">Nenhuma legenda cadastrada.</li>}
         </ul>
-        <div className="checkrow" style={{ gap: 8, marginTop: 8 }}>
-          <input placeholder="Título" value={titulo} onChange={(e) => setTitulo(e.target.value)} style={{ width: 140 }} />
-          <input placeholder="Texto da legenda…" value={texto} onChange={(e) => setTexto(e.target.value)} style={{ flex: 1 }} />
-          <select
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
-            style={{ width: 160 }}
-          >
-            <option value="">Global (todas)</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                @{a.username}
-              </option>
-            ))}
-          </select>
-          <button className="btn primary sm" onClick={add} disabled={!titulo.trim() || !texto.trim()}>
-            ＋ Adicionar
-          </button>
+
+        <div className="field" style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+          <strong style={{ color: "var(--text)" }}>Nova legenda</strong>
+          <div className="checkrow" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+            <label className="field" style={{ flex: 1, minWidth: 180 }}>
+              Título
+              <input placeholder="Ex.: Chamada padrão" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 180 }}>
+              Conta
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
+                <option value="">Global (todas)</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    @{a.username}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="field">
+            Texto da legenda
+            <textarea
+              rows={2}
+              placeholder="Ex.: Bom dia, {{username}}! {{random_emoji}}"
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+            />
+            <span className="hint">Variáveis disponíveis: {"{{username}} {{date}} {{number}} {{random_emoji}}"}</span>
+          </label>
+          <div className="checkrow" style={{ justifyContent: "flex-end" }}>
+            <button className="btn primary sm" onClick={add} disabled={!titulo.trim() || !texto.trim()}>
+              <Plus size={14} /> Adicionar legenda
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -834,9 +857,6 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
             Timezone
             <input value={d.timezone} onChange={(e) => setD({ ...d, timezone: e.target.value })} placeholder="America/Sao_Paulo" />
           </label>
-          <button className="btn primary sm" onClick={salvar}>
-            Salvar global
-          </button>
         </div>
         <div className="field">
           Modo de agendamento
@@ -903,6 +923,11 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
           Cada conta pode escolher o próprio modo de agendamento — o que estiver aqui vale como padrão
           (janela, timezone e modo) para as contas sem override.
         </p>
+        <div className="checkrow" style={{ justifyContent: "flex-end", marginTop: 4, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+          <button className="btn primary" onClick={salvar}>
+            <Save size={14} /> Salvar global
+          </button>
+        </div>
           </>
         )}
       </div>
@@ -1021,7 +1046,7 @@ export default function Accounts() {
       <div className="selbar" style={{ marginBottom: 12 }}>
         <span>{accounts.length} conta(s)</span>
         <button className="btn primary sm" onClick={() => setFormFor("new")}>
-          ＋ Adicionar perfil
+          <Plus size={14} /> Adicionar perfil
         </button>
       </div>
 
@@ -1084,11 +1109,11 @@ export default function Accounts() {
                   Retomar
                 </button>
               )}
-              <button className="btn sm" onClick={() => setFormFor(a)}>
-                Editar
+              <button className="btn ghost sm" onClick={() => setFormFor(a)}>
+                <Pencil size={14} /> Editar
               </button>
               <button className="btn danger sm" onClick={() => setToDelete(a)}>
-                Excluir
+                <Trash2 size={14} /> Excluir
               </button>
             </div>
           </li>
