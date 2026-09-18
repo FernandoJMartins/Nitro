@@ -678,11 +678,10 @@ export default function Stories() {
 
       {!editando ? (
         <>
-          <div className="selbar" style={{ marginBottom: 12 }}>
+          <div className="selbar" style={{ marginBottom: 12, justifyContent: "flex-end" }}>
             <button className="btn primary" onClick={() => setEditando(true)}>
               <Pencil size={15} /> Criar/editar storie
             </button>
-            <span className="hint">Escolha a conta, veja os stories ativos e crie um novo — o histórico some enquanto edita.</span>
           </div>
 
           <Secao n={1} titulo="Histórico" dica="stories de todas as contas, mais recente primeiro" />

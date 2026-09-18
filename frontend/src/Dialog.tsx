@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /* ---------- Modal genérico (substitui prompt/confirm nativos) ---------- */
 export function Modal({
@@ -132,5 +132,63 @@ export function ConfirmDialog({
         </button>
       </div>
     </Modal>
+  );
+}
+
+/* Menu de ações "⋯" (overflow) — esconde ações secundárias de uma linha/card,
+ * abre em popover com z-index bem acima do resto da página. */
+export function DropdownMenu({
+  trigger,
+  children,
+  align = "right",
+}: {
+  trigger: (opts: { toggle: () => void }) => ReactNode;
+  children: (close: () => void) => ReactNode;
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="menu-wrap" ref={ref}>
+      {trigger({ toggle: () => setOpen((o) => !o) })}
+      {open && <div className={`menu-dropdown menu-${align}`}>{children(() => setOpen(false))}</div>}
+    </div>
+  );
+}
+
+export function MenuItem({
+  children,
+  onClick,
+  danger,
+  disabled,
+  title,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button type="button" className={`menu-item${danger ? " danger" : ""}`} onClick={onClick} disabled={disabled} title={title}>
+      {children}
+    </button>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Pencil, Plus, Save, Trash2, Wifi } from "lucide-react";
-import { Modal, ConfirmDialog } from "./Dialog";
+import { MoreVertical, Pause, Pencil, Play, Plus, Save, ShieldCheck, Trash2, Wifi } from "lucide-react";
+import { DropdownMenu, MenuItem, Modal, ConfirmDialog } from "./Dialog";
 import {
   checkProxy,
   connectAccount,
@@ -243,9 +243,11 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
           {proxies.length === 0 && <li className="empty">Nenhum proxy cadastrado — contas sem proxy publicam direto.</li>}
         </ul>
 
-        <button className="btn primary sm" onClick={() => setNovo(true)}>
-          <Plus size={14} /> Novo proxy
-        </button>
+        <div className="checkrow" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+          <button className="btn primary sm" onClick={() => setNovo(true)}>
+            <Plus size={14} /> Novo proxy
+          </button>
+        </div>
       </div>
 
       {novo && (
@@ -1083,38 +1085,81 @@ export default function Accounts() {
               <button className="btn primary sm" onClick={() => conectar(a)} disabled={connecting === a.id}>
                 {connecting === a.id ? "Conectando…" : "🔗 Conectar"}
               </button>
-              <button
-                className={a.ativa ? "btn sm" : "btn primary sm"}
-                onClick={() => updateAccount(a.id, { ativa: !a.ativa }).then(refreshAll)}
-                title={
-                  a.ativa
-                    ? "Desativar a conta: ela não participa de distribuição, não agenda e não publica nada (nem story, nem reel) enquanto desativada"
-                    : "Reativar a conta: volta a participar de distribuição, agendamento e publicação"
-                }
+              <DropdownMenu
+                align="right"
+                trigger={({ toggle }) => (
+                  <button className="btn ghost sm" onClick={toggle} title="Mais ações" aria-label="Mais ações">
+                    <MoreVertical size={14} />
+                  </button>
+                )}
               >
-                {a.ativa ? "⛔ Desativar" : "✅ Ativar"}
-              </button>
-              {a.session_configurada && (
-                <button className="btn sm" onClick={() => verificar(a)} disabled={verifying === a.id}>
-                  {verifying === a.id ? "Verificando…" : "✓ Verificar sessão"}
-                </button>
-              )}
-              {a.status === "pronta" && a.automation_status !== "pausada" && (
-                <button className="btn sm" onClick={() => pauseAccount(a.id).then(refreshAll)}>
-                  Pausar
-                </button>
-              )}
-              {a.status === "pronta" && a.automation_status === "pausada" && (
-                <button className="btn sm" onClick={() => resumeAccount(a.id).then(refreshAll)}>
-                  Retomar
-                </button>
-              )}
-              <button className="btn ghost sm" onClick={() => setFormFor(a)}>
-                <Pencil size={14} /> Editar
-              </button>
-              <button className="btn danger sm" onClick={() => setToDelete(a)}>
-                <Trash2 size={14} /> Excluir
-              </button>
+                {(close) => (
+                  <>
+                    <MenuItem
+                      title={
+                        a.ativa
+                          ? "Desativar a conta: ela não participa de distribuição, não agenda e não publica nada (nem story, nem reel) enquanto desativada"
+                          : "Reativar a conta: volta a participar de distribuição, agendamento e publicação"
+                      }
+                      onClick={() => {
+                        updateAccount(a.id, { ativa: !a.ativa }).then(refreshAll);
+                        close();
+                      }}
+                    >
+                      {a.ativa ? <>⛔ Desativar</> : <>✅ Ativar</>}
+                    </MenuItem>
+                    {a.session_configurada && (
+                      <MenuItem
+                        disabled={verifying === a.id}
+                        onClick={() => {
+                          verificar(a);
+                          close();
+                        }}
+                      >
+                        <ShieldCheck size={14} /> {verifying === a.id ? "Verificando…" : "Verificar sessão"}
+                      </MenuItem>
+                    )}
+                    {a.status === "pronta" && a.automation_status !== "pausada" && (
+                      <MenuItem
+                        onClick={() => {
+                          pauseAccount(a.id).then(refreshAll);
+                          close();
+                        }}
+                      >
+                        <Pause size={14} /> Pausar
+                      </MenuItem>
+                    )}
+                    {a.status === "pronta" && a.automation_status === "pausada" && (
+                      <MenuItem
+                        onClick={() => {
+                          resumeAccount(a.id).then(refreshAll);
+                          close();
+                        }}
+                      >
+                        <Play size={14} /> Retomar
+                      </MenuItem>
+                    )}
+                    <MenuItem
+                      onClick={() => {
+                        setFormFor(a);
+                        close();
+                      }}
+                    >
+                      <Pencil size={14} /> Editar
+                    </MenuItem>
+                    <div className="menu-sep" />
+                    <MenuItem
+                      danger
+                      onClick={() => {
+                        setToDelete(a);
+                        close();
+                      }}
+                    >
+                      <Trash2 size={14} /> Excluir
+                    </MenuItem>
+                  </>
+                )}
+              </DropdownMenu>
             </div>
           </li>
         ))}

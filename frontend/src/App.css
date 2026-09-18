@@ -345,7 +345,7 @@ input:focus, select:focus, textarea:focus {
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .field select, .field input[type="range"] { width: 100%; }
 .field input[type="range"] { accent-color: var(--blue); }
-.checkrow { flex-direction: row; align-items: center; gap: 10px; color: var(--text); font-size: 14px; }
+.checkrow { display: flex; flex-direction: row; align-items: center; gap: 10px; color: var(--text); font-size: 14px; }
 .checkrow input { width: auto; accent-color: var(--blue); }
 
 .result {
@@ -1152,6 +1152,45 @@ code {
 .modal-backdrop--top {
   z-index: 100000;
 }
+
+/* ---------- menu "⋯" (overflow) ---------- */
+.menu-wrap { position: relative; display: inline-flex; }
+.menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 100000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+}
+.menu-dropdown.menu-right { right: 0; }
+.menu-dropdown.menu-left { left: 0; }
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover { background: var(--btn-bg-hover); }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover { background: var(--danger-soft); }
+.menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .modal {
   background: var(--surface);
   border: 1px solid var(--border);

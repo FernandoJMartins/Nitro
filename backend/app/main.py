@@ -36,6 +36,8 @@ _insp = inspect(engine)
 if "pub_proxies" in _insp.get_table_names() and "nome" in {c["name"] for c in _insp.get_columns("pub_proxies")}:
     with engine.begin() as conn:
         conn.execute(text("UPDATE pub_proxies SET nome_interno = nome WHERE nome_interno IS NULL OR nome_interno = ''"))
+        # a coluna "nome" não existe mais no model; removê-la evita NotNullViolation em novos inserts
+        conn.execute(text("ALTER TABLE pub_proxies DROP COLUMN nome"))
 _ensure_column("pub_accounts", "senha_enc", "TEXT")
 _ensure_column("pub_accounts", "sessionid_enc", "TEXT")
 _ensure_column("pub_accounts", "pending_login_data", "TEXT")

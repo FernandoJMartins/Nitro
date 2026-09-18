@@ -21,7 +21,16 @@ async function jsonOrThrow(r: Response) {
     clearToken();
     window.dispatchEvent(new Event("nitro-unauth"));
   }
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || (await r.text()) || "Erro");
+  if (!r.ok) {
+    const raw = await r.text();
+    let detail: string | undefined;
+    try {
+      detail = JSON.parse(raw)?.detail;
+    } catch {
+      // corpo não é JSON
+    }
+    throw new Error(detail || raw || "Erro");
+  }
   return r.status === 204 ? null : r.json();
 }
 
