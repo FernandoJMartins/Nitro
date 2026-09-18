@@ -28,13 +28,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from ...config import settings
 from ...services.video import _EMOJI_RE, _render_emoji_seg
@@ -508,6 +509,9 @@ def fetch_audio_por_link(
 # com Pillow, que já vem instalado): desenhar a pílula branca com o texto do story
 # DENTRO da imagem e posicionar a área de toque do sticker exatamente sobre ela.
 # O texto do story vira o rótulo do botão; emoji colorido usa a fonte da Apple/Noto.
+# Para o botão ser reconhecido de bate-pronto como LINK (igual ao sticker nativo do
+# Instagram), a pílula leva o ícone de corrente à esquerda do rótulo e uma sombra suave.
+# O preview do front (Stories.tsx + .story-preview-link no App.css) espelha estas medidas.
 
 _STORY_W, _STORY_H = 720, 1280
 
@@ -516,9 +520,13 @@ _STORY_W, _STORY_H = 720, 1280
 _STORY_LINK_Y = {"superior": 0.14, "meio": 0.5, "inferior": 0.86}
 
 _PILL_FONT_SIZES = (46, 40, 34, 28)  # reduz quando o texto não cabe
-_PILL_MAX_TEXT_W = 560
-_PILL_PAD_X = 44
+_PILL_MAX_TEXT_W = 500
+_PILL_PAD_X = 36
 _PILL_PAD_Y = 20
+_PILL_ICON_SCALE = 1.3  # lado do ícone de corrente = tamanho da fonte * isto
+_PILL_ICON_GAP_SCALE = 0.3  # espaço ícone↔texto = tamanho da fonte * isto
+_PILL_ICON_COLOR = (0, 149, 246, 255)  # azul do Instagram — "isto é clicável"
+_PILL_SHADOW = (0, 0, 0, 90)
 _PILL_TEXT_COLOR = (12, 12, 12, 255)
 _PILL_BG = (255, 255, 255, 255)
 _PILL_BORDER = (0, 0, 0, 45)  # traço sutil para a pílula não sumir em foto clara
@@ -592,6 +600,92 @@ def _pill_line(linha: str, font, font_size: int) -> Image.Image:
     return canvas
 
 
+# Ícone "Link" do Lucide (viewBox 24x24) — os MESMOS paths que o preview do front usa
+# (lucide-react `Link`), rasterizados aqui com Pillow para o envio ficar idêntico.
+_LUCIDE_LINK_PATHS = (
+    "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
+    "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+)
+_PILL_ICON_STROKE = 2.6  # espessura do traço no viewBox 24 (o front usa o mesmo valor)
+_SVG_TOKEN_RE = re.compile(r"[MmLlAa]|-?\d*\.?\d+(?:e-?\d+)?")
+
+
+def _svg_arc_points(x0: float, y0: float, rx: float, ry: float, fa: int, fs: int, x1: float, y1: float) -> list[tuple[float, float]]:
+    """Arco SVG (sem rotação) do ponto (x0,y0) ao (x1,y1) → polilinha. Conversão
+    endpoint→centro da especificação SVG (F.6.5)."""
+    dx, dy = (x0 - x1) / 2, (y0 - y1) / 2
+    lam = dx * dx / (rx * rx) + dy * dy / (ry * ry)
+    if lam > 1:
+        rx, ry = rx * math.sqrt(lam), ry * math.sqrt(lam)
+    num = rx * rx * ry * ry - rx * rx * dy * dy - ry * ry * dx * dx
+    den = rx * rx * dy * dy + ry * ry * dx * dx
+    coef = (-1 if fa == fs else 1) * math.sqrt(max(0.0, num / den))
+    cxp, cyp = coef * rx * dy / ry, -coef * ry * dx / rx
+    cx, cy = cxp + (x0 + x1) / 2, cyp + (y0 + y1) / 2
+    t1 = math.atan2((dy - cyp) / ry, (dx - cxp) / rx)
+    t2 = math.atan2((-dy - cyp) / ry, (-dx - cxp) / rx)
+    dt = t2 - t1
+    if fs == 0 and dt > 0:
+        dt -= 2 * math.pi
+    elif fs == 1 and dt < 0:
+        dt += 2 * math.pi
+    passos = 32
+    return [(cx + rx * math.cos(t1 + dt * i / passos), cy + ry * math.sin(t1 + dt * i / passos)) for i in range(passos + 1)]
+
+
+def _svg_path_points(d: str) -> list[tuple[float, float]]:
+    """Polilinha de um path SVG que use só M/L/A (absolutos ou relativos) — o
+    suficiente para os ícones do Lucide usados aqui."""
+    tokens = _SVG_TOKEN_RE.findall(d)
+    pts: list[tuple[float, float]] = []
+    x = y = 0.0
+    i = 0
+    cmd = ""
+    while i < len(tokens):
+        if tokens[i].isalpha():
+            cmd = tokens[i]
+            i += 1
+        rel = cmd.islower()
+        if cmd in "Mm":
+            nx, ny = float(tokens[i]), float(tokens[i + 1])
+            i += 2
+            x, y = (x + nx, y + ny) if rel else (nx, ny)
+            pts.append((x, y))
+            cmd = "l" if rel else "L"  # pares seguintes a um M são linhas
+        elif cmd in "Ll":
+            nx, ny = float(tokens[i]), float(tokens[i + 1])
+            i += 2
+            x, y = (x + nx, y + ny) if rel else (nx, ny)
+            pts.append((x, y))
+        elif cmd in "Aa":
+            rx, ry, _rot, fa, fs, nx, ny = (float(t) for t in tokens[i : i + 7])
+            i += 7
+            ex, ey = (x + nx, y + ny) if rel else (nx, ny)
+            pts.extend(_svg_arc_points(x, y, rx, ry, int(fa), int(fs), ex, ey)[1:])
+            x, y = ex, ey
+        else:
+            raise ValueError(f"comando SVG não suportado: {cmd!r}")
+    return pts
+
+
+def _chain_icon(size: int, color: tuple[int, int, int, int]) -> Image.Image:
+    """Ícone `Link` do Lucide em RGBA transparente, size x size. Traço arredondado
+    desenhado em supersampling 8x e reduzido, para ficar sem serrilhado."""
+    ss = 8
+    lado = size * ss
+    k = lado / 24  # viewBox 24x24 -> pixels
+    largura = round(_PILL_ICON_STROKE * k)
+    raio = largura / 2
+    big = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+    d = ImageDraw.Draw(big)
+    for path in _LUCIDE_LINK_PATHS:
+        pts = [(px * k, py * k) for px, py in _svg_path_points(path)]
+        d.line(pts, fill=color, width=largura)
+        for px, py in pts:  # círculo em cada vértice: junções e pontas arredondadas (round cap/join)
+            d.ellipse((px - raio, py - raio, px + raio, py + raio), fill=color)
+    return big.resize((size, size), Image.LANCZOS)
+
+
 def _render_story_pill(origem: str, texto: str, link: str, posicao: str | None) -> tuple[Path, dict]:
     """Desenha a pílula do link na imagem do story (canvas 720x1280) e devolve
     (arquivo renderizado, sticker). O dict segue o contrato do StorySticker do
@@ -629,7 +723,9 @@ def _render_story_pill(origem: str, texto: str, link: str, posicao: str | None) 
     largura_texto = max(im.width for im in imagens)
     altura_linha = max(im.height for im in imagens)
     passo = round(altura_linha * 1.25)
-    pw = largura_texto + 2 * _PILL_PAD_X
+    icone_lado = round(font.size * _PILL_ICON_SCALE)
+    icone_gap = round(font.size * _PILL_ICON_GAP_SCALE)
+    pw = 2 * _PILL_PAD_X + icone_lado + icone_gap + largura_texto
     ph = 2 * _PILL_PAD_Y + (len(imagens) - 1) * passo + altura_linha
 
     x_centro = _STORY_W // 2
@@ -642,12 +738,20 @@ def _render_story_pill(origem: str, texto: str, link: str, posicao: str | None) 
     d.rounded_rectangle(
         (0, 0, pw - 1, ph - 1), radius=ph // 2, fill=_PILL_BG, outline=_PILL_BORDER, width=2
     )
+    pill.alpha_composite(_chain_icon(icone_lado, _PILL_ICON_COLOR), (_PILL_PAD_X, (ph - icone_lado) // 2))
+    texto_x0 = _PILL_PAD_X + icone_lado + icone_gap
     y = _PILL_PAD_Y
     for im in imagens:
-        pill.alpha_composite(im, ((pw - im.width) // 2, y))
+        pill.alpha_composite(im, (texto_x0 + (largura_texto - im.width) // 2, y))
         y += passo
 
     fundo = canvas.convert("RGBA")
+    # sombra suave sob a pílula: destaca o botão em foto clara e reforça o "sticker"
+    sombra = Image.new("RGBA", fundo.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sombra).rounded_rectangle(
+        (x0, y0 + 6, x0 + pw - 1, y0 + ph + 5), radius=ph // 2, fill=_PILL_SHADOW
+    )
+    fundo.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(12)))
     fundo.alpha_composite(pill, (x0, y0))
     fd, nome = tempfile.mkstemp(suffix=".jpg")
     os.close(fd)

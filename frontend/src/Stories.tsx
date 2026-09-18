@@ -9,6 +9,7 @@ import {
   Clock,
   ImagePlus,
   Library,
+  Link as LinkIcon,
   Link2,
   Loader,
   MessageSquare,
@@ -110,6 +111,15 @@ function Secao({ n, titulo, dica }: { n: number; titulo: string; dica?: string }
   );
 }
 
+/** Sem texto, o botão mostra o domínio do link (igual ao envio no Instagram). */
+function hostDoLink(link: string): string {
+  try {
+    return new URL(link.trim()).host || "Link";
+  } catch {
+    return "Link";
+  }
+}
+
 /** Prévia 9:16 do story do modelo — mesma ideia do preview de "Criar". */
 function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<number, Media> }) {
   const [frameIdx, setFrameIdx] = useState(0);
@@ -132,7 +142,8 @@ function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<numb
         {!modelo.link && modelo.texto_extra && <div className="story-preview-extra">{modelo.texto_extra}</div>}
         {modelo.link && (
           <div className={`story-preview-link pos-${modelo.link_posicao || "inferior"}`}>
-            {modelo.texto.trim() || "Link"}
+            <LinkIcon className="story-preview-link-icon" strokeWidth={2.6} />
+            <span className="story-preview-link-label">{modelo.texto.trim() || hostDoLink(modelo.link)}</span>
           </div>
         )}
       </div>

@@ -943,15 +943,26 @@ code {
   width: 88%; text-align: center; color: #fff; font-weight: 600;
   font-size: 12px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); pointer-events: none;
 }
+/* Botão de link: espelha a pílula desenhada no envio (_render_story_pill, canvas 720px).
+   As medidas são em cqw (1cqw = 1% da largura do preview) para manter as proporções em
+   qualquer tamanho: fonte 46px = 6.4cqw, ícone 1.3x a fonte, padding 36x20px, sombra suave. */
+.story-preview .preview-canvas { container-type: inline-size; }
 .story-preview-link {
-  position: absolute; left: 50%; transform: translateX(-50%);
-  background: rgba(255, 255, 255, 0.92); color: #111; border-radius: 999px;
-  padding: 2px 10px; font-size: 11px; font-weight: 700; pointer-events: none;
-  max-width: 88%; text-align: center; overflow-wrap: anywhere;
+  position: absolute; left: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 1.9cqw;
+  background: #fff; color: #0c0c0c; border-radius: 999px;
+  padding: 2.8cqw 5cqw; width: max-content; max-width: 90cqw; box-sizing: border-box;
+  font-family: "Liberation Sans", Arial, Helvetica, sans-serif;
+  font-size: 6.4cqw; line-height: 1.25; font-weight: 700;
+  border: 0.3cqw solid rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1cqw 3cqw rgba(0, 0, 0, 0.4);
+  pointer-events: none;
 }
-.story-preview-link.pos-superior { top: 4%; }
-.story-preview-link.pos-meio { top: 47%; }
-.story-preview-link.pos-inferior { bottom: 6%; }
+.story-preview-link-icon { flex: none; width: 8.3cqw; height: 8.3cqw; color: #0095f6; }
+.story-preview-link-label { min-width: 0; max-width: 69.5cqw; text-align: center; overflow-wrap: anywhere; }
+.story-preview-link.pos-superior { top: 14%; }
+.story-preview-link.pos-meio { top: 50%; }
+.story-preview-link.pos-inferior { top: 86%; }
 @media (max-width: 900px) {
   .smodel-row { flex-direction: column; }
   .story-preview { width: 100%; }

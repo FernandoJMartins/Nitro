@@ -393,8 +393,8 @@ def test_story_sem_link_nao_passa_stickers_none():
 
 
 def test_render_story_pill_desenha_pilula_branca_com_texto_preto():
-    """A pílula é desenhada na imagem: fundo branco, texto preto e o sticker
-    cobrindo exatamente a pílula (frações da tela)."""
+    """A pílula é desenhada na imagem: fundo branco, ícone de corrente azul, texto
+    preto e o sticker cobrindo exatamente a pílula (frações da tela)."""
     from PIL import Image
 
     from app.publishing.platforms.instagram import _render_story_pill
@@ -427,6 +427,15 @@ def test_render_story_pill_desenha_pilula_branca_com_texto_preto():
                 assert _tem_pixel(
                     im, *banda,
                     lambda r, g, b: r < 80 and g < 80 and b < 80,
+                )
+                # ícone de corrente (azul) à esquerda do rótulo: é o que identifica o link
+                assert _tem_pixel(
+                    im,
+                    x0 - pw // 2 + _PILL_PAD_X,
+                    y0 - ph // 2 + _PILL_PAD_Y,
+                    _PILL_PAD_X,
+                    ph - 2 * _PILL_PAD_Y,
+                    lambda r, g, b: b > 200 and r < 60 and 100 < g < 200,
                 )
                 from app.services.video import _emoji_font
 
