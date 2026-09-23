@@ -268,6 +268,11 @@ class StoryPlan(Base):
     # posição do link/sticker do story: 'superior' | 'meio' | 'inferior' (padrão de envio: inferior)
     link_posicao: Mapped[str | None] = mapped_column(String(16), nullable=True)
     texto_extra: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # posição PRÓPRIA do texto extra: TOTALMENTE livre (fração da tela 0..1,
+    # arrastada no preview) — desenhado à parte do texto principal, NUNCA
+    # concatenado com ele. None/ausente = centro (0.5, 0.5).
+    texto_extra_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    texto_extra_y: Mapped[float | None] = mapped_column(Float, nullable=True)
     ultima_geracao_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -286,6 +291,62 @@ class StoryFrame(Base):
     texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     link: Mapped[str | None] = mapped_column(String(512), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SharedStoryPlan(Base):
+    """Um story configurado UMA VEZ e postado em VÁRIAS contas — evita recadastrar
+    o mesmo story conta por conta (texto, link, imagens, posições...). As contas-
+    alvo (e o dedup diário DE CADA UMA) vivem em SharedStoryTarget: cada conta tem
+    seu próprio fuso/horário de postagem, então não dá pra ter um marcador só.
+    """
+
+    __tablename__ = "pub_shared_story_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    horario: Mapped[str] = mapped_column(String(5), default="18:00")  # "HH:MM"
+    texto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    link_posicao: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    texto_extra: Mapped[str | None] = mapped_column(Text, nullable=True)
+    texto_extra_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    texto_extra_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SharedStoryFrame(Base):
+    """Uma imagem (frame) da sequência de um SharedStoryPlan — mesma ideia do StoryFrame."""
+
+    __tablename__ = "pub_shared_story_frames"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shared_story_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("pub_shared_story_plans.id", ondelete="CASCADE"), index=True
+    )
+    media_id: Mapped[int] = mapped_column(Integer)
+    ordem: Mapped[int] = mapped_column(Integer, default=0)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SharedStoryTarget(Base):
+    """Uma conta-alvo de um SharedStoryPlan: liga o story compartilhado à conta E
+    guarda o ``ultima_geracao_em`` PRÓPRIO dela — cada conta gera (ou não) o story
+    do dia de forma independente, no fuso/horário dela."""
+
+    __tablename__ = "pub_shared_story_targets"
+    __table_args__ = (UniqueConstraint("shared_story_plan_id", "account_id", name="uq_shared_story_target"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shared_story_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("pub_shared_story_plans.id", ondelete="CASCADE"), index=True
+    )
+    account_id: Mapped[int] = mapped_column(ForeignKey("pub_accounts.id", ondelete="CASCADE"), index=True)
+    ultima_geracao_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    plan: Mapped["SharedStoryPlan"] = relationship()
+    account: Mapped["Account"] = relationship()
 
 
 class Content(Base):
@@ -315,6 +376,10 @@ class Content(Base):
     # posição do link do story ('superior' | 'meio' | 'inferior') — snapshot no momento da geração
     link_posicao: Mapped[str | None] = mapped_column(String(16), nullable=True)
     texto_extra: Mapped[str | None] = mapped_column(Text, nullable=True)  # texto extra opcional do story
+    # posição PRÓPRIA do texto extra — snapshot no momento da geração, TOTALMENTE
+    # livre (fração da tela 0..1, arrastada no preview). None = centro.
+    texto_extra_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    texto_extra_y: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     approval_status: Mapped[str] = mapped_column(String(16), default="pendente", index=True)
     # 'pendente' | 'aprovado' | 'rejeitado'

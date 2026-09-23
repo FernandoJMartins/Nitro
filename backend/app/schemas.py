@@ -149,6 +149,27 @@ class BulkRequest(BaseModel):
     # duração é um RANGE: cada vídeo pega um valor aleatório entre min e max.
     duration_min: float = 5.0
     duration_max: float = 8.0
+    # se a mídia base sorteada for um VÍDEO mais curto que a duração escolhida:
+    # False (padrão) -> usa a duração natural do vídeo, SEM repetir (loop) para
+    #                   completar o tempo mínimo (evita o "reinício" abrupto);
+    # True            -> repete o vídeo em loop até atingir a duração escolhida
+    #                   (comportamento antigo). Não afeta fotos (sempre "loopam"
+    #                   como fundo estático, pois não têm duração própria).
+    loop_video: bool = False
+    # áudio ORIGINAL do vídeo de fundo (e do clipe final, se houver): True (padrão)
+    # mantém esse áudio; se também houver música escolhida, os dois são MIXADOS
+    # juntos (nenhum substitui o outro). False descarta o áudio original.
+    keep_original_audio: bool = True
+
+    # ---- Ordem de sorteio de cada pool: "random" (padrão) ou "sequential" ----
+    # "sequential" percorre o pool na ordem enviada, um item por vídeo do lote
+    # (dá a volta quando chega ao fim) — garante variedade mesmo em pools pequenos.
+    order_base: str = "random"      # mídia base (vídeos/fotos)
+    order_music: str = "random"     # músicas
+    order_hot: str = "random"       # fotos hot (tipo "pause")
+    order_overlay: str = "random"   # imagens estáticas (tipo "imagem")
+    order_final: str = "random"     # clipes finais (tipo "final")
+    order_text: str = "random"      # textos (frases), por tipo de frase usado
 
     # ---- Tipos de vídeo (marque 1 ou vários — sorteado por vídeo) ----
     # subconjunto de: "pause" (flash hot) | "imagem" (imagem estática) | "final" (clipe final)

@@ -216,7 +216,12 @@ class StoryPlanUpdate(BaseModel):
     texto: str | None = None
     link: str | None = None
     link_posicao: str | None = None  # 'superior' | 'meio' | 'inferior'
+    # texto extra é INDEPENDENTE do texto principal: nunca concatenado, tem sua
+    # PRÓPRIA posição, totalmente livre (fração da tela 0..1, arrastada no
+    # preview) — não presa a topo/meio/baixo como o link.
     texto_extra: str | None = None
+    texto_extra_x: float | None = None
+    texto_extra_y: float | None = None
     frames: list[StoryFrameUpdate] = []
 
 
@@ -240,7 +245,46 @@ class StoryPlanOut(BaseModel):
     link: str | None
     link_posicao: str | None
     texto_extra: str | None
+    texto_extra_x: float | None
+    texto_extra_y: float | None
     ultima_geracao_em: datetime | None
+
+
+# ---------- Stories compartilhados (1 story -> várias contas) ----------
+class SharedStoryUpdate(BaseModel):
+    """Um story cadastrado UMA VEZ e postado em várias contas escolhidas — evita
+    recadastrar o mesmo story conta por conta. Editar e salvar de novo atualiza
+    o story em TODAS as contas-alvo de uma vez (fonte única, sem retrabalho)."""
+
+    enabled: bool = True
+    horario: str
+    texto: str | None = None
+    link: str | None = None
+    link_posicao: str | None = None
+    texto_extra: str | None = None
+    texto_extra_x: float | None = None
+    texto_extra_y: float | None = None
+    account_ids: list[int] = []  # contas que vão receber este story
+    frames: list[StoryFrameUpdate] = []
+
+
+class SharedStoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    enabled: bool
+    horario: str
+    media_ids: list[int]
+    texto: str | None
+    link: str | None
+    link_posicao: str | None
+    texto_extra: str | None
+    texto_extra_x: float | None
+    texto_extra_y: float | None
+    # conta -> quando foi gerado por último NESSA conta (None = nunca, nesta conta)
+    account_ids: list[int]
+    ultima_geracao_por_conta: dict[int, datetime | None]
+    criado_em: datetime
 
 
 class StoryHistoryOut(BaseModel):

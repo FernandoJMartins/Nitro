@@ -14,7 +14,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...models import Media
-from ..models import Account, Content, ContentMedia, Publication, StoryConfig, StoryFrame, StoryPlan
+from ..models import (
+    Account,
+    Content,
+    ContentMedia,
+    Publication,
+    SharedStoryFrame,
+    SharedStoryTarget,
+    StoryConfig,
+    StoryFrame,
+    StoryPlan,
+)
 from .scheduling import _aware, _parse_hhmm, _window_tz
 
 
@@ -40,6 +50,8 @@ def _create_story_content(
     *,
     link_posicao: str | None = None,
     texto_extra: str | None = None,
+    texto_extra_x: float | None = None,
+    texto_extra_y: float | None = None,
 ) -> Content:
     scheduled_at = _scheduled_for(today, horario, tz)
     content = Content(
@@ -51,6 +63,8 @@ def _create_story_content(
         link=link,
         link_posicao=link_posicao,
         texto_extra=texto_extra,
+        texto_extra_x=texto_extra_x,
+        texto_extra_y=texto_extra_y,
         account_id=account.id,
         approval_status="aprovado",  # stories automáticos seguem a config já aprovada pelo usuário
         schedule_mode="especifico",
@@ -140,6 +154,8 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
                 tz,
                 link_posicao=plan.link_posicao,
                 texto_extra=plan.texto_extra,
+                texto_extra_x=plan.texto_extra_x,
+                texto_extra_y=plan.texto_extra_y,
             )
             created.append(content)
             plan.ultima_geracao_em = agora
@@ -149,6 +165,75 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
     db.commit()
     for c in created:
         db.refresh(c)
+    return created
+
+
+def _frames_of_shared_plan(db: Session, plan_id: int) -> list[str]:
+    """Caminhos das mídias de um SharedStoryPlan, na ordem — mesma ideia de
+    ``_frames_of_plan``, sem texto/link por frame (só existem no StoryPlan legado)."""
+    frames = list(
+        db.scalars(
+            select(SharedStoryFrame).where(SharedStoryFrame.shared_story_plan_id == plan_id).order_by(SharedStoryFrame.ordem)
+        )
+    )
+    caminhos: list[str] = []
+    for frame in frames:
+        media = db.get(Media, frame.media_id)
+        if media is not None:
+            caminhos.append(media.caminho)
+    return caminhos
+
+
+def ensure_daily_shared_stories(db: Session, account: Account, *, today: date | None = None) -> list[Content]:
+    """Gera os stories COMPARTILHADOS do dia para a conta: um Content por
+    SharedStoryTarget dela com horário ainda não executado hoje (dia LOCAL da
+    conta). Mesma ideia de ``ensure_daily_stories``, mas a configuração (texto,
+    link, imagens...) é UMA SÓ, compartilhada entre várias contas — só o dedup
+    diário (``ultima_geracao_em``) é por conta, porque cada uma tem seu fuso."""
+    if not account.ativa:
+        return []
+
+    tz = _window_tz(db, account)
+    today = today or datetime.now(timezone.utc).astimezone(tz).date()
+    agora = datetime.now(timezone.utc)
+    created: list[Content] = []
+
+    targets = list(
+        db.scalars(
+            select(SharedStoryTarget).where(
+                SharedStoryTarget.account_id == account.id,
+                SharedStoryTarget.plan.has(enabled=True),
+            )
+        )
+    )
+    for target in targets:
+        if _ja_gerado_hoje(target.ultima_geracao_em, tz, today):
+            continue
+        plan = target.plan
+        paths = _frames_of_shared_plan(db, plan.id)
+        if not paths:
+            continue
+        content = _create_story_content(
+            db,
+            account,
+            paths,
+            plan.horario,
+            plan.texto,
+            plan.link,
+            today,
+            tz,
+            link_posicao=plan.link_posicao,
+            texto_extra=plan.texto_extra,
+            texto_extra_x=plan.texto_extra_x,
+            texto_extra_y=plan.texto_extra_y,
+        )
+        created.append(content)
+        target.ultima_geracao_em = agora
+
+    if created:
+        db.commit()
+        for c in created:
+            db.refresh(c)
     return created
 
 

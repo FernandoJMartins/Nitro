@@ -3,6 +3,7 @@ import {
   bulkGenerate,
   downloadUrl,
   downloadVideoZip,
+  fontFileUrl,
   getHistory,
   getJob,
   importFromGenerator,
@@ -19,6 +20,7 @@ import {
   type Job,
   type Media,
   type PhraseType,
+  type PoolOrder,
   type PubAccount,
 } from "./api";
 
@@ -43,6 +45,8 @@ function FolderPicker({
   sel,
   toggle,
   setSel,
+  order,
+  setOrder,
 }: {
   label: string;
   folders: Folder[];
@@ -54,6 +58,8 @@ function FolderPicker({
   sel: Set<number>;
   toggle: (id: number) => void;
   setSel: React.Dispatch<React.SetStateAction<Set<number>>>;
+  order: PoolOrder;
+  setOrder: (v: PoolOrder) => void;
 }) {
   const selCount = items.filter((m) => sel.has(m.id)).length;
   const chosen = folders.find((f) => f.id === folderId);
@@ -96,10 +102,14 @@ function FolderPicker({
             </button>
           </div>
 
+          {items.length > 1 && (
+            <OrderToggle value={order} onChange={setOrder} label="Ordem no lote:" />
+          )}
+
           {mode === "whole" && (
             <div className="picker-note">
               {items.length > 0
-                ? `Todos os ${items.length} itens de ${chosen?.nome ?? "esta pasta"} serão sorteados por vídeo.`
+                ? `Todos os ${items.length} itens de ${chosen?.nome ?? "esta pasta"} serão ${order === "sequential" ? "usados em sequência (um por vídeo, repetindo do início)" : "sorteados"} por vídeo.`
                 : "Esta pasta está vazia deste tipo. Envie mídias em Mídias → Pastas."}
             </div>
           )}
@@ -141,6 +151,19 @@ function FolderPicker({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// Título de seção numerado (mesmo padrão usado em Stories/PublishDashboard) —
+// dá ao fluxo de criação passos claros e escaneáveis: 1) base, 2) estilo do
+// texto, 3) tipos de vídeo, 4) quantidade/duração.
+function Secao({ n, titulo, dica }: { n: number; titulo: string; dica?: string }) {
+  return (
+    <div className="section-title">
+      <span className="step">{n}</span>
+      {titulo}
+      {dica && <span className="hint">{dica}</span>}
     </div>
   );
 }
@@ -233,6 +256,43 @@ function FontSizeControl({ value, onChange }: { value: number; onChange: (v: num
         </button>
       </div>
     </label>
+  );
+}
+
+// Ordem de sorteio de um pool: aleatório (padrão) ou sequencial (round-robin —
+// percorre o pool na ordem, dá a volta ao chegar no fim). Usado em TODOS os pools
+// sorteados por vídeo (mídia base, músicas, fotos hot, imagens, clipes, textos).
+function OrderToggle({
+  value,
+  onChange,
+  label,
+}: {
+  value: PoolOrder;
+  onChange: (v: PoolOrder) => void;
+  label?: string;
+}) {
+  return (
+    <div className="order-toggle">
+      {label && <span className="order-toggle-label">{label}</span>}
+      <div className="seg seg-sm">
+        <button
+          type="button"
+          className={value === "random" ? "seg-btn active" : "seg-btn"}
+          onClick={() => onChange("random")}
+          title="Cada vídeo sorteia um item ao acaso do pool."
+        >
+          🎲 Aleatório
+        </button>
+        <button
+          type="button"
+          className={value === "sequential" ? "seg-btn active" : "seg-btn"}
+          onClick={() => onChange("sequential")}
+          title="Percorre o pool em ordem, um item por vídeo (dá a volta no fim) — garante variedade."
+        >
+          🔢 Sequencial
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -390,6 +450,44 @@ function DistortedTextCanvas({
   }, [text, fontCss, fontSize, fisheye]);
 
   return <canvas ref={ref} className="dist-canvas" style={{ width: `${css.w}px`, height: `${css.h}px` }} />;
+}
+
+// Nome de família CSS válido a partir de um id de fonte (que pode ter ":" e ".").
+function fontFamilyName(id: string): string {
+  return `nitro-font-${id.replace(/[^a-zA-Z0-9]/g, "_")}`;
+}
+
+// Carrega o ARQUIVO real de cada fonte (ttf/otf) como uma web font (FontFace),
+// em vez de confiar no nome CSS aproximado (ex.: "Impact") — que pode nem
+// existir no sistema operacional de quem está editando. Sem isso, o preview
+// caía silenciosamente numa fonte genérica para qualquer opção que não fosse a
+// padrão, dando a impressão de que a distorção "só funciona na fonte padrão"
+// (na verdade a distorção sempre funcionou — só o preview não refletia a fonte
+// escolhida). Devolve um mapa id -> família CSS pronta pra usar.
+function useWebFonts(fonts: Font[]): Record<string, string> {
+  const [map, setMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    setMap({});
+    (async () => {
+      for (const f of fonts) {
+        const family = fontFamilyName(f.id);
+        try {
+          const face = new FontFace(family, `url(${fontFileUrl(f.id)})`);
+          await face.load();
+          if (cancelled) return;
+          document.fonts.add(face);
+          setMap((prev) => ({ ...prev, [f.id]: family }));
+        } catch {
+          if (!cancelled) setMap((prev) => ({ ...prev, [f.id]: f.css })); // falhou: cai no CSS aproximado
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fonts]);
+  return map;
 }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -598,6 +696,9 @@ export default function Create() {
   const [musics, setMusics] = useState<Media[]>([]);
   const [types, setTypes] = useState<PhraseType[]>([]);
   const [fonts, setFonts] = useState<Font[]>([]);
+  // fonte real (arquivo) de cada opção, carregada como web font — preview fiel
+  // ao vídeo final mesmo quando o SO de quem edita não tem a fonte instalada.
+  const fontFamilyMap = useWebFonts(fonts);
 
   // base (vídeos + fotos de uma pasta)
   const [baseFolderId, setBaseFolderId] = useState<number | null>(null);
@@ -638,6 +739,19 @@ export default function Create() {
   const [quantidade, setQuantidade] = useState(5);
   const [durMin, setDurMin] = useState(5);
   const [durMax, setDurMax] = useState(8);
+  // vídeo de fundo mais curto que a duração escolhida: por padrão NÃO repete em
+  // loop (usa a duração natural do vídeo, sem "reiniciar" no meio do post).
+  const [loopVideo, setLoopVideo] = useState(false);
+  // áudio ORIGINAL do vídeo de fundo: por padrão mantém — se também houver
+  // música escolhida, os dois tocam JUNTOS (mixados), nenhum substitui o outro.
+  const [keepOriginalAudio, setKeepOriginalAudio] = useState(true);
+  // ordem de sorteio de cada pool: aleatório (padrão) ou sequencial (round-robin)
+  const [orderBase, setOrderBase] = useState<PoolOrder>("random");
+  const [orderMusic, setOrderMusic] = useState<PoolOrder>("random");
+  const [orderHot, setOrderHot] = useState<PoolOrder>("random");
+  const [orderOverlay, setOrderOverlay] = useState<PoolOrder>("random");
+  const [orderFinal, setOrderFinal] = useState<PoolOrder>("random");
+  const [orderText, setOrderText] = useState<PoolOrder>("random");
   // tipo de frase POR tipo de vídeo (cada tipo tem seus próprios textos)
   const [ptPause, setPtPause] = useState<number | null>(null);
   const [ptImagem, setPtImagem] = useState<number | null>(null);
@@ -791,6 +905,14 @@ export default function Create() {
         gerar_legenda_ia: false,
         duration_min: Math.min(durMin, durMax),
         duration_max: Math.max(durMin, durMax),
+        loop_video: loopVideo,
+        keep_original_audio: keepOriginalAudio,
+        order_base: orderBase,
+        order_music: orderMusic,
+        order_hot: orderHot,
+        order_overlay: orderOverlay,
+        order_final: orderFinal,
+        order_text: orderText,
         video_types: [...video_types],
         hot_media_ids: hotIds,
         overlay_media_ids: ovIds,
@@ -902,8 +1024,19 @@ export default function Create() {
     mode === "whole" ? items[0] : items.find((m) => sel.has(m.id));
   const bgMedia = pickFirst(baseMode, baseItems, baseSel);
   const ovMedia = pickFirst(ovMode, ovItems, ovSel);
+  const activeTypeLabels = [
+    typePause && "pause",
+    typeImagem && "imagem",
+    typeFinal && "final",
+    typeTexto && "texto",
+  ].filter(Boolean) as string[];
+  const typesSummary = activeTypeLabels.length > 0 ? ` · ${activeTypeLabels.join(" + ")}` : " · vídeo simples (sem tipo)";
   const sampleText = "Seu texto aparece aqui";
-  const selectedFontCss = fonts.find((f) => f.id === fontId)?.css || "inherit";
+  // fonte REAL carregada (web font) quando disponível — cai no nome CSS aproximado
+  // enquanto ainda carrega. Garante que o preview (inclusive com fisheye) reflita
+  // fielmente a fonte escolhida, mesmo que ela não exista no SO de quem edita.
+  const selectedFontCss =
+    (fontId && fontFamilyMap[fontId]) || fonts.find((f) => f.id === fontId)?.css || "inherit";
   // tamanho da fonte do tipo ativo (o primeiro habilitado com texto) para refletir no preview
   const activeFontSize =
     (typePause && ptPause != null) ? fsPause :
@@ -940,8 +1073,9 @@ export default function Create() {
         />
 
       <div className="form create-form-col">
+        <Secao n={1} titulo="Base do vídeo" dica="Vídeos e fotos que servem de fundo — um é sorteado por vídeo gerado." />
         <FolderPicker
-          label="Base — vídeos e fotos (sorteados por vídeo)"
+          label="Base — vídeos e fotos"
           folders={folders}
           folderId={baseFolderId}
           setFolderId={setBaseFolderId}
@@ -951,10 +1085,30 @@ export default function Create() {
           sel={baseSel}
           toggle={toggler(setBaseSel)}
           setSel={setBaseSel}
+          order={orderBase}
+          setOrder={setOrderBase}
         />
 
         <label className="field">
-          <span>Músicas (universais, sorteadas por vídeo)</span>
+          <span>Áudio do vídeo de fundo</span>
+          <label className="checkrow">
+            <input
+              type="checkbox"
+              checked={keepOriginalAudio}
+              onChange={(e) => setKeepOriginalAudio(e.target.checked)}
+            />
+            <span>Manter o áudio original</span>
+          </label>
+          <div className="hint">
+            {keepOriginalAudio
+              ? "Se você também escolher música abaixo, os dois áudios tocam JUNTOS (mixados) — a música não substitui o áudio original."
+              : "Áudio original desligado: sem música o vídeo sai mudo; com música, só ela toca."}
+          </div>
+        </label>
+
+        <label className="field">
+          <span>Músicas (universais)</span>
+          {musics.length > 1 && <OrderToggle value={orderMusic} onChange={setOrderMusic} label="Ordem no lote:" />}
           <div className="checklist">
             {musics.map((m) => (
               <label key={m.id} className={musicSel.has(m.id) ? "chk picked" : "chk"}>
@@ -966,6 +1120,7 @@ export default function Create() {
           </div>
         </label>
 
+        <Secao n={2} titulo="Estilo do texto" dica="Fonte, tamanho e distorção do texto que aparece dentro do vídeo." />
         <label className="field">
           <span>Fonte do texto</span>
           <select
@@ -975,13 +1130,15 @@ export default function Create() {
           >
             {fonts.length === 0 && <option value="">— padrão —</option>}
             {fonts.map((f) => (
-              <option key={f.id} value={f.id} style={{ fontFamily: f.css, fontWeight: 700 }}>
+              <option key={f.id} value={f.id} style={{ fontFamily: fontFamilyMap[f.id] || f.css, fontWeight: 700 }}>
                 {f.nome}
               </option>
             ))}
           </select>
           <div className="hint">Para adicionar fontes (ex.: um .ttf que você tenha), solte o arquivo em <code>storage/fonts</code>.</div>
         </label>
+
+        <OrderToggle value={orderText} onChange={setOrderText} label="Ordem dos textos (todos os tipos):" />
 
         <div className="field">
           <label className="checkrow">
@@ -1000,109 +1157,116 @@ export default function Create() {
               </select>
               <div className="hint">
                 Deformação não-linear do texto renderizado (estilo Instagram Edits): o centro fica expandido e
-                as pontas comprimidas/curvadas. O preview mostra exatamente a mesma transformação do vídeo.
+                as pontas comprimidas/curvadas. Funciona com QUALQUER fonte da lista acima — o preview carrega o
+                arquivo real de cada fonte, então mostra exatamente a mesma transformação do vídeo final.
               </div>
             </label>
           )}
         </div>
 
-        {/* ---------- Tipos de vídeo ---------- */}
-        <div className="field">
-          <span>Tipos de vídeo — marque 1 ou vários (sorteado por vídeo no lote)</span>
-          <div className="typecards">
-            <TypeCard
-              icon="⏸️"
-              title="Desafio do pause"
-              desc="Flash subliminar (~0,1s) de uma foto hot no meio do vídeo."
-              checked={typePause}
-              onToggle={setTypePause}
-            >
-              <FolderPicker
-                label="Fotos hot (sorteadas por vídeo)"
-                folders={folders}
-                folderId={hotFolderId}
-                setFolderId={setHotFolderId}
-                mode={hotMode}
-                setMode={setHotMode}
-                items={hotItems}
-                sel={hotSel}
-                toggle={toggler(setHotSel)}
-                setSel={setHotSel}
-              />
-              <PhraseSelect types={types} value={ptPause} onChange={setPtPause} />
-              <FontSizeControl value={fsPause} onChange={setFsPause} />
-            </TypeCard>
+        <Secao n={3} titulo="Tipos de vídeo" dica="Marque 1 ou vários — um é sorteado por vídeo dentro do lote." />
 
-            <TypeCard
-              icon="🏷️"
-              title="Imagem estática"
-              desc="Uma imagem fixa no topo ou embaixo, acima do texto. Exige textos."
-              checked={typeImagem}
-              onToggle={setTypeImagem}
-            >
-              <div className="hint">👉 Arraste a imagem no preview ao lado para escolher onde ela aparece.</div>
-              <label className="field">
-                <span>Tamanho da imagem: {Math.round(ovScale * 100)}%</span>
-                <input
-                  type="range"
-                  min={0.3}
-                  max={2.5}
-                  step={0.05}
-                  value={ovScale}
-                  onChange={(e) => setOvScale(Number(e.target.value))}
-                />
-              </label>
-              <FolderPicker
-                label="Imagens estáticas (sorteadas por vídeo)"
-                folders={folders}
-                folderId={ovFolderId}
-                setFolderId={setOvFolderId}
-                mode={ovMode}
-                setMode={setOvMode}
-                items={ovItems}
-                sel={ovSel}
-                toggle={toggler(setOvSel)}
-                setSel={setOvSel}
-              />
-              <PhraseSelect types={types} value={ptImagem} onChange={setPtImagem} required />
-              <FontSizeControl value={fsImagem} onChange={setFsImagem} />
-            </TypeCard>
+        <div className="typecards">
+          <TypeCard
+            icon="⏸️"
+            title="Desafio do pause"
+            desc="Flash subliminar (~0,1s) de uma foto hot no meio do vídeo."
+            checked={typePause}
+            onToggle={setTypePause}
+          >
+            <FolderPicker
+              label="Fotos hot"
+              folders={folders}
+              folderId={hotFolderId}
+              setFolderId={setHotFolderId}
+              mode={hotMode}
+              setMode={setHotMode}
+              items={hotItems}
+              sel={hotSel}
+              toggle={toggler(setHotSel)}
+              setSel={setHotSel}
+              order={orderHot}
+              setOrder={setOrderHot}
+            />
+            <PhraseSelect types={types} value={ptPause} onChange={setPtPause} />
+            <FontSizeControl value={fsPause} onChange={setFsPause} />
+          </TypeCard>
 
-            <TypeCard
-              icon="🎞️"
-              title="Clipe final"
-              desc="Um vídeo/foto extra no fim do vídeo, com o mesmo texto."
-              checked={typeFinal}
-              onToggle={setTypeFinal}
-            >
-              <FolderPicker
-                label="Clipes finais — vídeos ou fotos (sorteados por vídeo)"
-                folders={folders}
-                folderId={finFolderId}
-                setFolderId={setFinFolderId}
-                mode={finMode}
-                setMode={setFinMode}
-                items={finItems}
-                sel={finSel}
-                toggle={toggler(setFinSel)}
-                setSel={setFinSel}
+          <TypeCard
+            icon="🏷️"
+            title="Imagem estática"
+            desc="Uma imagem fixa no topo ou embaixo, acima do texto. Exige textos."
+            checked={typeImagem}
+            onToggle={setTypeImagem}
+          >
+            <div className="hint">👉 Arraste a imagem no preview ao lado para escolher onde ela aparece.</div>
+            <label className="field">
+              <span>Tamanho da imagem: {Math.round(ovScale * 100)}%</span>
+              <input
+                type="range"
+                min={0.3}
+                max={2.5}
+                step={0.05}
+                value={ovScale}
+                onChange={(e) => setOvScale(Number(e.target.value))}
               />
-              <PhraseSelect types={types} value={ptFinal} onChange={setPtFinal} />
-              <FontSizeControl value={fsFinal} onChange={setFsFinal} />
-            </TypeCard>
+            </label>
+            <FolderPicker
+              label="Imagens estáticas"
+              folders={folders}
+              folderId={ovFolderId}
+              setFolderId={setOvFolderId}
+              mode={ovMode}
+              setMode={setOvMode}
+              items={ovItems}
+              sel={ovSel}
+              toggle={toggler(setOvSel)}
+              setSel={setOvSel}
+              order={orderOverlay}
+              setOrder={setOrderOverlay}
+            />
+            <PhraseSelect types={types} value={ptImagem} onChange={setPtImagem} required />
+            <FontSizeControl value={fsImagem} onChange={setFsImagem} />
+          </TypeCard>
 
-            <TypeCard
-              icon="🔤"
-              title="Apenas texto"
-              desc="Só o vídeo base com o texto por cima — sem foto hot, imagem ou clipe. Exige textos."
-              checked={typeTexto}
-              onToggle={setTypeTexto}
-            >
-              <PhraseSelect types={types} value={ptTexto} onChange={setPtTexto} required />
-              <FontSizeControl value={fsTexto} onChange={setFsTexto} />
-            </TypeCard>
-          </div>
+          <TypeCard
+            icon="🎞️"
+            title="Clipe final"
+            desc="Um vídeo/foto extra no fim do vídeo, com o mesmo texto."
+            checked={typeFinal}
+            onToggle={setTypeFinal}
+          >
+            <FolderPicker
+              label="Clipes finais — vídeos ou fotos"
+              folders={folders}
+              folderId={finFolderId}
+              setFolderId={setFinFolderId}
+              mode={finMode}
+              setMode={setFinMode}
+              items={finItems}
+              sel={finSel}
+              toggle={toggler(setFinSel)}
+              setSel={setFinSel}
+              order={orderFinal}
+              setOrder={setOrderFinal}
+            />
+            <PhraseSelect types={types} value={ptFinal} onChange={setPtFinal} />
+            <FontSizeControl value={fsFinal} onChange={setFsFinal} />
+          </TypeCard>
+
+          <TypeCard
+            icon="🔤"
+            title="Apenas texto"
+            desc="Só o vídeo base com o texto por cima — sem foto hot, imagem ou clipe. Exige textos."
+            checked={typeTexto}
+            onToggle={setTypeTexto}
+          >
+            <PhraseSelect types={types} value={ptTexto} onChange={setPtTexto} required />
+            <FontSizeControl value={fsTexto} onChange={setFsTexto} />
+          </TypeCard>
         </div>
+
+        <Secao n={4} titulo="Quantidade e duração" dica="Quantos vídeos gerar e o teto de duração de cada um." />
 
         <label className="field">
           <span>Quantidade de vídeos: {quantidade}</span>
@@ -1111,7 +1275,7 @@ export default function Create() {
 
         <div className="field">
           <span>
-            Duração (sorteada): <strong>{Math.min(durMin, durMax)}–{Math.max(durMin, durMax)}s</strong>
+            Duração: <strong>{Math.min(durMin, durMax)}–{Math.max(durMin, durMax)}s</strong>
           </span>
           <div className="range-row">
             <label>
@@ -1123,11 +1287,36 @@ export default function Create() {
               <input type="number" min={1} max={60} value={durMax} onChange={(e) => setDurMax(Number(e.target.value))} />
             </label>
           </div>
+          <div className="hint">
+            Para fotos (sem duração própria) e para vídeos com o loop ligado abaixo, um valor é sorteado nesse
+            range. Para vídeos de fundo SEM loop, o <strong>mín</strong> não encurta o vídeo — ele usa a duração
+            natural dele; só o <strong>máx</strong> funciona como teto (corta vídeos mais longos que isso).
+          </div>
         </div>
 
-        <button className="btn primary big" onClick={onGenerate} disabled={!!running}>
-          {running ? "Gerando…" : `🎬 Gerar ${quantidade} vídeos`}
-        </button>
+        <label className="field">
+          <span>Vídeo de fundo mais curto que a duração escolhida</span>
+          <label className="checkrow">
+            <input type="checkbox" checked={loopVideo} onChange={(e) => setLoopVideo(e.target.checked)} />
+            <span>Repetir em loop até completar a duração</span>
+          </label>
+          <div className="hint">
+            {loopVideo
+              ? "Um vídeo de 3s com duração escolhida de 8s vai reiniciar e repetir até completar os 8s."
+              : "Padrão: o vídeo termina no tamanho dele mesmo (não reinicia), mesmo que seja mais curto OU mais longo que o range acima — só o máx corta."}
+          </div>
+        </label>
+
+        <div className="generate-bar">
+          <div className="generate-summary">
+            🎬 {quantidade} vídeo(s) · {Math.min(durMin, durMax)}–{Math.max(durMin, durMax)}s
+            {loopVideo ? " · loop ligado" : ""}
+            {typesSummary}
+          </div>
+          <button className="btn primary big" onClick={onGenerate} disabled={!!running}>
+            {running ? "Gerando…" : `Gerar ${quantidade} vídeos`}
+          </button>
+        </div>
       </div>
       </div>
 

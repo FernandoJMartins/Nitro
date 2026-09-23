@@ -143,6 +143,14 @@ FONTS: dict[str, dict] = {
             "/usr/share/fonts/truetype/comic-neue/ComicNeue-Bold.ttf",
             "/usr/share/fonts/truetype/comic-neue/ComicNeue-BoldItalic.ttf",
             "/usr/share/fonts/truetype/humor-sans/Humor-Sans.ttf",
+            # Rede de segurança: nenhum dos candidatos acima é garantido (dependem
+            # de pacotes extra do Dockerfile). Sem isso, "manuscrita" ficava com
+            # ZERO arquivo resolvível e sumia da lista (fonte inescolhível — bug
+            # real: parecia que só a fonte padrão "funcionava"). DejaVuSans.ttf
+            # (peso normal, não-negrito) vem do pacote base fonts-dejavu-core, é
+            # garantido e não colide com o arquivo -Bold usado como fallback de
+            # "impacto"/"moderna" (mantém as fontes curadas todas distintas).
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         ],
     },
     "maquina": {
@@ -214,7 +222,10 @@ def font_path_for(font_id: str | None) -> str:
             if got:
                 return got
         elif font_id.startswith("custom:"):
-            cand = _fonts_dir() / font_id.split(":", 1)[1]
+            # `.name` descarta qualquer componente de diretório (ex.: "../../etc/passwd")
+            # — a fonte solta só pode vir de dentro de storage/fonts, nunca de fora.
+            fname = Path(font_id.split(":", 1)[1]).name
+            cand = _fonts_dir() / fname
             if cand.exists():
                 return cand.as_posix()
     return _font_path()
@@ -578,6 +589,39 @@ def _run_ffmpeg(cmd: list[str], temp_files: list[Path]) -> None:
             lf.unlink(missing_ok=True)
 
 
+_AFMT = "aformat=sample_rates=44100:channel_layouts=stereo"
+
+
+def _mix_audio_segment(
+    parts: list[str],
+    sources: list[tuple[str, float]],
+    *,
+    anull_idx: int | None,
+    duration: float,
+    label: str,
+) -> None:
+    """Monta o áudio de UM trecho do vídeo (rótulo ``label``) a partir de até duas
+
+    fontes (ex.: música + áudio original do vídeo de fundo): mixa as duas com
+    ``amix`` quando ambas existem, usa a única disponível quando só uma existe,
+    ou cai no silêncio (``anull_idx``) quando nenhuma existe. ``sources`` é uma
+    lista de (rótulo do input ffmpeg, ponto de início em segundos) já cortados
+    em ``duration`` segundos a partir desse ponto.
+    """
+    labels: list[str] = []
+    for i, (src, start) in enumerate(sources):
+        lbl = f"{label}_{i}"
+        start_arg = f"start={start:.3f}:" if start else ""
+        parts.append(f"[{src}]atrim={start_arg}duration={duration:.3f},asetpts=PTS-STARTPTS,{_AFMT}[{lbl}]")
+        labels.append(lbl)
+    if len(labels) == 2:
+        parts.append(f"[{labels[0]}][{labels[1]}]amix=inputs=2:duration=longest:dropout_transition=0[{label}]")
+    elif len(labels) == 1:
+        parts.append(f"[{labels[0]}]anull[{label}]")
+    else:
+        parts.append(f"[{anull_idx}:a]atrim=duration={duration:.3f},asetpts=PTS-STARTPTS,{_AFMT}[{label}]")
+
+
 def build_video(
     base_path: Path,
     out_path: Path,
@@ -609,6 +653,11 @@ def build_video(
     wrap_width: int = 25,
     # distorção OPCIONAL estilo "Fisheye" (Instagram Edits): preset ou None
     text_fisheye: str | None = None,
+    # áudio ORIGINAL do vídeo de fundo (e do clipe final, se houver): True (padrão)
+    # mantém esse áudio; se houver música também, os dois são MIXADOS juntos (não
+    # um substitui o outro). False descarta o áudio original (comportamento
+    # antigo: sem música = mudo; com música = só a música).
+    keep_original_audio: bool = True,
 ) -> None:
     """Gera um .mp4 aplicando (no máximo) um tipo de vídeo especial.
 
@@ -646,11 +695,16 @@ def build_video(
         final_idx = idx
         idx += 1
 
-        # o clipe final mantém o áudio dele (se tiver) no trecho final do vídeo.
-        final_has_audio = _has_audio(final_path)
-        # entrada de silêncio: usada onde não há música/áudio de clipe para preencher.
+        # áudio ORIGINAL do vídeo de fundo (trecho A): só entra se
+        # ``keep_original_audio`` estiver ligado e o arquivo tiver áudio (foto
+        # nunca tem). O áudio do CLIPE FINAL (trecho B) não depende dessa opção —
+        # é só o fallback de sempre para quando não há música (ver abaixo).
+        use_base_audio = keep_original_audio and not base_is_image and _has_audio(base_path)
+        use_final_audio = _has_audio(final_path)
+        # entrada de silêncio: só é preciso quando ALGUM trecho pode ficar sem
+        # nenhuma fonte de áudio (nem música, nem original) para preencher.
         anull_idx = None
-        if music_idx is None:
+        if music_idx is None and (not use_base_audio or not use_final_audio):
             cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
             anull_idx = idx
             idx += 1
@@ -673,28 +727,28 @@ def build_video(
         parts.append(f"[{a}][{b}]concat=n=2:v=1:a=0[outv]")
 
         # ---- áudio: a música universal (se houver) loopa o vídeo INTEIRO, inclusive
-        # sobre o clipe final — o áudio do próprio clipe só entra quando NÃO há música. ----
-        afmt = "aformat=sample_rates=44100:channel_layouts=stereo"
-        a_src = music_idx if music_idx is not None else anull_idx
-        parts.append(
-            f"[{a_src}:a]atrim=duration={duration:.3f},asetpts=PTS-STARTPTS,{afmt}[aA]"
-        )
+        # sobre o clipe final. O áudio ORIGINAL (base no trecho A, clipe no trecho B)
+        # entra JUNTO (mixado) quando também houver música — nunca substitui. ----
+        a_sources: list[tuple[str, float]] = []
         if music_idx is not None:
-            b_src = music_idx
-        elif final_has_audio:
-            b_src = final_idx
-        else:
-            b_src = anull_idx
-        if b_src == music_idx:
+            a_sources.append((f"{music_idx}:a", 0.0))
+        if use_base_audio:
+            a_sources.append(("0:a", 0.0))
+        _mix_audio_segment(parts, a_sources, anull_idx=anull_idx, duration=duration, label="aA")
+
+        # trecho B (clipe final): a música (se houver) CONTINUA sozinha por cima —
+        # não mixa com o áudio do próprio clipe (esse é só um fallback quando não
+        # há música nenhuma). Comportamento de sempre; ``keep_original_audio`` não
+        # se aplica aqui, só ao vídeo de fundo (trecho A).
+        if music_idx is not None:
             # continua o loop DE ONDE PAROU (sem recomeçar do zero no clipe final)
-            parts.append(
-                f"[{music_idx}:a]atrim=start={duration:.3f}:duration={final_duration:.3f},"
-                f"asetpts=PTS-STARTPTS,{afmt}[aB]"
-            )
+            b_sources: list[tuple[str, float]] = [(f"{music_idx}:a", duration)]
+        elif use_final_audio:
+            b_sources = [(f"{final_idx}:a", 0.0)]
         else:
-            parts.append(
-                f"[{b_src}:a]atrim=duration={final_duration:.3f},asetpts=PTS-STARTPTS,{afmt}[aB]"
-            )
+            b_sources = []
+        _mix_audio_segment(parts, b_sources, anull_idx=anull_idx, duration=final_duration, label="aB")
+
         parts.append("[aA][aB]concat=n=2:v=0:a=1[outa]")
 
         total = duration + final_duration
@@ -764,12 +818,27 @@ def build_video(
         parts.append(f"[{cur}][hotv]overlay=enable='between(n\\,{start}\\,{end})'[v]")
         cur = "v"
 
-    cmd += ["-filter_complex", ";".join(parts), "-map", f"[{cur}]"]
+    # áudio: música (se houver) + áudio ORIGINAL do vídeo de fundo (se ligado e
+    # o arquivo tiver áudio — foto nunca tem). Os dois juntos são MIXADOS; um só
+    # deles é mapeado direto; nenhum dos dois = vídeo mudo (ex.: foto sem música).
+    use_base_audio = keep_original_audio and not base_is_image and _has_audio(base_path)
+    a_sources: list[tuple[str, float]] = []
     if music_idx is not None:
-        cmd += ["-map", f"{music_idx}:a"]
+        a_sources.append((f"{music_idx}:a", 0.0))
+    if use_base_audio:
+        a_sources.append(("0:a", 0.0))
+
+    audio_map: list[str] = []
+    if len(a_sources) == 2:
+        _mix_audio_segment(parts, a_sources, anull_idx=None, duration=duration, label="aud")
+        audio_map = ["-map", "[aud]"]
+    elif len(a_sources) == 1:
+        audio_map = ["-map", a_sources[0][0]]
+
+    cmd += ["-filter_complex", ";".join(parts), "-map", f"[{cur}]", *audio_map]
     cmd += ["-t", f"{duration:.3f}", "-r", str(fps), "-c:v", "libx264",
             "-preset", "veryfast", "-pix_fmt", "yuv420p"]
-    if music_idx is not None:
+    if audio_map:
         cmd += ["-c:a", "aac", "-b:a", "128k"]
     cmd += ["-movflags", "+faststart", str(out_path)]
     _run_ffmpeg(cmd, temp_files)

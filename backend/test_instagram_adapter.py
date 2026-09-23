@@ -297,6 +297,11 @@ def test_story_com_multiplas_imagens_em_sequencia():
 
 
 def test_story_link_posicionado_e_texto_extra():
+    """Texto extra é um elemento À PARTE: nunca concatena com o texto principal
+    (nem no rótulo da pílula, nem na legenda) e ganha a PRÓPRIA posição — bug
+    antigo: "Chama no link / Oferta só hoje!" virava um bloco só na pílula."""
+    from app.publishing.platforms.instagram import _render_story_pill
+
     a = _tmp_imagem()
     try:
         adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
@@ -307,6 +312,8 @@ def test_story_link_posicionado_e_texto_extra():
             story_link="https://exemplo.com",
             story_link_posicao="superior",
             story_text_extra="Oferta só hoje!",
+            story_text_extra_x=0.5,
+            story_text_extra_y=0.9,
         )
         adapter.open()
         session = adapter.login(ctx)
@@ -316,12 +323,102 @@ def test_story_link_posicionado_e_texto_extra():
         result = adapter.publish(ctx)
         assert len(adapter._client.stories) == 1
         path0, caption, links, stickers = adapter._client.stories[0]
-        assert caption == ""  # "Chama no link / Oferta só hoje!" foi para a pílula
+        assert caption == ""  # o texto PRINCIPAL foi para a pílula — sozinho
         assert links is None
         assert stickers[0]["x"] == pytest.approx(0.5, abs=0.02)
-        assert stickers[0]["y"] == pytest.approx(0.14, abs=0.06)
+        assert stickers[0]["y"] == pytest.approx(0.14, abs=0.06)  # pílula: "superior"
         assert stickers[0]["extra"]["url"] == "https://exemplo.com"
+        # o rótulo da pílula é só "Chama no link": a largura bate com uma pílula
+        # renderizada SÓ com o texto principal — não com os dois textos juntos
+        caminho_ref, sticker_so_principal = _render_story_pill(a, "Chama no link", "https://exemplo.com", "superior")
+        caminho_concat, sticker_concatenado = _render_story_pill(
+            a, "Chama no link\n\nOferta só hoje!", "https://exemplo.com", "superior"
+        )
+        os.unlink(caminho_ref)
+        os.unlink(caminho_concat)
+        assert stickers[0]["width"] == pytest.approx(sticker_so_principal["width"], abs=1e-6)
+        assert stickers[0]["width"] != pytest.approx(sticker_concatenado["width"], abs=1e-6)
+        assert os.path.exists(path0) is False  # temporário (pílula + texto extra) limpo após upload
+        assert result.external_id == "pk-story-1"
+    finally:
+        os.unlink(a)
+
+
+def test_texto_extra_nunca_concatena_e_tem_posicao_propria():
+    """Sem link: o texto principal segue como legenda nativa (comportamento de
+    sempre) e o texto extra é desenhado À PARTE, na posição escolhida — nunca
+    aparece dentro da `caption`."""
+    a = _tmp_imagem()
+    try:
+        adapter = InstagramAdapter(client_factory=lambda proxy: StubClient(proxy))
+        ctx = _ctx(
+            kind="story",
+            media_path=a,
+            story_text="Legenda principal",
+            story_text_extra="Bônus surpresa!",
+            story_text_extra_x=0.2,
+            story_text_extra_y=0.15,
+        )
+        adapter.open()
+        session = adapter.login(ctx)
+        ctx.session_data = session
+        adapter.create_story(ctx)
+        adapter.publish(ctx)
+        path0, caption, links, stickers = adapter._client.stories[0]
+        # a legenda nativa é SÓ o texto principal — nunca ganha o extra junto
+        assert caption == "Legenda principal"
+        assert "Bônus" not in caption
+        assert stickers is None
+        # o arquivo enviado é o renderizado com o texto extra (não o original) e
+        # foi limpo depois do upload
+        assert path0 != a
         assert os.path.exists(path0) is False
+    finally:
+        os.unlink(a)
+
+
+def test_render_story_extra_text_desenha_texto_na_posicao_escolhida():
+    """`_render_story_extra_text` desenha texto branco com contorno na posição
+    (x, y) TOTALMENTE livre pedida — não presa a topo/meio/baixo."""
+    from PIL import Image
+
+    from app.publishing.platforms.instagram import _render_story_extra_text
+
+    a = _tmp_imagem()
+    try:
+        # posições verticais variadas (topo/meio/baixo) — x sempre centralizado
+        for y in (0.14, 0.5, 0.86):
+            caminho = _render_story_extra_text(a, "Oferta só hoje!", 0.5, y)
+            try:
+                with Image.open(caminho) as im:
+                    assert im.size == (720, 1280)
+                    y_centro = round(1280 * y)
+                    banda = (60, max(0, y_centro - 80), 600, 160)
+                    # branco (miolo da letra) e preto (contorno) na banda esperada
+                    assert _tem_pixel(im, *banda, lambda r, g, b: r > 220 and g > 220 and b > 220)
+                    assert _tem_pixel(im, *banda, lambda r, g, b: r < 40 and g < 40 and b < 40)
+            finally:
+                os.unlink(caminho)
+
+        # posição horizontal também livre: texto perto da borda esquerda fica
+        # concentrado do lado esquerdo da tela, não no centro (banda em y=0.5)
+        caminho = _render_story_extra_text(a, "X", 0.1, 0.5)
+        try:
+            with Image.open(caminho) as im:
+                metade_esquerda = _tem_pixel(im, 0, 560, 360, 160, lambda r, g, b: r > 220 and g > 220 and b > 220)
+                metade_direita = _tem_pixel(im, 360, 560, 360, 160, lambda r, g, b: r > 220 and g > 220 and b > 220)
+                assert metade_esquerda and not metade_direita
+        finally:
+            os.unlink(caminho)
+
+        # x/y ausentes (None) caem no centro da tela
+        caminho = _render_story_extra_text(a, "Centro", None, None)
+        try:
+            with Image.open(caminho) as im:
+                banda = (60, 560, 600, 160)  # em torno de y=0.5
+                assert _tem_pixel(im, *banda, lambda r, g, b: r > 220 and g > 220 and b > 220)
+        finally:
+            os.unlink(caminho)
     finally:
         os.unlink(a)
 

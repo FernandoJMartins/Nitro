@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import uuid
 import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -112,6 +113,34 @@ def list_fonts(user: User = Depends(get_current_user)):
     return video.available_fonts()
 
 
+@router.get("/fonts/{font_id:path}/file")
+def font_file(font_id: str, user: User = Depends(get_user_for_file)):
+    """Serve o ARQUIVO da fonte resolvida (ttf/otf), para o preview do frontend
+
+    carregar a mesma fonte real que o vídeo vai usar (em vez de um nome CSS
+    aproximado, que pode nem existir no sistema operacional de quem está
+    editando) — assim o preview fica fiel para QUALQUER fonte, inclusive com
+    a distorção "Fisheye" aplicada por cima. Usa ``get_user_for_file`` (aceita
+    ``?token=`` na URL) porque o FontFace/CSS `url()` do navegador não manda o
+    header Authorization — mesmo motivo de downloadUrl/videoDownloadUrl.
+    """
+    resolved = Path(video.font_path_for(font_id))
+    # segurança: só serve um arquivo dentro de storage/fonts OU um dos caminhos
+    # de sistema curados — nunca um caminho arbitrário vindo do `font_id`.
+    allowed = {Path(p).resolve() for meta in video.FONTS.values() for p in meta["paths"]}
+    allowed |= {p.resolve() for p in video._FONT_CANDIDATES}
+    try:
+        resolved = resolved.resolve()
+    except OSError:
+        raise HTTPException(status_code=404, detail="Fonte não encontrada")
+    if resolved not in allowed and video._fonts_dir().resolve() not in resolved.parents:
+        raise HTTPException(status_code=404, detail="Fonte não encontrada")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Fonte não encontrada")
+    media_type = "font/otf" if resolved.suffix.lower() == ".otf" else "font/ttf"
+    return FileResponse(resolved, media_type=media_type)
+
+
 @router.get("/gen/{token}/download")
 def download_generated(token: str):
     # token é hex de uuid — evita path traversal.
@@ -151,6 +180,15 @@ def generate_bulk(
     invalidos = [t for t in tipos if t not in validos]
     if invalidos:
         raise HTTPException(status_code=400, detail=f"Tipos de vídeo inválidos: {invalidos}")
+
+    # ordem de sorteio de cada pool: "random" (padrão) ou "sequential" (round-robin)
+    orders = {
+        "base": body.order_base, "music": body.order_music, "hot": body.order_hot,
+        "overlay": body.order_overlay, "final": body.order_final, "text": body.order_text,
+    }
+    for nome, v in orders.items():
+        if v not in ("random", "sequential"):
+            raise HTTPException(status_code=400, detail=f'Ordem inválida em "{nome}": {v} (use "random" ou "sequential")')
 
     # preset de distorção estilo "Fisheye" (Instagram Edits) — opcional e validado
     fisheye_preset = None
@@ -240,6 +278,14 @@ def generate_bulk(
         overlay_y=_clamp01(body.overlay_y),
         overlay_scale=max(0.3, min(2.5, body.overlay_scale)),
         text_fisheye=fisheye_preset,
+        loop_video=body.loop_video,
+        keep_original_audio=body.keep_original_audio,
+        order_base=body.order_base,
+        order_music=body.order_music,
+        order_hot=body.order_hot,
+        order_overlay=body.order_overlay,
+        order_final=body.order_final,
+        order_text=body.order_text,
     )
     background.add_task(bulk.run_bulk_job, job.id, cfg)
     return job

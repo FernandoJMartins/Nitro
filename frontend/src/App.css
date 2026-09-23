@@ -849,6 +849,22 @@ code {
 }
 .typecard.active .typecard-body { border-top-color: var(--blue); }
 
+/* ---------- barra de gerar (resumo do lote + botão), fixa no rodapé no mobile ---------- */
+.generate-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  position: sticky;
+  bottom: 0;
+}
+.generate-summary { font-size: 13px; font-weight: 600; color: var(--muted); }
+.generate-bar .btn.big { width: 100%; }
+
 /* ---------- preview 9:16 com arrasto ---------- */
 .create-layout { display: flex; flex-direction: column; gap: 16px; }
 /* No mobile o preview rola junto com a página (estático). Sticky só no desktop. */
@@ -938,11 +954,19 @@ code {
   width: 88%; text-align: center; color: #fff; font-weight: 800;
   font-size: 15px; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); pointer-events: none;
 }
+/* posição PRÓPRIA do texto extra: TOTALMENTE livre (left/top inline, em %,
+   vindo de texto_extra_x/y — fração da tela) — não presa a topo/meio/baixo. */
 .story-preview-extra {
-  position: absolute; left: 50%; top: 68%; transform: translateX(-50%);
-  width: 88%; text-align: center; color: #fff; font-weight: 600;
+  position: absolute; transform: translate(-50%, -50%);
+  max-width: 88%; width: max-content; text-align: center; color: #fff; font-weight: 600;
   font-size: 12px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); pointer-events: none;
 }
+.story-preview-extra.draggable {
+  pointer-events: auto; cursor: grab; touch-action: none;
+  padding: 4px 6px; border-radius: 6px;
+}
+.story-preview-extra.draggable:hover { background: rgba(255, 255, 255, 0.12); }
+.story-preview-extra.draggable:active { cursor: grabbing; }
 /* Botão de link: espelha a pílula desenhada no envio (_render_story_pill, canvas 720px).
    As medidas são em cqw (1cqw = 1% da largura do preview) para manter as proporções em
    qualquer tamanho: fonte 46px = 6.4cqw, ícone 1.3x a fonte, padding 36x20px, sombra suave. */
@@ -1412,6 +1436,12 @@ code {
   flex-wrap: wrap;
 }
 .picker-toolbar-actions { display: flex; gap: 14px; }
+
+/* ---------- ordem de sorteio de um pool (aleatório / sequencial) ---------- */
+.order-toggle { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; }
+.order-toggle-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.seg-sm { padding: 3px; }
+.seg-sm .seg-btn { padding: 6px 8px; font-size: 12px; }
 
 /* ---------- tipos de frase (chips com ações no hover) ---------- */
 .typebar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; align-items: center; }

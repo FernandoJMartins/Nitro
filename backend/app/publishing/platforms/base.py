@@ -58,6 +58,10 @@ class PublishContext:
     # posição do link/sticker do story: 'superior' | 'meio' | 'inferior' (None = padrão do adapter)
     story_link_posicao: str | None = None
     story_text_extra: str | None = None
+    # posição PRÓPRIA do texto extra: desenhado à parte do texto principal (nunca
+    # concatenado), TOTALMENTE livre (fração da tela 0..1). None = centro.
+    story_text_extra_x: float | None = None
+    story_text_extra_y: float | None = None
     # código de verificação (2FA/desafio) informado pelo operador na hora do login
     verification_code: str | None = None
     # cookie de sessão (sessionid) colado pelo operador — permite login sem o fluxo

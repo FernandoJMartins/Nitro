@@ -450,6 +450,8 @@ def _plans_out(db: Session, cfg: StoryConfig) -> list[StoryPlanOut]:
                 link=plan.link or next((f.link for f in frames if f.link), None),
                 link_posicao=plan.link_posicao,
                 texto_extra=plan.texto_extra,
+                texto_extra_x=plan.texto_extra_x,
+                texto_extra_y=plan.texto_extra_y,
                 ultima_geracao_em=plan.ultima_geracao_em,
             )
         )
@@ -525,6 +527,8 @@ def update_story_config(
                 plan.link = plano.link
                 plan.link_posicao = plano.link_posicao
                 plan.texto_extra = plano.texto_extra
+                plan.texto_extra_x = plano.texto_extra_x
+                plan.texto_extra_y = plano.texto_extra_y
                 _substitui_frames(plan, plano)
             else:
                 plan = StoryPlan(
@@ -535,6 +539,8 @@ def update_story_config(
                     link=plano.link,
                     link_posicao=plano.link_posicao,
                     texto_extra=plano.texto_extra,
+                    texto_extra_x=plano.texto_extra_x,
+                    texto_extra_y=plano.texto_extra_y,
                 )
                 db.add(plan)
                 db.flush()
@@ -626,6 +632,8 @@ def post_story_now(account_id: int, plan_id: int, user: User = Depends(get_curre
         link=link,
         link_posicao=plan.link_posicao,
         texto_extra=plan.texto_extra,
+        texto_extra_x=plan.texto_extra_x,
+        texto_extra_y=plan.texto_extra_y,
         account_id=account.id,
         approval_status="aprovado",
         schedule_mode="especifico",

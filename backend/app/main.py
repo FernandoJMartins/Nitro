@@ -7,7 +7,18 @@ from .config import settings
 from .database import Base, engine
 from .publishing import models as pub_models  # noqa: F401 — registra as tabelas em Base.metadata
 from .publishing.core.workers import start_background_scheduler
-from .routers import auth, folders, media, phrases, pub_accounts, pub_content, pub_dashboard, upscale, videos
+from .routers import (
+    auth,
+    folders,
+    media,
+    phrases,
+    pub_accounts,
+    pub_content,
+    pub_dashboard,
+    pub_shared_stories,
+    upscale,
+    videos,
+)
 
 # Cria as tabelas que ainda não existem. (Em produção, trocar por migrations/Alembic.)
 Base.metadata.create_all(bind=engine)
@@ -54,10 +65,18 @@ _ensure_column("pub_accounts", "fingerprint", "TEXT")
 _ensure_column("pub_contents", "link", "TEXT")
 _ensure_column("pub_contents", "link_posicao", "VARCHAR(16)")
 _ensure_column("pub_contents", "texto_extra", "TEXT")
+# posição PRÓPRIA do texto extra: TOTALMENTE livre (x/y = fração da tela
+# 0..1, arrastada no preview) — independente da posição do link, e o texto
+# extra é desenhado à parte, nunca concatenado ao texto principal (bug antigo:
+# os dois viravam um bloco só na legenda nativa).
+_ensure_column("pub_contents", "texto_extra_x", "FLOAT")
+_ensure_column("pub_contents", "texto_extra_y", "FLOAT")
 _ensure_column("pub_story_plans", "texto", "TEXT")
 _ensure_column("pub_story_plans", "link", "TEXT")
 _ensure_column("pub_story_plans", "link_posicao", "VARCHAR(16)")
 _ensure_column("pub_story_plans", "texto_extra", "TEXT")
+_ensure_column("pub_story_plans", "texto_extra_x", "FLOAT")
+_ensure_column("pub_story_plans", "texto_extra_y", "FLOAT")
 
 app = FastAPI(title="Vídeos em Massa API", version="0.1.0")
 
@@ -78,6 +97,7 @@ app.include_router(videos.router)
 app.include_router(pub_accounts.router)
 app.include_router(pub_content.router)
 app.include_router(pub_dashboard.router)
+app.include_router(pub_shared_stories.router)
 
 
 @app.on_event("startup")

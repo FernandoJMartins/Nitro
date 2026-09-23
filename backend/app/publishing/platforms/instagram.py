@@ -38,7 +38,7 @@ from urllib.parse import urlparse
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from ...config import settings
-from ...services.video import _EMOJI_RE, _render_emoji_seg
+from ...services.video import _EMOJI_RE, _render_emoji_seg, _render_text_seg
 
 from .base import (
     AdapterError,
@@ -774,6 +774,99 @@ def _render_story_pill(origem: str, texto: str, link: str, posicao: str | None) 
     return Path(nome), sticker
 
 
+_EXTRA_TEXT_FONT_SIZES = (54, 46, 38, 32, 26)  # reduz quando o texto não cabe
+_EXTRA_TEXT_MAX_W = 620  # largura máxima de cada linha, em px (tela de 720 de largura)
+_EXTRA_TEXT_MAX_LINES = 4
+
+
+def _extra_text_line(linha: str, font) -> Image.Image:
+    """Uma linha do texto extra: branco com contorno preto (legível sobre
+    qualquer fundo) + emoji colorido — MESMO estilo do texto dos vídeos gerados
+    (``_render_text_seg``/``_render_emoji_seg`` de ``services/video.py``)."""
+    segs: list[Image.Image] = []
+    for chunk in _EMOJI_RE.split(linha):
+        if not chunk:
+            continue
+        if _EMOJI_RE.fullmatch(chunk):
+            em = _render_emoji_seg(chunk, round(font.size * 1.15))
+            segs.append(em if em is not None else _render_text_seg(chunk, font))
+        else:
+            segs.append(_render_text_seg(chunk, font))
+    if not segs:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    total_w = sum(s.width for s in segs)
+    max_h = max(s.height for s in segs)
+    canvas = Image.new("RGBA", (max(1, total_w), max_h), (0, 0, 0, 0))
+    x = 0
+    for s in segs:
+        canvas.alpha_composite(s, (x, (max_h - s.height) // 2))
+        x += s.width
+    return canvas
+
+
+def _render_story_extra_text(origem: str, texto: str, x: float | None, y: float | None) -> Path:
+    """Desenha o TEXTO EXTRA diretamente na imagem, numa posição TOTALMENTE
+    LIVRE (``x``/``y`` = fração da tela 0..1, arrastada no preview do front) —
+    nunca concatenado com o texto principal (bug antigo: os dois viravam um
+    bloco só na legenda nativa do Instagram, sem posição independente).
+    ``x``/``y`` ausentes caem no centro (evita colidir com a pílula do link,
+    que é inferior por padrão, e com o texto principal na legenda nativa)."""
+    texto = (texto or "").strip()
+    x = 0.5 if x is None else max(0.0, min(1.0, x))
+    y = 0.5 if y is None else max(0.0, min(1.0, y))
+    try:
+        with Image.open(origem) as src:
+            src = ImageOps.exif_transpose(src).convert("RGB")
+            sw, sh = src.size
+            escala = max(_STORY_W / sw, _STORY_H / sh)
+            src = src.resize((round(sw * escala), round(sh * escala)), Image.LANCZOS)
+            sw, sh = src.size
+            esq, topo = (sw - _STORY_W) // 2, (sh - _STORY_H) // 2
+            canvas = src.crop((esq, topo, esq + _STORY_W, topo + _STORY_H)).convert("RGBA")
+    except Exception as exc:  # noqa: BLE001 — mídia ilegível vira erro do adapter
+        raise AdapterError(f"não deu para renderizar o texto extra do story: {exc}") from exc
+
+    font = None
+    linhas: list[str] = []
+    for size in _EXTRA_TEXT_FONT_SIZES:
+        try:
+            font = ImageFont.truetype(_pill_font_path(), size)
+        except OSError:
+            continue
+        linhas = _wrap_by_pixels(texto, font, _EXTRA_TEXT_MAX_W)[:_EXTRA_TEXT_MAX_LINES]
+        if all(font.getlength(l) <= _EXTRA_TEXT_MAX_W for l in linhas):
+            break
+    if font is None:
+        raise AdapterError("nenhuma fonte disponível para desenhar o texto extra do story")
+
+    imagens = [_extra_text_line(l, font) for l in linhas]
+    altura_linha = max((im.height for im in imagens), default=0)
+    largura_linha = max((im.width for im in imagens), default=0)
+    passo = round(altura_linha * 1.2)
+    bloco_h = (len(imagens) - 1) * passo + altura_linha if imagens else 0
+
+    # ponto (x, y) é o CENTRO do bloco — mesma convenção do preview (drag) e do
+    # texto/imagem estática do gerador de vídeos (Create.tsx: text_x/text_y).
+    y_centro = round(_STORY_H * y)
+    x_centro = round(_STORY_W * x)
+    y0 = max(8, min(y_centro - bloco_h // 2, _STORY_H - bloco_h - 8))
+    x0 = max(8, min(x_centro - largura_linha // 2, _STORY_W - largura_linha - 8))
+
+    y = y0
+    for im in imagens:
+        canvas.alpha_composite(im, (x0 + (largura_linha - im.width) // 2, y))
+        y += passo
+
+    fd, nome = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        canvas.convert("RGB").save(nome, "JPEG", quality=95)
+    except Exception as exc:  # noqa: BLE001
+        Path(nome).unlink(missing_ok=True)
+        raise AdapterError(f"não deu para salvar o texto extra do story: {exc}") from exc
+    return Path(nome)
+
+
 class InstagramAdapter(PlatformAdapter):
     name = "instagram"
 
@@ -1090,9 +1183,11 @@ class InstagramAdapter(PlatformAdapter):
 
     def _upload_story(self, ctx: PublishContext) -> list[str]:
         """Upload de cada imagem do story. Com link: a pílula branca é desenhada
-        na mídia e o texto do story vira o rótulo do botão — a área de toque do
-        sticker cobre exatamente a pílula. Sem link: o texto segue como legenda
-        nativa do story (comportamento anterior)."""
+        na mídia e o TEXTO PRINCIPAL vira o rótulo do botão — a área de toque do
+        sticker cobre exatamente a pílula. Sem link: o texto principal segue como
+        legenda nativa do story (comportamento anterior). O TEXTO EXTRA é sempre
+        um elemento à parte, desenhado na imagem na posição própria dele — NUNCA
+        concatenado com o texto principal, nem em um nem em outro caso."""
         ids: list[str] = []
         paths = self._media_paths(ctx)
         if not paths:
@@ -1101,7 +1196,7 @@ class InstagramAdapter(PlatformAdapter):
         try:
             for path in paths:
                 destino = path
-                caption = self._story_caption(ctx) or ""
+                caption = ctx.story_text or ""
                 stickers = None
                 if ctx.story_link:
                     renderizado, sticker = _render_story_pill(
@@ -1110,7 +1205,13 @@ class InstagramAdapter(PlatformAdapter):
                     temp_files.append(renderizado)
                     destino = str(renderizado)
                     stickers = self._prepare_story_stickers([sticker])
-                    caption = ""  # o texto agora vive DENTRO da pílula (rótulo do botão)
+                    caption = ""  # o texto principal agora vive DENTRO da pílula (rótulo do botão)
+                if ctx.story_text_extra:
+                    renderizado_extra = _render_story_extra_text(
+                        destino, ctx.story_text_extra, ctx.story_text_extra_x, ctx.story_text_extra_y
+                    )
+                    temp_files.append(renderizado_extra)
+                    destino = str(renderizado_extra)
                 # stickers=None quebra o fork (configure_story faz stickers.copy());
                 # story sem link não pode receber o kwarg.
                 kwargs = {"caption": caption}
@@ -1123,14 +1224,6 @@ class InstagramAdapter(PlatformAdapter):
             for arquivo in temp_files:
                 arquivo.unlink(missing_ok=True)
         return ids
-
-    def _story_caption(self, ctx: PublishContext) -> str:
-        """Texto do story + texto extra opcional (blocos separados)."""
-        base = ctx.story_text or ""
-        extra = ctx.story_text_extra or ""
-        if base and extra:
-            return f"{base}\n\n{extra}"
-        return base or extra
 
     def _prepare_story_stickers(self, stickers: list[dict] | None):
         """O instagrapi espera objetos StorySticker (pydantic) no configure do

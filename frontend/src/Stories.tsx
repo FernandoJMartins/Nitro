@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -20,23 +20,31 @@ import {
   Save,
   Trash2,
   UploadCloud,
+  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { ConfirmDialog, Modal } from "./Dialog";
 import {
   cancelPublications,
+  createSharedStory,
+  deleteSharedStory,
   downloadUrl,
   getStoryConfig,
   listAccounts,
   listFolders,
   listMedia,
+  listSharedStories,
   listStoryHistory,
+  postSharedStoryNow,
   postStoryNow,
+  updateSharedStory,
   updateStoryConfig,
   type Folder,
   type Media,
   type PubAccount,
+  type SharedStoryBody,
+  type SharedStoryOut,
   type StoryConfig,
   type StoryHistory,
 } from "./api";
@@ -86,6 +94,11 @@ interface Modelo {
   link: string;
   link_posicao: string;
   texto_extra: string;
+  // posição PRÓPRIA do texto extra — independente da do link: o texto extra
+  // nunca concatena com o texto principal. TOTALMENTE livre (fração da tela
+  // 0..1), arrastada no preview — não presa a topo/meio/baixo como o link.
+  texto_extra_x: number;
+  texto_extra_y: number;
   frames: number[]; // ids de Media, na ordem da sequência
 }
 
@@ -97,7 +110,60 @@ function novoModelo(): Modelo {
     link: "",
     link_posicao: "inferior",
     texto_extra: "",
+    texto_extra_x: 0.5,
+    texto_extra_y: 0.5,
     frames: [],
+  };
+}
+
+// ---- Story COMPARTILHADO: cadastrado 1 vez, postado em várias contas (evita
+// recadastrar o mesmo story conta por conta — editar e salvar atualiza em
+// todas as contas-alvo de uma vez). Mesmos campos do Modelo + as contas-alvo. ----
+interface SharedModelo {
+  id?: number; // id no servidor (presente após salvar) — habilita "Postar agora"
+  key: number;
+  enabled: boolean;
+  horario: string;
+  texto: string;
+  link: string;
+  link_posicao: string;
+  texto_extra: string;
+  texto_extra_x: number;
+  texto_extra_y: number;
+  account_ids: number[];
+  frames: number[];
+}
+
+function novoSharedModelo(): SharedModelo {
+  return {
+    key: Date.now() + Math.random(),
+    enabled: true,
+    horario: "18:00",
+    texto: "",
+    link: "",
+    link_posicao: "inferior",
+    texto_extra: "",
+    texto_extra_x: 0.5,
+    texto_extra_y: 0.5,
+    account_ids: [],
+    frames: [],
+  };
+}
+
+function mapearShared(s: SharedStoryOut): SharedModelo {
+  return {
+    id: s.id,
+    key: s.id,
+    enabled: s.enabled,
+    horario: s.horario,
+    texto: s.texto ?? "",
+    link: s.link ?? "",
+    link_posicao: s.link_posicao ?? "inferior",
+    texto_extra: s.texto_extra ?? "",
+    texto_extra_x: s.texto_extra_x ?? 0.5,
+    texto_extra_y: s.texto_extra_y ?? 0.5,
+    account_ids: s.account_ids,
+    frames: s.media_ids,
   };
 }
 
@@ -120,15 +186,51 @@ function hostDoLink(link: string): string {
   }
 }
 
-/** Prévia 9:16 do story do modelo — mesma ideia do preview de "Criar". */
-function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<number, Media> }) {
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+/** Prévia 9:16 do story do modelo — mesma ideia do preview de "Criar". Quando
+ * `onExtraPosChange` é passado, o texto extra fica ARRASTÁVEL no preview
+ * (posição totalmente livre, não presa a topo/meio/baixo). */
+function StoryPreview({
+  modelo,
+  mediaMap,
+  onExtraPosChange,
+}: {
+  modelo: Modelo;
+  mediaMap: Map<number, Media>;
+  onExtraPosChange?: (p: { x: number; y: number }) => void;
+}) {
   const [frameIdx, setFrameIdx] = useState(0);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
   const n = modelo.frames.length;
   const atual = n > 0 ? mediaMap.get(modelo.frames[Math.min(frameIdx, n - 1)]) : undefined;
   const isVideo = atual ? VIDEO_RE.test(atual.caminho) : false;
+
+  useEffect(() => {
+    if (!onExtraPosChange) return;
+    function move(e: PointerEvent) {
+      if (!dragging.current || !canvasRef.current) return;
+      const r = canvasRef.current.getBoundingClientRect();
+      onExtraPosChange!({
+        x: clamp01((e.clientX - r.left) / r.width),
+        y: clamp01((e.clientY - r.top) / r.height),
+      });
+    }
+    function up() {
+      dragging.current = false;
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [onExtraPosChange]);
+
   return (
     <div className="preview story-preview">
-      <div className="preview-canvas">
+      <div className="preview-canvas" ref={canvasRef}>
         {atual ? (
           isVideo ? (
             <video className="preview-bg" src={downloadUrl(atual.id)} muted playsInline autoPlay loop preload="metadata" />
@@ -139,7 +241,25 @@ function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<numb
           <div className="preview-bg preview-bg-empty">9:16</div>
         )}
         {!modelo.link && modelo.texto && <div className="story-preview-texto">{modelo.texto}</div>}
-        {!modelo.link && modelo.texto_extra && <div className="story-preview-extra">{modelo.texto_extra}</div>}
+        {/* texto extra é INDEPENDENTE do texto principal e do link: nunca concatena,
+            sempre aparece (com ou sem link), na posição TOTALMENTE livre dele —
+            arrastável aqui quando `onExtraPosChange` está disponível. */}
+        {modelo.texto_extra && (
+          <div
+            className={onExtraPosChange ? "story-preview-extra draggable" : "story-preview-extra"}
+            style={{ left: `${modelo.texto_extra_x * 100}%`, top: `${modelo.texto_extra_y * 100}%` }}
+            onPointerDown={
+              onExtraPosChange
+                ? (e) => {
+                    e.preventDefault();
+                    dragging.current = true;
+                  }
+                : undefined
+            }
+          >
+            {modelo.texto_extra}
+          </div>
+        )}
         {modelo.link && (
           <div className={`story-preview-link pos-${modelo.link_posicao || "inferior"}`}>
             <LinkIcon className="story-preview-link-icon" strokeWidth={2.6} />
@@ -147,6 +267,9 @@ function StoryPreview({ modelo, mediaMap }: { modelo: Modelo; mediaMap: Map<numb
           </div>
         )}
       </div>
+      {onExtraPosChange && modelo.texto_extra && (
+        <div className="preview-hint">👉 Arraste o texto extra para posicionar.</div>
+      )}
       {n > 1 && (
         <div className="checkrow" style={{ gap: 4, marginTop: 6, justifyContent: "center", flexWrap: "wrap" }}>
           {modelo.frames.map((_, j) => (
@@ -330,7 +453,8 @@ function ModelEditorModal({
             </label>
           </div>
           <p className="hint" style={{ marginTop: 6 }}>
-            O texto é o rótulo do botão do link. Sem link (opcional), o texto vira a legenda nativa do story.
+            O texto é o rótulo do botão do link (ou a legenda nativa do story, sem link). O texto extra é
+            independente — nunca se junta ao texto principal. Arraste-o no preview ao lado para posicionar.
           </p>
 
           <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", marginTop: 10 }}>
@@ -385,7 +509,11 @@ function ModelEditorModal({
             )}
           </div>
         </div>
-        <StoryPreview modelo={d} mediaMap={mediaMap} />
+        <StoryPreview
+          modelo={d}
+          mediaMap={mediaMap}
+          onExtraPosChange={(p) => setD({ ...d, texto_extra_x: p.x, texto_extra_y: p.y })}
+        />
       </div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>
@@ -400,11 +528,211 @@ function ModelEditorModal({
               link: d.link,
               link_posicao: d.link_posicao,
               texto_extra: d.texto_extra,
+              texto_extra_x: d.texto_extra_x,
+              texto_extra_y: d.texto_extra_y,
               frames: d.frames,
             })
           }
         >
           <Save size={14} /> Salvar modelo
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Editor do story COMPARTILHADO: mesmos campos do ModelEditorModal + a lista de
+ * contas-alvo (marque quais recebem este story) — cadastra/edita UMA VEZ,
+ * aplica a todas as contas escolhidas. */
+function SharedModelEditorModal({
+  modelo,
+  accounts,
+  mediaMap,
+  onSave,
+  onClose,
+  onAddImages,
+  saving,
+}: {
+  modelo: SharedModelo;
+  accounts: PubAccount[];
+  mediaMap: Map<number, Media>;
+  onSave: (patch: Partial<SharedModelo>) => void;
+  onClose: () => void;
+  onAddImages?: () => void;
+  saving?: boolean;
+}) {
+  const [d, setD] = useState<SharedModelo>(modelo);
+
+  function moverFrame(fIdx: number, delta: number) {
+    setD((prev) => {
+      const frames = [...prev.frames];
+      const j = fIdx + delta;
+      if (j < 0 || j >= frames.length) return prev;
+      [frames[fIdx], frames[j]] = [frames[j], frames[fIdx]];
+      return { ...prev, frames };
+    });
+  }
+
+  function toggleAccount(id: number) {
+    setD((prev) => ({
+      ...prev,
+      account_ids: prev.account_ids.includes(id)
+        ? prev.account_ids.filter((x) => x !== id)
+        : [...prev.account_ids, id],
+    }));
+  }
+
+  return (
+    <Modal title={`Editar story compartilhado — das ${d.horario}`} onClose={onClose} wide scroll>
+      <div className="smodel-row" style={{ width: "100%" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
+            <label className="field" style={{ width: 110 }}>
+              Horário
+              <input type="time" value={d.horario} onChange={(e) => setD({ ...d, horario: e.target.value })} />
+            </label>
+            <label className="field" style={{ flex: 2, minWidth: 160 }}>
+              Texto
+              <input value={d.texto} onChange={(e) => setD({ ...d, texto: e.target.value })} placeholder="Confere aí 👇" />
+            </label>
+            <label className="checkrow" style={{ alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={d.enabled} onChange={(e) => setD({ ...d, enabled: e.target.checked })} />
+              Ativo
+            </label>
+          </div>
+          <div className="checkrow" style={{ gap: 8, flexWrap: "wrap" }}>
+            <label className="field" style={{ flex: 2, minWidth: 160 }}>
+              Link (opcional)
+              <input value={d.link} onChange={(e) => setD({ ...d, link: e.target.value })} placeholder="https://…" />
+            </label>
+            <label className="field" style={{ width: 110 }}>
+              Posição do link
+              <select value={d.link_posicao} onChange={(e) => setD({ ...d, link_posicao: e.target.value })}>
+                {LINK_POSICOES.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              Texto extra (opcional)
+              <input
+                value={d.texto_extra}
+                onChange={(e) => setD({ ...d, texto_extra: e.target.value })}
+                placeholder="Ex.: Só hoje!"
+              />
+            </label>
+          </div>
+          <p className="hint" style={{ marginTop: 6 }}>
+            O texto é o rótulo do botão do link (ou a legenda nativa do story, sem link). O texto extra é
+            independente — nunca se junta ao texto principal. Arraste-o no preview ao lado para posicionar.
+          </p>
+
+          <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", marginTop: 10 }}>
+            <strong style={{ fontSize: 13 }}>
+              Contas que recebem este story <span className="hint">— {d.account_ids.length} selecionada(s)</span>
+            </strong>
+            <div className="checkrow" style={{ gap: 10 }}>
+              <button type="button" className="linkbtn" onClick={() => setD({ ...d, account_ids: accounts.map((a) => a.id) })}>
+                Todas
+              </button>
+              <button type="button" className="linkbtn" onClick={() => setD({ ...d, account_ids: [] })}>
+                Nenhuma
+              </button>
+            </div>
+          </div>
+          <div className="checklist">
+            {accounts.map((a) => (
+              <label key={a.id} className={d.account_ids.includes(a.id) ? "chk picked" : "chk"}>
+                <input type="checkbox" checked={d.account_ids.includes(a.id)} onChange={() => toggleAccount(a.id)} />
+                <span className="chk-name">@{a.username}</span>
+              </label>
+            ))}
+            {accounts.length === 0 && <div className="hint">Nenhuma conta cadastrada ainda — crie uma em Contas.</div>}
+          </div>
+
+          <div className="checkrow" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", marginTop: 10 }}>
+            <strong style={{ fontSize: 13 }}>
+              Sequência do story <span className="hint">— a ordem abaixo é a ordem da publicação</span>
+            </strong>
+            {onAddImages && d.frames.length > 0 && (
+              <button className="btn primary sm" onClick={onAddImages}>
+                <ImagePlus size={14} /> Adicionar imagens
+              </button>
+            )}
+          </div>
+          <div className="sframes">
+            {d.frames.map((id, j) => {
+              const media = mediaMap.get(id);
+              return (
+                <div className="sframe" key={`${id}-${j}`}>
+                  {media ? (
+                    <img className="mini-thumb" src={downloadUrl(id)} alt={media.nome_original} />
+                  ) : (
+                    <div className="mini-thumb">❓</div>
+                  )}
+                  <span className="sframe-nome" title={media?.nome_original}>
+                    {j + 1}. {media?.nome_original ?? `mídia #${id} (removida)`}
+                  </span>
+                  <button className="btn ghost sm" title="Mover para cima" disabled={j === 0} onClick={() => moverFrame(j, -1)}>
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    className="btn ghost sm"
+                    title="Mover para baixo"
+                    disabled={j === d.frames.length - 1}
+                    onClick={() => moverFrame(j, 1)}
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                  <button
+                    className="btn danger sm"
+                    title="Remover"
+                    onClick={() => setD({ ...d, frames: d.frames.filter((_, k) => k !== j) })}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            })}
+            {d.frames.length === 0 && onAddImages && (
+              <button type="button" className="sframes-empty" onClick={onAddImages}>
+                <ImagePlus size={22} />
+                Nenhuma imagem ainda — clique para escolher na biblioteca
+              </button>
+            )}
+          </div>
+        </div>
+        <StoryPreview
+          modelo={d}
+          mediaMap={mediaMap}
+          onExtraPosChange={(p) => setD({ ...d, texto_extra_x: p.x, texto_extra_y: p.y })}
+        />
+      </div>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>
+          Cancelar
+        </button>
+        <button
+          className="btn primary"
+          disabled={saving}
+          onClick={() =>
+            onSave({
+              enabled: d.enabled,
+              horario: d.horario,
+              texto: d.texto,
+              link: d.link,
+              link_posicao: d.link_posicao,
+              texto_extra: d.texto_extra,
+              texto_extra_x: d.texto_extra_x,
+              texto_extra_y: d.texto_extra_y,
+              account_ids: d.account_ids,
+              frames: d.frames,
+            })
+          }
+        >
+          <Save size={14} /> {saving ? "Salvando…" : "Salvar e aplicar às contas escolhidas"}
         </button>
       </div>
     </Modal>
@@ -430,6 +758,13 @@ export default function Stories() {
   const [histFiltro, setHistFiltro] = useState<"todos" | "PENDING" | "PUBLISHED" | "erro">("todos");
   // fluxo de criação/edição: esconde o histórico e mostra conta → stories ativos → novo/editar
   const [editando, setEditando] = useState(false);
+  // "conta": editor de sempre (1 story = 1 conta). "compartilhado": 1 story
+  // cadastrado uma vez, postado em várias contas escolhidas — evita retrabalho.
+  const [modoEdicao, setModoEdicao] = useState<"conta" | "compartilhado">("conta");
+  const [sharedModelos, setSharedModelos] = useState<SharedModelo[]>([]);
+  const [editSharedIdx, setEditSharedIdx] = useState<number | null>(null);
+  const [savingShared, setSavingShared] = useState(false);
+  const [postandoShared, setPostandoShared] = useState<number | null>(null);
   // modal da biblioteca de mídias: null = criando story novo; número = adicionando ao modelo n
   const [bibliotecaAberta, setBibliotecaAberta] = useState(false);
   const [bibliotecaPara, setBibliotecaPara] = useState<number | null>(null);
@@ -449,7 +784,16 @@ export default function Stories() {
     Promise.all([listMedia("photo"), listMedia("photo_hot")])
       .then(([a, b]) => setLibrary([...a, ...b]))
       .catch((e) => setError(String(e)));
+    listSharedStories()
+      .then((list) => setSharedModelos(list.map(mapearShared)))
+      .catch((e) => setError(String(e)));
   }, []);
+
+  function recarregarShared() {
+    listSharedStories()
+      .then((list) => setSharedModelos(list.map(mapearShared)))
+      .catch((e) => setError(String(e)));
+  }
 
   const acc = accountId === "" ? undefined : accounts.find((a) => a.id === accountId);
 
@@ -462,6 +806,8 @@ export default function Stories() {
       link: p.link ?? "",
       link_posicao: p.link_posicao ?? "inferior",
       texto_extra: p.texto_extra ?? "",
+      texto_extra_x: p.texto_extra_x ?? 0.5,
+      texto_extra_y: p.texto_extra_y ?? 0.5,
       frames: p.media_ids,
     }));
     // config legada (1 imagem / 1 horário) vira um modelo com 1 imagem
@@ -474,6 +820,8 @@ export default function Stories() {
           link: cfg.link ?? "",
           link_posicao: "inferior",
           texto_extra: "",
+          texto_extra_x: 0.5,
+          texto_extra_y: 0.5,
           frames: [cfg.imagem_media_id],
         },
       ];
@@ -560,6 +908,120 @@ export default function Stories() {
     setBibliotecaAberta(false);
   }
 
+  function removerSharedLocal(idx: number) {
+    setSharedModelos((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      return next;
+    });
+    if (editSharedIdx === idx) setEditSharedIdx(null);
+  }
+
+  async function removerShared(idx: number) {
+    const atual = sharedModelos[idx];
+    if (!atual) return;
+    if (atual.id != null) {
+      try {
+        await deleteSharedStory(atual.id);
+      } catch (e) {
+        setError(String(e));
+        return;
+      }
+    }
+    removerSharedLocal(idx);
+  }
+
+  function editarShared(idx: number, patch: Partial<SharedModelo>) {
+    setSharedModelos((prev) => prev.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
+  }
+
+  // biblioteca confirmou (modo compartilhado): cria um story NOVO com as imagens
+  // escolhidas e já abre o editor dele, ou acrescenta as imagens ao que estava em edição.
+  function confirmarBibliotecaCompartilhado(ids: number[]) {
+    if (bibliotecaPara === null) {
+      const novo = novoSharedModelo();
+      novo.frames = ids;
+      const idx = sharedModelos.length;
+      setSharedModelos((prev) => [...prev, novo]);
+      setEditSharedIdx(idx);
+    } else {
+      const atual = sharedModelos[bibliotecaPara];
+      if (atual) {
+        editarShared(bibliotecaPara, {
+          frames: [...atual.frames, ...ids.filter((id) => !atual.frames.includes(id))],
+        });
+        setEditSharedIdx(bibliotecaPara);
+      }
+    }
+    setBibliotecaAberta(false);
+  }
+
+  // salva (cria ou atualiza) o story compartilhado IMEDIATAMENTE — cada um é uma
+  // entidade própria no servidor, sem um botão "salvar tudo" como no modo por conta.
+  async function salvarModeloCompartilhado(idx: number, patch: Partial<SharedModelo>) {
+    const atual = { ...sharedModelos[idx], ...patch };
+    setError(null);
+    setSavingShared(true);
+    try {
+      const body: SharedStoryBody = {
+        enabled: atual.enabled,
+        horario: atual.horario,
+        texto: atual.texto.trim() || null,
+        link: atual.link.trim() || null,
+        link_posicao: atual.link_posicao,
+        texto_extra: atual.texto_extra.trim() || null,
+        texto_extra_x: atual.texto_extra_x,
+        texto_extra_y: atual.texto_extra_y,
+        account_ids: atual.account_ids,
+        frames: atual.frames.map((id) => ({ media_id: id })),
+      };
+      const salvo = atual.id != null ? await updateSharedStory(atual.id, body) : await createSharedStory(body);
+      setSharedModelos((prev) => prev.map((m, i) => (i === idx ? mapearShared(salvo) : m)));
+      setEditSharedIdx(null);
+      setMsg("Story compartilhado salvo — aplicado a todas as contas escolhidas.");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingShared(false);
+    }
+  }
+
+  function pedirPostarShared(m: SharedModelo) {
+    setConfirma({
+      titulo: "Publicar story compartilhado agora",
+      mensagem: (
+        <>
+          Publicar este story agora em <strong>{m.account_ids.length}</strong> conta(s)?
+        </>
+      ),
+      rotulo: "Publicar agora",
+      acao: () => postarSharedAgora(m),
+    });
+  }
+
+  async function postarSharedAgora(m: SharedModelo) {
+    if (m.id == null) return;
+    setPostandoShared(m.id);
+    setError(null);
+    try {
+      await postSharedStoryNow(m.id);
+      atualizarHistorico();
+      recarregarShared();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPostandoShared(null);
+    }
+  }
+
+  function pedirRemoverShared(idx: number) {
+    setConfirma({
+      titulo: "Excluir story compartilhado",
+      mensagem: <>Excluir este story? Ele para de ser postado em todas as contas-alvo.</>,
+      rotulo: "Excluir",
+      acao: () => removerShared(idx),
+    });
+  }
+
   function atualizarHistorico() {
     if (accounts.length === 0) return;
     Promise.all(
@@ -644,6 +1106,8 @@ export default function Stories() {
             link: m.link.trim() || null,
             link_posicao: m.link_posicao,
             texto_extra: m.texto_extra.trim() || null,
+            texto_extra_x: m.texto_extra_x,
+            texto_extra_y: m.texto_extra_y,
             frames: m.frames.map((id) => ({ media_id: id })),
           })),
       });
@@ -791,51 +1255,40 @@ export default function Stories() {
             </button>
             <span className="hint">Editor de stories</span>
             {msg && <span className="hint">{msg}</span>}
-            {acc && (
+            {modoEdicao === "conta" && acc && (
               <button className="btn primary" onClick={salvar} disabled={saving} style={{ marginLeft: "auto" }}>
                 <Save size={14} /> {saving ? "Salvando…" : "Salvar stories"}
               </button>
             )}
           </div>
 
-          <Secao n={1} titulo="Conta" dica="de qual perfil saem os stories" />
-          <div className="card">
-            <div className="card-main" style={{ width: "100%" }}>
-              <div className="checkrow" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <label className="field" style={{ flex: 1, minWidth: 220 }}>
-                  Conta
-                  <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
-                    <option value="">— Escolha a conta —</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        @{a.username} · {a.nome_interno}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {acc && (
-                  <span className={`badge ${acc.stories_enabled ? "st-ok" : "st-danger"}`}>
-                    {acc.stories_enabled ? (
-                      <>
-                        <BookImage size={13} /> Automação de stories ativa
-                      </>
-                    ) : (
-                      <>
-                        <AlertTriangle size={13} /> Automação desativada — ligue o check em Contas.
-                      </>
-                    )}
-                  </span>
-                )}
-              </div>
-            </div>
+          <div className="seg" style={{ marginBottom: 14, maxWidth: 420 }}>
+            <button
+              type="button"
+              className={modoEdicao === "conta" ? "seg-btn active" : "seg-btn"}
+              onClick={() => setModoEdicao("conta")}
+            >
+              Por conta
+            </button>
+            <button
+              type="button"
+              className={modoEdicao === "compartilhado" ? "seg-btn active" : "seg-btn"}
+              onClick={() => setModoEdicao("compartilhado")}
+            >
+              Compartilhado (várias contas)
+            </button>
           </div>
 
-          {accountId !== "" && acc && (
+          {modoEdicao === "compartilhado" ? (
             <>
-              <Secao n={2} titulo="Stories ativos" dica={`o que já está programado em @${acc.username}`} />
+              <Secao
+                n={1}
+                titulo="Stories compartilhados"
+                dica="cadastre 1 vez, escolha as contas — evita repetir o mesmo story conta por conta"
+              />
               <div className="card">
                 <div className="card-main" style={{ width: "100%" }}>
-                  <strong>{modelos.length} story(s) ativo(s)</strong>
+                  <strong>{sharedModelos.length} story(s) compartilhado(s)</strong>
                   <div className="smodels-grid">
                     <button
                       type="button"
@@ -846,48 +1299,158 @@ export default function Stories() {
                       }}
                     >
                       <Plus size={26} />
-                      Novo story
+                      Novo story compartilhado
                     </button>
-                    {modelos.map((m, i) => (
-                      <div key={m.key} className="card smodel-card">
+                    {sharedModelos.map((m, i) => (
+                      <div key={m.key} className="card smodel-card" style={!m.enabled ? { opacity: 0.6 } : undefined}>
                         <div style={{ display: "flex", justifyContent: "center" }}>
                           <StoryPreview modelo={m} mediaMap={mediaMap} />
                         </div>
                         <div className="card-main" style={{ width: "100%" }}>
                           <strong>
                             <Clock size={14} /> {m.horario} — {m.texto.trim() || `Story ${i + 1}`}
+                            {!m.enabled && <span className="badge st-muted" style={{ marginLeft: 6 }}>pausado</span>}
                           </strong>
                           <div className="hint">
                             {m.frames.length} img
                             {m.link.trim() !== ""
                               ? ` · botão do link (posição: ${m.link_posicao})`
                               : " · sem link — texto vira legenda"}
+                            {m.texto_extra.trim() !== "" &&
+                              ` · texto extra (${Math.round(m.texto_extra_x * 100)}%, ${Math.round(m.texto_extra_y * 100)}%)`}
+                          </div>
+                          <div className="hint">
+                            <Users size={12} /> {m.account_ids.length === 0
+                              ? "nenhuma conta selecionada"
+                              : accounts
+                                  .filter((a) => m.account_ids.includes(a.id))
+                                  .map((a) => `@${a.username}`)
+                                  .join(", ")}
                           </div>
                         </div>
                         <div className="card-actions" style={{ flexWrap: "wrap" }}>
-                          {m.planId != null && (
+                          {m.id != null && (
                             <button
                               className="btn primary sm"
-                              onClick={() => pedirPostar(m)}
-                              disabled={postando === m.planId}
-                              title="Publica este story imediatamente"
+                              onClick={() => pedirPostarShared(m)}
+                              disabled={postandoShared === m.id || m.account_ids.length === 0}
+                              title="Publica este story imediatamente em todas as contas escolhidas"
                             >
-                              <Play size={13} /> {postando === m.planId ? "Publicando…" : "Postar agora"}
+                              <Play size={13} /> {postandoShared === m.id ? "Publicando…" : "Postar agora"}
                             </button>
                           )}
-                          <button className="btn sm" onClick={() => setEditModelo(i)}>
+                          <button className="btn sm" onClick={() => setEditSharedIdx(i)}>
                             <Pencil size={13} /> Editar
                           </button>
-                          <button className="btn danger sm" onClick={() => removerModelo(i)} title="Excluir story">
+                          <button className="btn danger sm" onClick={() => pedirRemoverShared(i)} title="Excluir story">
                             <Trash2 size={13} />
                           </button>
                         </div>
                       </div>
                     ))}
                   </div>
-                  {modelos.length === 0 && <div className="empty">Nenhum story ativo — clique em “＋ Novo story”.</div>}
+                  {sharedModelos.length === 0 && (
+                    <div className="empty">Nenhum story compartilhado ainda — clique em “＋ Novo story compartilhado”.</div>
+                  )}
                 </div>
               </div>
+            </>
+          ) : (
+            <>
+              <Secao n={1} titulo="Conta" dica="de qual perfil saem os stories" />
+              <div className="card">
+                <div className="card-main" style={{ width: "100%" }}>
+                  <div className="checkrow" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <label className="field" style={{ flex: 1, minWidth: 220 }}>
+                      Conta
+                      <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
+                        <option value="">— Escolha a conta —</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            @{a.username} · {a.nome_interno}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {acc && (
+                      <span className={`badge ${acc.stories_enabled ? "st-ok" : "st-danger"}`}>
+                        {acc.stories_enabled ? (
+                          <>
+                            <BookImage size={13} /> Automação de stories ativa
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle size={13} /> Automação desativada — ligue o check em Contas.
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {accountId !== "" && acc && (
+                <>
+                  <Secao n={2} titulo="Stories ativos" dica={`o que já está programado em @${acc.username}`} />
+                  <div className="card">
+                    <div className="card-main" style={{ width: "100%" }}>
+                      <strong>{modelos.length} story(s) ativo(s)</strong>
+                      <div className="smodels-grid">
+                        <button
+                          type="button"
+                          className="smodel-add"
+                          onClick={() => {
+                            setBibliotecaPara(null);
+                            setBibliotecaAberta(true);
+                          }}
+                        >
+                          <Plus size={26} />
+                          Novo story
+                        </button>
+                        {modelos.map((m, i) => (
+                          <div key={m.key} className="card smodel-card">
+                            <div style={{ display: "flex", justifyContent: "center" }}>
+                              <StoryPreview modelo={m} mediaMap={mediaMap} />
+                            </div>
+                            <div className="card-main" style={{ width: "100%" }}>
+                              <strong>
+                                <Clock size={14} /> {m.horario} — {m.texto.trim() || `Story ${i + 1}`}
+                              </strong>
+                              <div className="hint">
+                                {m.frames.length} img
+                                {m.link.trim() !== ""
+                                  ? ` · botão do link (posição: ${m.link_posicao})`
+                                  : " · sem link — texto vira legenda"}
+                                {m.texto_extra.trim() !== "" &&
+                                  ` · texto extra (${Math.round(m.texto_extra_x * 100)}%, ${Math.round(m.texto_extra_y * 100)}%)`}
+                              </div>
+                            </div>
+                            <div className="card-actions" style={{ flexWrap: "wrap" }}>
+                              {m.planId != null && (
+                                <button
+                                  className="btn primary sm"
+                                  onClick={() => pedirPostar(m)}
+                                  disabled={postando === m.planId}
+                                  title="Publica este story imediatamente"
+                                >
+                                  <Play size={13} /> {postando === m.planId ? "Publicando…" : "Postar agora"}
+                                </button>
+                              )}
+                              <button className="btn sm" onClick={() => setEditModelo(i)}>
+                                <Pencil size={13} /> Editar
+                              </button>
+                              <button className="btn danger sm" onClick={() => removerModelo(i)} title="Excluir story">
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {modelos.length === 0 && <div className="empty">Nenhum story ativo — clique em “＋ Novo story”.</div>}
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           )}
         </>
@@ -904,7 +1467,7 @@ export default function Stories() {
           folders={folders}
           library={library}
           folderNome={folderNome}
-          onConfirm={confirmarBiblioteca}
+          onConfirm={modoEdicao === "compartilhado" ? confirmarBibliotecaCompartilhado : confirmarBiblioteca}
           onClose={() => setBibliotecaAberta(false)}
         />
       )}
@@ -923,6 +1486,21 @@ export default function Stories() {
             setEditModelo(null);
           }}
           onClose={() => setEditModelo(null)}
+        />
+      )}
+      {editSharedIdx !== null && sharedModelos[editSharedIdx] && (
+        <SharedModelEditorModal
+          key={`shared-${editSharedIdx}-${sharedModelos[editSharedIdx].frames.length}`}
+          modelo={sharedModelos[editSharedIdx]}
+          accounts={accounts}
+          mediaMap={mediaMap}
+          saving={savingShared}
+          onAddImages={() => {
+            setBibliotecaPara(editSharedIdx);
+            setBibliotecaAberta(true);
+          }}
+          onSave={(patch) => salvarModeloCompartilhado(editSharedIdx, patch)}
+          onClose={() => setEditSharedIdx(null)}
         />
       )}
       {confirma && (

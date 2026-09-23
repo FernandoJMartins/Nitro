@@ -253,6 +253,9 @@ export function generateVideo(body: GenerateBody): Promise<GenerateResult> {
 }
 
 export type VideoType = "pause" | "imagem" | "final" | "texto";
+// ordem de sorteio de um pool: aleatório (padrão) ou sequencial (round-robin,
+// dá a volta quando chega ao fim — garante variedade em pools pequenos).
+export type PoolOrder = "random" | "sequential";
 
 export interface BulkBody {
   quantidade: number;
@@ -264,6 +267,20 @@ export interface BulkBody {
   gerar_legenda_ia: boolean;
   duration_min: number;
   duration_max: number;
+  // vídeo de fundo mais curto que a duração escolhida: false (padrão) usa a
+  // duração natural dele (sem repetir); true repete em loop até completar.
+  loop_video: boolean;
+  // áudio ORIGINAL do vídeo de fundo (e do clipe final, se houver): true (padrão)
+  // mantém esse áudio — se também houver música, os dois são MIXADOS juntos.
+  // false descarta o áudio original (sem música = mudo; com música = só ela).
+  keep_original_audio: boolean;
+  // ordem de sorteio de cada pool (ver PoolOrder)
+  order_base: PoolOrder;
+  order_music: PoolOrder;
+  order_hot: PoolOrder;
+  order_overlay: PoolOrder;
+  order_final: PoolOrder;
+  order_text: PoolOrder;
   // tipos de vídeo (marque 1 ou vários — sorteado por vídeo)
   video_types: VideoType[];
   hot_media_ids: number[];
@@ -288,6 +305,12 @@ export interface Font {
 }
 export function listFonts(): Promise<Font[]> {
   return apiGetAsync(`${V1}/videos/fonts`);
+}
+// arquivo real (.ttf/.otf) resolvido para a fonte — usado para carregar a MESMA
+// fonte do vídeo no preview (via FontFace), em vez de um nome CSS aproximado que
+// pode nem existir no sistema operacional de quem está editando.
+export function fontFileUrl(id: string): string {
+  return `${V1}/videos/fonts/${encodeURIComponent(id)}/file?token=${getToken() ?? ""}`;
 }
 export interface Job {
   id: number;
@@ -606,6 +629,8 @@ export interface StoryPlanOut {
   link: string | null;
   link_posicao: string | null;
   texto_extra: string | null;
+  texto_extra_x: number | null;
+  texto_extra_y: number | null;
   ultima_geracao_em: string | null;
 }
 export function getStoryConfig(accountId: number): Promise<StoryConfig> {
@@ -642,11 +667,57 @@ export function updateStoryConfig(
       link?: string | null;
       link_posicao?: string | null;
       texto_extra?: string | null;
+      texto_extra_x?: number | null;
+      texto_extra_y?: number | null;
       frames: { media_id: number; texto?: string | null; link?: string | null }[];
     }[];
   }
 ): Promise<StoryConfig> {
   return apiSend(`${PUB}/accounts/${accountId}/story-config`, "PUT", body);
+}
+
+// ---------- Stories compartilhados (1 story -> várias contas, evita retrabalho) ----------
+export interface SharedStoryBody {
+  enabled: boolean;
+  horario: string;
+  texto?: string | null;
+  link?: string | null;
+  link_posicao?: string | null;
+  texto_extra?: string | null;
+  texto_extra_x?: number | null;
+  texto_extra_y?: number | null;
+  account_ids: number[];
+  frames: { media_id: number }[];
+}
+export interface SharedStoryOut {
+  id: number;
+  enabled: boolean;
+  horario: string;
+  media_ids: number[];
+  texto: string | null;
+  link: string | null;
+  link_posicao: string | null;
+  texto_extra: string | null;
+  texto_extra_x: number | null;
+  texto_extra_y: number | null;
+  account_ids: number[];
+  ultima_geracao_por_conta: Record<number, string | null>;
+  criado_em: string;
+}
+export function listSharedStories(): Promise<SharedStoryOut[]> {
+  return apiGetAsync(`${PUB}/shared-stories`);
+}
+export function createSharedStory(body: SharedStoryBody): Promise<SharedStoryOut> {
+  return apiSend(`${PUB}/shared-stories`, "POST", body);
+}
+export function updateSharedStory(id: number, body: SharedStoryBody): Promise<SharedStoryOut> {
+  return apiSend(`${PUB}/shared-stories/${id}`, "PATCH", body);
+}
+export function deleteSharedStory(id: number): Promise<void> {
+  return apiSend(`${PUB}/shared-stories/${id}`, "DELETE");
+}
+export function postSharedStoryNow(id: number): Promise<StoryHistory[]> {
+  return apiSend(`${PUB}/shared-stories/${id}/post-now`, "POST");
 }
 
 export type ApprovalStatus = "pendente" | "aprovado" | "rejeitado";
