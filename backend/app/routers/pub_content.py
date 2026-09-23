@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import GeneratedVideo, User
-from ..publishing.core.distribution import distribute_uniform, eligible_accounts
+from ..publishing.core.distribution import distribute_by_capacity, eligible_accounts
 from ..publishing.core.scheduling import schedule_specific
 from ..publishing.models import Account, Content
 from ..publishing.schemas import (
@@ -130,7 +130,7 @@ def import_from_generator(
         db.refresh(c)
 
     if accounts:
-        distribute_uniform(db, created, accounts)
+        distribute_by_capacity(db, created, accounts)
 
     return created
 
@@ -208,7 +208,7 @@ def reject_all(user: User = Depends(get_current_user), db: Session = Depends(get
 def redistribute_content(content_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     content = _get_content(db, user, content_id)
     accounts = eligible_accounts(db, user.id)
-    distribute_uniform(db, [content], accounts)
+    distribute_by_capacity(db, [content], accounts)
     db.commit()
     db.refresh(content)
     return content

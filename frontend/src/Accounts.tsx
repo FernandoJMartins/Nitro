@@ -564,7 +564,8 @@ function AccountForm({
               </div>
               <span className="hint">
                 1 post por horário/dia, com offset aleatório de ±15min (nunca repete o horário exato).
-                O que não couber hoje vai para o dia seguinte.
+                O que não couber hoje vai para o dia seguinte. Os horários valem mesmo fora da janela, e
+                salvar reagenda os posts já programados.
               </span>
             </>
           )}
@@ -917,7 +918,7 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
                 selecionados={new Set(d.horarios_selecionados ?? [])}
                 onChange={(next) => setD({ ...d, horarios_selecionados: next.size ? [...next].sort() : null })}
               />
-              <span className="hint">1 post por horário/dia, com offset aleatório de ±15min.</span>
+              <span className="hint">1 post por horário/dia, com offset aleatório de ±15min. Salvar reagenda os posts já programados.</span>
             </div>
           )}
         </div>

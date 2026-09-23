@@ -118,62 +118,54 @@ def effective_selected_hours(db: Session, account: Account) -> list[time] | None
     return sorted(set(horas)) or None
 
 
+def daily_capacity(db: Session, account: Account) -> float:
+    """Quantos reels por dia a configuração ATUAL da conta publica — base da
+    distribuição proporcional (conta com 10 horários recebe 5x mais que uma com 2)."""
+    horarios = effective_selected_hours(db, account)
+    if horarios:
+        return float(len(horarios))
+    posts_hora, inicio, fim = effective_window(db, account)
+    minutos = (fim.hour * 60 + fim.minute) - (inicio.hour * 60 + inicio.minute)
+    if minutos <= 0:  # janela atravessa a meia-noite (ex.: 08:00–00:00)
+        minutos += 24 * 60
+    horas_janela = minutos / 60
+    cadencia = effective_cadence(db, account)
+    if cadencia:
+        posts_x, horas_y = cadencia
+        return horas_janela * posts_x / horas_y
+    return max(horas_janela * posts_hora, 0.0)
+
+
 def _build_selected_hours_schedule(
     db: Session, account: Account, pendentes: list[Content], horarios: list[time], now: datetime
 ) -> list[Publication]:
     """Agenda cada conteúdo em um horário selecionado pelo operador: 1 post por horário
-    por dia, com offset aleatório de ±15min para nunca repetir o horário exato. Só usa
-    horários que caem dentro da janela configurada; o que não couber hoje vai para o
-    próximo dia (mesmo padrão do agendamento por janela).
+    por dia, com offset aleatório de ±15min para nunca repetir o horário exato. Os
+    horários escolhidos valem SEMPRE — a janela não se aplica neste modo (o operador
+    escolheu a hora exata). O que não couber hoje vai para o próximo dia.
     """
-    _, janela_inicio, janela_fim = effective_window(db, account)
     tz = _window_tz(db, account)
     day = now.astimezone(tz).date()
 
-    def _dentro_da_janela(cand: datetime) -> bool:
-        # janelas que atravessam a meia-noite: o horário pode pertencer à janela
-        # do próprio dia OU à do dia anterior (que invade hoje de madrugada).
-        cday = cand.astimezone(tz).date()
-        s1, e1 = _window_bounds_utc(cday, janela_inicio, janela_fim, tz)
-        s0, e0 = _window_bounds_utc(cday - timedelta(days=1), janela_inicio, janela_fim, tz)
-        return (s1 <= cand < e1) or (s0 <= cand < e0)
-
     def _iter_candidatos():
         d = day
-        dias = 0
-        while dias < 370:  # horizonte de ~1 ano — só defesa contra fuso/DST bizarro
+        for _ in range(370):  # horizonte de ~1 ano — só defesa contra loop infinito
             for hora in horarios:
-                cand = datetime.combine(d, hora, tzinfo=tz).astimezone(timezone.utc)
-                if _dentro_da_janela(cand):
-                    yield cand
+                yield datetime.combine(d, hora, tzinfo=tz).astimezone(timezone.utc)
             d += timedelta(days=1)
-            dias += 1
-
-    # nenhum horário selecionado cai dentro da janela em dia algum? sem agendamento.
-    # (validar antes evita iterar o gerador para sempre nesse caso)
-    w1 = _window_bounds_utc(day, janela_inicio, janela_fim, tz)
-    w0 = _window_bounds_utc(day - timedelta(days=1), janela_inicio, janela_fim, tz)
-    algum_valido = any(
-        (w1[0] <= datetime.combine(day, hora, tzinfo=tz).astimezone(timezone.utc) < w1[1])
-        or (w0[0] <= datetime.combine(day, hora, tzinfo=tz).astimezone(timezone.utc) < w0[1])
-        for hora in horarios
-    )
-    if not algum_valido:
-        return []
 
     candidatos = _iter_candidatos()
     # pula o passado (aprovou depois do horário de hoje — vai para o próximo)
     cand = next(candidatos, None)
     while cand is not None and cand < now:
         cand = next(candidatos, None)
-    if cand is None:
-        return []  # nenhum horário selecionado cai dentro da janela
 
     created: list[Publication] = []
     for content in pendentes:
         # evita colidir com publicações já existentes (agendadas à mão, ex.)
         while True:
             if cand is None:
+                db.commit()
                 return created
             if not _existing_slots(db, account.id, cand - SELECTED_MIN_GAP, cand + SELECTED_MIN_GAP):
                 break
@@ -185,6 +177,7 @@ def _build_selected_hours_schedule(
         content.scheduled_at = final_slot
         pub = Publication(content_id=content.id, account_id=account.id, status="PENDING", scheduled_at=final_slot)
         db.add(pub)
+        db.flush()  # a próxima checagem de colisão precisa enxergar este slot
         created.append(pub)
         cand = next(candidatos, None)
 
@@ -210,6 +203,8 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
                 Content.kind == "reel",
                 ~Content.publications.any(),
             )
+            # mantém a ordem do calendário anterior num reagendamento; novos por último
+            .order_by(Content.scheduled_at.is_(None), Content.scheduled_at, Content.id)
         )
     )
     if not pendentes:
@@ -268,6 +263,37 @@ def build_schedule_for_account(db: Session, account: Account, *, now: datetime |
 
     db.commit()
     return created
+
+
+def reschedule_account(db: Session, account: Account, *, now: datetime | None = None) -> list[Publication]:
+    """Refaz o calendário automático da conta com a configuração ATUAL (horários,
+    janela, cadência). Chamado quando o operador edita a conta ou o padrão global —
+    sem isso, o que já estava agendado continuava no espaçamento antigo.
+
+    Só mexe em reels automáticos ainda PENDING e no futuro: os já devidos podem
+    estar sendo pegos pelo worker agora; agendamentos específicos e stories ficam.
+    """
+    now = now or datetime.now(timezone.utc)
+    if not account.ativa:
+        return []
+    pubs = list(
+        db.scalars(
+            select(Publication)
+            .join(Content, Content.id == Publication.content_id)
+            .where(
+                Publication.account_id == account.id,
+                Publication.status == "PENDING",
+                Publication.scheduled_at > now,
+                Content.kind == "reel",
+                Content.schedule_mode == "automatico",
+            )
+        )
+    )
+    for pub in pubs:
+        db.delete(pub)
+    db.flush()
+    db.expire_all()
+    return build_schedule_for_account(db, account, now=now)
 
 
 def schedule_specific(db: Session, content: Content, when: datetime) -> Publication:

@@ -839,9 +839,42 @@ db.add(
     )
 )
 db.commit()
-assert build_schedule_for_account(db, conta_j, now=AGORA_FIXO) == [], "03:00 fora da janela 08–23:59 não deveria agendar"
+pubs_j = build_schedule_for_account(db, conta_j, now=AGORA_FIXO)
+assert len(pubs_j) == 1, "horário selecionado vale mesmo fora da janela"
+local_j = _aware(pubs_j[0].scheduled_at).astimezone(ZoneInfo("America/Sao_Paulo"))
+# AGORA_FIXO = 09:00 em SP: 03:00 de hoje já passou -> amanhã às 03:00 (±15min)
+assert local_j.date().isoformat() == "2099-05-02" and 165 <= local_j.hour * 60 + local_j.minute <= 195, local_j
 db.close()
-print("horário selecionado fora da janela: sem agendamento ok")
+print("horário selecionado fora da janela: vale mesmo assim ok")
+
+# editar os horários da conta reagenda o que já estava pendente (não fica no espaçamento antigo)
+db = SessionLocal()
+conta_i = db.get(Account, acc_i["id"])
+for i in range(20):
+    gv_r = GeneratedVideo(user_id=USER_ID, caminho=f"generated/fake_r{i}.mp4", duracao=8.0)
+    db.add(gv_r)
+    db.flush()
+    db.add(Content(user_id=USER_ID, kind="reel", origem="gerador", generated_video_id=gv_r.id,
+                   caminho=gv_r.caminho, duracao=8.0, account_id=acc_i["id"], approval_status="aprovado"))
+db.commit()
+assert len(build_schedule_for_account(db, conta_i, now=AGORA_FIXO)) == 20
+db.close()
+dez = ["06:00", "08:00", "10:00", "11:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
+r = client.patch(f"/api/v1/publishing/accounts/{acc_i['id']}", json={"horarios_selecionados": dez})
+assert r.status_code == 200, r.text
+db = SessionLocal()
+pend_i = list(db.scalars(select(Publication).where(Publication.account_id == acc_i["id"], Publication.status == "PENDING")))
+assert len(pend_i) == 24, len(pend_i)
+por_dia: dict[str, int] = {}
+for p in pend_i:
+    local = _aware(p.scheduled_at).astimezone(ZoneInfo("America/Sao_Paulo"))
+    por_dia[local.date().isoformat()] = por_dia.get(local.date().isoformat(), 0) + 1
+    alvo = min(dez, key=lambda h: abs((int(h[:2]) * 60) - (local.hour * 60 + local.minute)))
+    assert abs(int(alvo[:2]) * 60 - (local.hour * 60 + local.minute)) <= 15, local
+# reagendado a partir de agora (datas reais), 10 por dia — sem sobra espalhada
+assert max(por_dia.values()) == 10 and len(por_dia) <= 4, por_dia
+db.close()
+print("editar horários reagenda os pendentes (10/dia) ok ->", por_dia)
 
 # padrão global de horários selecionados vale para contas sem override
 r = client.put(
@@ -935,7 +968,7 @@ counts_sel: dict[int, int] = {}
 for c in sel_contents:
     counts_sel[c["account_id"]] = counts_sel.get(c["account_id"], 0) + 1
 assert max(counts_sel.values()) - min(counts_sel.values()) <= 1, counts_sel
-print("importação com perfis selecionados (subconjunto uniforme, default pendente) ok ->", counts_sel)
+print("importação com perfis selecionados (subconjunto proporcional, default pendente) ok ->", counts_sel)
 
 # seleção com apenas 1 perfil: tudo vai para ele
 r = client.post(
@@ -956,6 +989,37 @@ r = client.post(
 )
 assert r.status_code == 200 and r.json()[0]["account_id"] == acc_s1["id"], r.text
 print("seleção de 1 perfil único envia tudo para ele ok")
+
+# distribuição proporcional à capacidade: 10 horários recebe 5x mais que 2 horários,
+# e o histórico já publicado não conta como carga
+dez_h = ["06:00", "08:00", "10:00", "11:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
+acc_cap10 = client.post("/api/v1/publishing/accounts", json={
+    "nome_interno": "Cap 10", "username": "perfil_cap10", "horarios_selecionados": dez_h, **WIDE_WINDOW}).json()
+acc_cap2 = client.post("/api/v1/publishing/accounts", json={
+    "nome_interno": "Cap 2", "username": "perfil_cap2", "horarios_selecionados": ["09:00", "13:00"], **WIDE_WINDOW}).json()
+db = SessionLocal()
+for i in range(30):  # histórico publicado da conta de 10 — não pode "encher" a conta
+    c_hist = Content(user_id=USER_ID, kind="reel", caminho=f"generated/hist{i}.mp4",
+                     account_id=acc_cap10["id"], approval_status="aprovado")
+    db.add(c_hist)
+    db.flush()
+    db.add(Publication(content_id=c_hist.id, account_id=acc_cap10["id"], status="PUBLISHED", scheduled_at=AGORA_FIXO))
+gv_cap = []
+for i in range(24):
+    g = GeneratedVideo(user_id=USER_ID, caminho=f"generated/fake_cap{i}.mp4", duracao=8.0)
+    db.add(g)
+    db.flush()
+    gv_cap.append(g.id)
+db.commit()
+db.close()
+r = client.post("/api/v1/publishing/content", json={
+    "generated_video_ids": gv_cap, "auto_distribute": True, "account_ids": [acc_cap10["id"], acc_cap2["id"]]})
+assert r.status_code == 200, r.text
+counts_cap = {acc_cap10["id"]: 0, acc_cap2["id"]: 0}
+for c in r.json():
+    counts_cap[c["account_id"]] += 1
+assert counts_cap == {acc_cap10["id"]: 20, acc_cap2["id"]: 4}, counts_cap
+print("distribuição proporcional aos horários (10 vs 2 -> 20/4), ignorando histórico ok")
 
 # conta inexistente é rejeitada antes de criar conteúdo
 r = client.post(

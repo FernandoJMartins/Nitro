@@ -15,6 +15,7 @@ from ..publishing.core.proxies import check_proxy
 from ..publishing.core.publications import _proxy_dict, adapter_for_platform, execute_publication
 from ..publishing.core.stories import _frames_of_plan
 from ..publishing.core.fingerprint import gerar_fingerprint
+from ..publishing.core.scheduling import reschedule_account
 from ..publishing.models import (
     Account,
     AudioAsset,
@@ -108,6 +109,17 @@ def check_proxy_endpoint(proxy_id: int, user: User = Depends(get_current_user), 
 
 
 # ---------- Configuração global (defaults, com override por conta) ----------
+# campos que mudam o calendário: editá-los reagenda o que já estava pendente
+_CAMPOS_AGENDA = {
+    "horarios_selecionados", "janela_inicio", "janela_fim", "timezone",
+    "posts_por_hora", "posts_por_ciclo", "horas_por_ciclo", "ativa",
+}
+
+
+def _agenda_de(obj) -> tuple:
+    return tuple(getattr(obj, campo, None) for campo in sorted(_CAMPOS_AGENDA))
+
+
 @router.get("/defaults", response_model=PublishingDefaultsOut)
 def get_defaults(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     defaults = db.scalar(select(PublishingDefaults).where(PublishingDefaults.user_id == user.id))
@@ -127,9 +139,16 @@ def update_defaults(
     if defaults is None:
         defaults = PublishingDefaults(user_id=user.id)
         db.add(defaults)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    antes = _agenda_de(defaults)
+    for k, v in data.items():
         setattr(defaults, k, v)
     db.commit()
+    if _agenda_de(defaults) != antes:
+        # contas sem override herdam o padrão — reagenda todas (as com override
+        # próprio saem com o mesmo calendário, só com novo offset)
+        for account in db.scalars(select(Account).where(Account.user_id == user.id)):
+            reschedule_account(db, account)
     db.refresh(defaults)
     return defaults
 
@@ -185,9 +204,12 @@ def update_account(
         account.senha_enc = security.encrypt_secret(senha)
     if sessionid:
         account.sessionid_enc = security.encrypt_secret(sessionid)
+    antes = _agenda_de(account)
     for k, v in data.items():
         setattr(account, k, v)
     db.commit()
+    if _agenda_de(account) != antes:
+        reschedule_account(db, account)
     db.refresh(account)
     return account
 
