@@ -21,7 +21,7 @@ from ...config import settings
 from ...database import SessionLocal
 from ..models import Account, Publication
 from .publications import execute_publication, reconcile_stale_publications
-from .scheduling import build_schedule_for_account
+from .scheduling import build_schedule_for_account, reschedule_overdue
 from .stories import ensure_daily_shared_stories, ensure_daily_stories
 
 logger = logging.getLogger("nitro.publishing")
@@ -74,6 +74,7 @@ def run_cycle() -> None:
                 if account.stories_enabled:
                     ensure_daily_stories(db, account)
                     ensure_daily_shared_stories(db, account)
+                reschedule_overdue(db, account)
                 build_schedule_for_account(db, account)
             except Exception:  # noqa: BLE001 — isolamento por conta
                 logger.exception("Falha ao agendar conta %s", account.id)

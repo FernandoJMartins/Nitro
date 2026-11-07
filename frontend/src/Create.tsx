@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { irPara } from "./nav";
+import { JOB_STATUS_LABEL } from "./labels";
+import { ErrorBanner } from "./Dialog";
 import {
   bulkGenerate,
   downloadUrl,
@@ -744,7 +747,7 @@ export default function Create() {
   const [loopVideo, setLoopVideo] = useState(false);
   // áudio ORIGINAL do vídeo de fundo: por padrão mantém — se também houver
   // música escolhida, os dois tocam JUNTOS (mixados), nenhum substitui o outro.
-  const [keepOriginalAudio, setKeepOriginalAudio] = useState(true);
+  const [keepOriginalAudio, setKeepOriginalAudio] = useState(false);
   // ordem de sorteio de cada pool: aleatório (padrão) ou sequencial (round-robin)
   const [orderBase, setOrderBase] = useState<PoolOrder>("random");
   const [orderMusic, setOrderMusic] = useState<PoolOrder>("random");
@@ -1013,7 +1016,12 @@ export default function Create() {
   if (folders.length === 0) {
     return (
       <div className="empty">
-        Você ainda não tem pastas. Vá em <strong>Mídias → Pastas</strong>, crie uma pasta e envie vídeos/fotos.
+        <p style={{ margin: "0 0 12px" }}>
+          Para criar vídeos, primeiro crie uma pasta em <strong>Mídias</strong> e envie vídeos ou fotos para ela.
+        </p>
+        <button type="button" className="btn primary" onClick={() => irPara("/midias")}>
+          Ir para Mídias
+        </button>
       </div>
     );
   }
@@ -1047,8 +1055,7 @@ export default function Create() {
 
   return (
     <>
-      <p className="sub">Gere vários vídeos de uma vez. Escolha uma pasta (inteira ou itens dela) como base.</p>
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       <div className="create-layout">
         <PreviewCanvas
@@ -1323,7 +1330,7 @@ export default function Create() {
       {job && (
         <div className="progress-box">
           <div>
-            Lote #{job.id} — <strong>{job.status}</strong> · {job.concluidos}/{job.total}
+            Lote #{job.id} — <strong>{JOB_STATUS_LABEL[job.status] ?? job.status}</strong> · {job.concluidos}/{job.total}
           </div>
           <div className="bar">
             <div className="bar-fill" style={{ width: `${(job.concluidos / job.total) * 100}%` }} />
@@ -1353,7 +1360,7 @@ export default function Create() {
               automático.
             </div>
           </div>
-          {pubError && <div className="error">⚠️ {pubError}</div>}
+          <ErrorBanner error={pubError} onClose={() => setPubError(null)} />
           <div className="field" style={{ marginTop: 10 }}>
             <span>
               Perfis que receberão os vídeos ({pubProfiles.size} de {accounts.length})

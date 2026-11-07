@@ -32,7 +32,6 @@ export default function Utils() {
 
   return (
     <>
-      <p className="sub">Ferramentas extras para o seu fluxo de trabalho.</p>
       <div className="folder-grid">
         {UTILS.map((u) => (
           <button key={u.id} className="folder-card" onClick={() => setAberto(u.id)}>

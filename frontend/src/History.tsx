@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ErrorBanner, confirmar } from "./Dialog";
 import { deleteVideos, downloadVideoZip, getHistory, videoDownloadUrl, type GeneratedVideo } from "./api";
 
 type LoteGroup = { lote: number | null; videos: GeneratedVideo[] };
@@ -91,9 +92,11 @@ export default function History() {
   }
 
   async function apagarGrupo(rotulo: string, videos: GeneratedVideo[]) {
-    const ok = window.confirm(
-      `Apagar TODOS os ${videos.length} vídeo(s) de ${rotulo}?\n\nEsta ação não pode ser desfeita.`
-    );
+    const ok = await confirmar({
+      title: "Apagar vídeos?",
+      message: `Todos os ${videos.length} vídeo(s) de ${rotulo} serão apagados. Isso não pode ser desfeito.`,
+      confirmLabel: "Apagar vídeos",
+    });
     if (!ok) return;
     try {
       await deleteVideos(videos.map((v) => v.id));
@@ -141,10 +144,6 @@ export default function History() {
 
   return (
     <>
-      <p className="sub">
-        Todos os vídeos gerados, agrupados por dia e por lote (do mais recente ao mais antigo).
-      </p>
-
       <div className="hist-filtro">
         <label>
           Filtrar por:{" "}
@@ -182,7 +181,7 @@ export default function History() {
         )}
       </div>
 
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
       {items.length === 0 && !error && <div className="empty">Nenhum vídeo gerado ainda.</div>}
       {items.length > 0 && filtrados.length === 0 && (
         <div className="empty">Nenhum vídeo encontrado para este filtro.</div>

@@ -17,7 +17,7 @@ class ProxyCreate(BaseModel):
 
 
 class ProxyUpdate(BaseModel):
-    """Edição de proxy: só os campos enviados mudam; senha em branco mantém a atual."""
+    """Edição de proxy: só os campos enviados mudam; senha "" mantém a atual e null remove."""
 
     nome_interno: str | None = None
     protocolo: str | None = None
@@ -36,6 +36,7 @@ class ProxyOut(BaseModel):
     host: str
     porta: int
     usuario: str | None
+    senha: str | None
     status: str
     latencia_ms: float | None
     ip_publico: str | None

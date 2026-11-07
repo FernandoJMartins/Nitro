@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { MoreVertical, Pause, Pencil, Play, Plus, Save, ShieldCheck, Trash2, Wifi } from "lucide-react";
-import { DropdownMenu, MenuItem, Modal, ConfirmDialog } from "./Dialog";
+import { DropdownMenu, MenuItem, Modal, ConfirmDialog, ErrorBanner } from "./Dialog";
 import {
   checkProxy,
   connectAccount,
@@ -144,11 +144,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
 
   const [editando, setEditando] = useState<Proxy | null>(null);
   const [editNome, setEditNome] = useState("");
-  const [editProtocolo, setEditProtocolo] = useState("socks5");
-  const [editHost, setEditHost] = useState("");
-  const [editPorta, setEditPorta] = useState("");
-  const [editUsuario, setEditUsuario] = useState("");
-  const [editSenha, setEditSenha] = useState("");
+  const [editUrl, setEditUrl] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   async function add() {
@@ -178,29 +174,28 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
   function startEdit(p: Proxy) {
     setEditando(p);
     setEditNome(p.nome_interno);
-    setEditProtocolo(p.protocolo);
-    setEditHost(p.host);
-    setEditPorta(String(p.porta));
-    setEditUsuario(p.usuario ?? "");
-    setEditSenha("");
+    const auth = p.usuario
+      ? `${encodeURIComponent(p.usuario)}${p.senha ? `:${encodeURIComponent(p.senha)}` : ""}@`
+      : "";
+    setEditUrl(`${p.protocolo}://${auth}${p.host}:${p.porta}`);
     setEditError(null);
   }
 
   async function saveEdit() {
     if (editando === null) return;
-    const porta = Number(editPorta);
-    if (!editHost.trim() || !Number.isInteger(porta) || porta <= 0 || porta > 65535) {
-      setEditError("Informe host e porta válidos.");
+    const parsed = parseProxyUrl(editUrl);
+    if (!parsed || !Number.isInteger(parsed.porta) || parsed.porta <= 0 || parsed.porta > 65535) {
+      setEditError("URL inválida — use o formato socks5://usuario:senha@host:porta");
       return;
     }
     try {
       await updateProxy(editando.id, {
         ...(editNome.trim() ? { nome_interno: editNome.trim() } : {}),
-        protocolo: editProtocolo,
-        host: editHost.trim(),
-        porta,
-        usuario: editUsuario.trim() || null,
-        ...(editSenha ? { senha: editSenha } : {}),
+        protocolo: parsed.protocolo,
+        host: parsed.host,
+        porta: parsed.porta,
+        usuario: parsed.usuario ?? null,
+        senha: parsed.senha ?? null,
       });
       setEditando(null);
       onChange();
@@ -253,7 +248,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
       {novo && (
         <Modal title="Novo proxy" onClose={() => setNovo(false)}>
           <div className="form">
-            {error && <div className="error">⚠️ {error}</div>}
+            <ErrorBanner error={error} onClose={() => setError(null)} />
             <label className="field">
               Nome interno (opcional — padrão: host:porta)
               <input
@@ -291,50 +286,27 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
       {editando && (
         <Modal title={`Editar proxy — ${editando.nome_interno}`} onClose={() => setEditando(null)}>
           <div className="form">
-            <div className="checkrow" style={{ gap: 8 }}>
-              <label className="field" style={{ flex: 2 }}>
-                Nome interno
-                <input
-                  value={editNome}
-                  onChange={(e) => setEditNome(e.target.value)}
-                  placeholder="Ex.: Proxy EUA"
-                />
-              </label>
-              <label className="field" style={{ flex: 1 }}>
-                Protocolo
-                <select value={editProtocolo} onChange={(e) => setEditProtocolo(e.target.value)}>
-                  <option value="socks5">socks5</option>
-                  <option value="http">http</option>
-                </select>
-              </label>
+            <ErrorBanner error={editError} onClose={() => setEditError(null)} />
+            <label className="field">
+              Nome interno
+              <input
+                value={editNome}
+                onChange={(e) => setEditNome(e.target.value)}
+                placeholder="Ex.: Proxy EUA"
+                onKeyDown={(e) => e.key === "Enter" && saveEdit()}
+              />
+            </label>
+            <input
+              placeholder="socks5://usuario:senha@host:porta — ou — host:porta:usuario:senha"
+              value={editUrl}
+              onChange={(e) => setEditUrl(e.target.value)}
+              autoComplete="off"
+              onKeyDown={(e) => e.key === "Enter" && saveEdit()}
+            />
+            <div className="hint" style={{ marginTop: 6 }}>
+              Uma linha só, nos mesmos formatos do cadastro: <code>socks5://usuario:senha@host:porta</code> ou{" "}
+              <code>host:porta:usuario:senha</code>.
             </div>
-            <div className="checkrow" style={{ gap: 8 }}>
-              <label className="field" style={{ flex: 3 }}>
-                Host
-                <input value={editHost} onChange={(e) => setEditHost(e.target.value)} />
-              </label>
-              <label className="field" style={{ flex: 1 }}>
-                Porta
-                <input type="number" value={editPorta} onChange={(e) => setEditPorta(e.target.value)} />
-              </label>
-            </div>
-            <div className="checkrow" style={{ gap: 8 }}>
-              <label className="field" style={{ flex: 1 }}>
-                Usuário
-                <input value={editUsuario} onChange={(e) => setEditUsuario(e.target.value)} autoComplete="off" />
-              </label>
-              <label className="field" style={{ flex: 1 }}>
-                Senha
-                <input
-                  type="password"
-                  value={editSenha}
-                  onChange={(e) => setEditSenha(e.target.value)}
-                  placeholder="•••••• (em branco = manter)"
-                  autoComplete="new-password"
-                />
-              </label>
-            </div>
-            {editError && <div className="error">⚠️ {editError}</div>}
             <div className="modal-actions">
               <button className="btn ghost sm" onClick={() => setEditando(null)}>
                 Cancelar
@@ -570,7 +542,7 @@ function AccountForm({
             </>
           )}
         </div>
-        {formError && <div className="error">⚠️ {formError}</div>}
+        <ErrorBanner error={formError} onClose={() => setFormError(null)} />
         <div className="checkrow" style={{ gap: 12 }}>
           <label className="field" style={{ flex: 1 }}>
             Janela — início
@@ -666,7 +638,7 @@ function CaptionsManager({
     <div className="card">
       <div className="card-main" style={{ width: "100%" }}>
         <p className="hint">A legenda específica da conta tem prioridade sobre a global.</p>
-        {error && <div className="error">⚠️ {error}</div>}
+        <ErrorBanner error={error} onClose={() => setError(null)} />
         <ul className="list" style={{ marginTop: 10 }}>
           {captions.map((c) => (
             <li key={c.id} className="card">
@@ -770,7 +742,7 @@ function VerificationModal({
         O Instagram pediu uma verificação extra para <strong>@{account.username}</strong>. Confira o
         código enviado por <strong>SMS, e-mail ou app autenticador</strong> e cole abaixo.
       </p>
-      {erro && <div className="error">⚠️ {erro}</div>}
+      <ErrorBanner error={erro} onClose={() => setErro(null)} />
       <label className="field">
         Código de verificação
         <input
@@ -1022,8 +994,7 @@ export default function Accounts() {
 
   return (
     <>
-      <p className="sub">Contas/perfis, proxy opcional e configuração de publicação por conta.</p>
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       <nav className="tabs">
         <button type="button" className={tab === "contas" ? "tab active" : "tab"} onClick={() => setTab("contas")}>
@@ -1033,7 +1004,7 @@ export default function Accounts() {
           🛡️ Proxies ({proxies.length})
         </button>
         <button type="button" className={tab === "global" ? "tab active" : "tab"} onClick={() => setTab("global")}>
-          ⚙️ Config global
+          ⚙️ Configuração geral
         </button>
         <button type="button" className={tab === "legendas" ? "tab active" : "tab"} onClick={() => setTab("legendas")}>
           ✍️ Legendas ({captions.length})
@@ -1049,7 +1020,7 @@ export default function Accounts() {
       <div className="selbar" style={{ marginBottom: 12 }}>
         <span>{accounts.length} conta(s)</span>
         <button className="btn primary sm" onClick={() => setFormFor("new")}>
-          <Plus size={14} /> Adicionar perfil
+          <Plus size={14} /> Adicionar conta
         </button>
       </div>
 
@@ -1060,25 +1031,41 @@ export default function Accounts() {
               <strong>
                 @{a.username} <span className="badge">{a.nome_interno}</span>
               </strong>
-              <div className="meta">
-                {STATUS_BADGE[a.status]}
-                {!a.ativa && <> · ⛔ Conta desativada</>}
-                {a.automation_status === "pausada" && a.status === "pronta" && <> · ⏸️ Automação pausada</>}
-                {" · "}
-                {a.senha_configurada ? "🔒 Senha configurada" : "⚠ Sem senha"}
-                {a.sessionid_configurada && <> · 🍪 Cookie de sessão configurado</>}
-                {" · "}
-                {a.session_configurada ? "🔑 Sessão salva" : "⚠ Sem sessão"}
-                {a.proxy && <> · {PROXY_DOT[a.proxy.status]} {a.proxy.nome_interno}</>}
-                {" · "}
-                {a.horarios_selecionados?.length
-                  ? `⏰ ${a.horarios_selecionados.length} horário(s) fixo(s)`
-                  : a.posts_por_ciclo && a.horas_por_ciclo
-                    ? `${a.posts_por_ciclo} posts a cada ${a.horas_por_ciclo}h`
-                    : `${a.posts_por_hora ?? "padrão"} posts/h`}{" · "}
-                {a.janela_inicio ?? "—"}→{a.janela_fim ?? "—"}
-                {a.stories_enabled && <> · 📖 Stories ativo</>}
-                {a.fingerprint_resumo && <> · 🎭 {a.fingerprint_resumo}</>}
+              {/* 1ª linha: a SITUAÇÃO da conta (o que importa agora). 2ª: a configuração. */}
+              <div className="acc-line" aria-label="Situação">
+                {!a.ativa ? (
+                  <span className="pill st-danger">⛔ Desativada — não publica nada</span>
+                ) : a.automation_status === "pausada" && a.status === "pronta" ? (
+                  <span className="pill st-warn">⏸️ Pausada</span>
+                ) : (
+                  <span className="pill">{STATUS_BADGE[a.status]}</span>
+                )}
+                {a.stories_enabled && <span className="pill">📖 Stories automáticos ligados</span>}
+              </div>
+              <div className="meta acc-line" aria-label="Configuração">
+                <span>{a.senha_configurada ? "✓ Senha salva" : <span className="st-warn">✗ Sem senha</span>}</span>
+                <span>{a.session_configurada ? "✓ Sessão salva" : <span className="st-warn">✗ Sem sessão</span>}</span>
+                {a.sessionid_configurada && <span>✓ Cookie de sessão</span>}
+                {a.proxy && (
+                  <span>
+                    {PROXY_DOT[a.proxy.status]} Proxy {a.proxy.nome_interno}
+                  </span>
+                )}
+                <span>
+                  {a.horarios_selecionados?.length
+                    ? `⏰ ${a.horarios_selecionados.length} horário(s) fixo(s) por dia`
+                    : a.posts_por_ciclo && a.horas_por_ciclo
+                      ? `${a.posts_por_ciclo} post(s) a cada ${a.horas_por_ciclo}h`
+                      : a.posts_por_hora
+                        ? `${a.posts_por_hora} post(s) por hora`
+                        : "Ritmo padrão de posts"}
+                </span>
+                <span>
+                  {a.janela_inicio && a.janela_fim
+                    ? `Publica das ${a.janela_inicio} às ${a.janela_fim}`
+                    : "Publica em qualquer horário"}
+                </span>
+                {a.fingerprint_resumo && <span>🎭 {a.fingerprint_resumo}</span>}
               </div>
               {a.ultimo_erro && <div className="meta" style={{ color: "var(--danger)" }}>⚠ {a.ultimo_erro}</div>}
             </div>

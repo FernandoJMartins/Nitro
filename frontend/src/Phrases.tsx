@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ConfirmDialog, Modal, NameDialog } from "./Dialog";
+import { ConfirmDialog, Modal, NameDialog, ErrorBanner } from "./Dialog";
 import {
   bulkSavePhrases,
   createPhrase,
@@ -213,9 +213,6 @@ export default function Phrases() {
 
   return (
     <>
-      <p className="sub">
-        Frases que aparecem <strong>dentro</strong> do vídeo. Escolha um tipo para gerenciar suas frases.
-      </p>
 
       {/* tipos como chips + ações no hover */}
       <div className="typebar">
@@ -252,7 +249,7 @@ export default function Phrases() {
         </button>
       </div>
 
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       {types.length === 0 && (
         <div className="empty-state">

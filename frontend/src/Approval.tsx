@@ -15,7 +15,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { Modal } from "./Dialog";
+import { Modal, ErrorBanner } from "./Dialog";
 import {
   approveAllContent,
   approveContent,
@@ -121,7 +121,7 @@ function LoteImportModal({
 
   return (
     <Modal title={lote.job_id != null ? `Lote #${lote.job_id}` : "Vídeos sem lote"} onClose={onClose} wide>
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
       <div className="modal-actions" style={{ justifyContent: "space-between", marginTop: 0 }}>
         <span className="hint">
           {selected.size} de {lote.videos.length} selecionado(s)
@@ -250,7 +250,7 @@ function ImportPanel({ onImported, accounts }: { onImported: () => void; account
 
       {open && (
         <Modal title="Importar do histórico — por lote" onClose={() => setOpen(false)} wide scroll>
-          {error && <div className="error">⚠️ {error}</div>}
+          <ErrorBanner error={error} onClose={() => setError(null)} />
           {days.length === 0 ? (
             <div className="empty">Nenhum vídeo novo no histórico para importar.</div>
           ) : (
@@ -476,7 +476,7 @@ export default function Approval() {
   return (
     <>
       <p className="sub">Fila de aprovação: revise, distribua e aprove antes de agendar a publicação.</p>
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       <ImportPanel onImported={refresh} accounts={accounts} />
 

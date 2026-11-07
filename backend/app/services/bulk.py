@@ -58,7 +58,7 @@ class BulkConfig:
     # vídeo de fundo mais curto que a duração escolhida: por padrão NÃO repete em
     # loop (usa a duração natural do vídeo); True = comportamento antigo (loopa).
     loop_video: bool = False
-    keep_original_audio: bool = True
+    keep_original_audio: bool = False
     # ordem de sorteio de cada pool: "random" (padrão) ou "sequential" (round-robin)
     order_base: str = "random"
     order_music: str = "random"

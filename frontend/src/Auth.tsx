@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ErrorBanner } from "./Dialog";
 import { login, register } from "./api";
 
 export default function Auth({ onAuth }: { onAuth: () => void }) {
@@ -28,7 +29,7 @@ export default function Auth({ onAuth }: { onAuth: () => void }) {
         <h1>Nitro</h1>
         <p className="sub">{modo === "login" ? "Entre na sua conta" : "Crie sua conta"}</p>
 
-        {error && <div className="error">⚠️ {error}</div>}
+        <ErrorBanner error={error} onClose={() => setError(null)} />
 
         <input
           type="email"

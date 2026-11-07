@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ErrorBanner, confirmar } from "./Dialog";
 import {
   deleteUpscaled,
   downloadUpscaleZip,
@@ -98,7 +99,13 @@ function HistoryView({ refreshKey }: { refreshKey: number }) {
   }
 
   async function apagarGrupo(rotulo: string, imagens: UpscaledImage[]) {
-    if (!window.confirm(`Apagar TODAS as ${imagens.length} imagem(ns) de ${rotulo}?\n\nEsta ação não pode ser desfeita.`))
+    if (
+      !(await confirmar({
+        title: "Apagar imagens?",
+        message: `Todas as ${imagens.length} imagem(ns) de ${rotulo} serão apagadas. Isso não pode ser desfeito.`,
+        confirmLabel: "Apagar imagens",
+      }))
+    )
       return;
     try {
       await deleteUpscaled(imagens.map((v) => v.id));
@@ -172,7 +179,7 @@ function HistoryView({ refreshKey }: { refreshKey: number }) {
         )}
       </div>
 
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
       {items.length === 0 && !error && <div className="empty">Nenhuma imagem ampliada ainda.</div>}
       {items.length > 0 && filtrados.length === 0 && (
         <div className="empty">Nenhuma imagem encontrada para este filtro.</div>
@@ -413,7 +420,7 @@ function AmpliarView({ onConcluido }: { onConcluido: () => void }) {
         </button>
       </nav>
 
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       {fonte === "upload" && (
         <div className="uploader">

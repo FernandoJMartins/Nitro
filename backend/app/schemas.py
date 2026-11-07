@@ -156,10 +156,10 @@ class BulkRequest(BaseModel):
     #                   (comportamento antigo). Não afeta fotos (sempre "loopam"
     #                   como fundo estático, pois não têm duração própria).
     loop_video: bool = False
-    # áudio ORIGINAL do vídeo de fundo (e do clipe final, se houver): True (padrão)
+    # áudio ORIGINAL do vídeo de fundo (e do clipe final, se houver): True
     # mantém esse áudio; se também houver música escolhida, os dois são MIXADOS
-    # juntos (nenhum substitui o outro). False descarta o áudio original.
-    keep_original_audio: bool = True
+    # juntos (nenhum substitui o outro). False (padrão) descarta o áudio original.
+    keep_original_audio: bool = False
 
     # ---- Ordem de sorteio de cada pool: "random" (padrão) ou "sequential" ----
     # "sequential" percorre o pool na ordem enviada, um item por vídeo do lote

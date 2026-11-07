@@ -25,10 +25,13 @@ async function jsonOrThrow(r: Response) {
     const raw = await r.text();
     let detail: string | undefined;
     try {
-      detail = JSON.parse(raw)?.detail;
+      const d = JSON.parse(raw)?.detail;
+      // erro de validação do FastAPI vem como lista de {loc, msg}
+      detail = Array.isArray(d) ? d.map((x) => x?.msg ?? String(x)).join(" · ") : d;
     } catch {
       // corpo não é JSON
     }
+    if (!detail && r.status >= 500) detail = "O servidor teve um problema. Tente de novo em alguns minutos.";
     throw new Error(detail || raw || "Erro");
   }
   return r.status === 204 ? null : r.json();
@@ -444,6 +447,7 @@ export interface Proxy {
   host: string;
   porta: number;
   usuario: string | null;
+  senha: string | null;
   status: "verde" | "amarelo" | "vermelho" | "cinza";
   latencia_ms: number | null;
   ip_publico: string | null;
@@ -473,7 +477,7 @@ export function updateProxy(
     host?: string;
     porta?: number;
     usuario?: string | null;
-    senha?: string;
+    senha?: string | null;
   }
 ): Promise<Proxy> {
   return apiSend(`${PUB}/proxies/${id}`, "PATCH", body);

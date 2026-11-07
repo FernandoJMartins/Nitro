@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ErrorBanner, Modal } from "./Dialog";
+import { pubStatus } from "./labels";
 import {
   getLogs,
   getPubDashboard,
@@ -61,6 +63,7 @@ export default function PublishDashboard() {
   const [accounts, setAccounts] = useState<PubAccount[]>([]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reagendando, setReagendando] = useState<{ id: number; valor: string } | null>(null);
 
   function refresh() {
     getPubDashboard().then(setDash).catch((e) => setError(String(e)));
@@ -82,11 +85,18 @@ export default function PublishDashboard() {
     return () => clearInterval(id);
   }, []);
 
-  async function reagendar(pubId: number, atual: string) {
-    const novo = window.prompt("Novo horário (YYYY-MM-DDTHH:mm):", atual.slice(0, 16));
-    if (!novo) return;
+  // reagendar: abre um diálogo com seletor de data e hora (antes era um prompt de texto)
+  function abrirReagendar(p: PubPublication) {
+    const d = new Date(p.scheduled_at);
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    setReagendando({ id: p.id, valor: local });
+  }
+
+  async function confirmarReagendar() {
+    if (!reagendando?.valor) return;
     try {
-      await reschedulePublication(pubId, new Date(novo).toISOString());
+      await reschedulePublication(reagendando.id, new Date(reagendando.valor).toISOString());
+      setReagendando(null);
       refresh();
     } catch (e) {
       setError(String(e));
@@ -95,10 +105,7 @@ export default function PublishDashboard() {
 
   return (
     <>
-      <p className="sub">
-        Visão geral em tempo real: o que foi publicado hoje, a saúde das contas e o que está na fila.
-      </p>
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       {dash && (
         <>
@@ -110,7 +117,7 @@ export default function PublishDashboard() {
             <Tile label="Em execução" value={dash.em_execucao} />
             <Tile label="Publicados hoje" value={dash.publicados_hoje} />
             <Tile label="Falhas hoje" value={dash.falhas_hoje} warn={dash.falhas_hoje > 0} />
-            <Tile label="Retries aguardando" value={dash.retries} warn={dash.retries > 0} />
+            <Tile label="Novas tentativas aguardando" value={dash.retries} warn={dash.retries > 0} />
           </div>
 
           <Secao n={2} titulo="Saúde das contas" dica="sessões, proxies e stories configurados" />
@@ -154,7 +161,9 @@ export default function PublishDashboard() {
           <li key={p.id} className="card">
             <div className="card-main">
               <strong>
-                <span className={STATUS_COLOR[p.status]}>{STATUS_ICON[p.status]}</span>{" "}
+                <span className={STATUS_COLOR[p.status]} title={pubStatus(p.status)}>
+                  {STATUS_ICON[p.status]}
+                </span>{" "}
                 {new Date(p.scheduled_at).toLocaleString("pt-BR")}
               </strong>
               <div className="meta">
@@ -163,8 +172,8 @@ export default function PublishDashboard() {
               </div>
             </div>
             <div className="card-actions">
-              <button className="btn ghost sm" onClick={() => reagendar(p.id, p.scheduled_at)}>
-                🕒 Reagendar
+              <button className="btn ghost sm" onClick={() => abrirReagendar(p)}>
+                🕒 Mudar horário
               </button>
             </div>
           </li>
@@ -184,7 +193,7 @@ export default function PublishDashboard() {
                 {new Date(t.horario).toLocaleString("pt-BR")} · {t.kind === "story" ? "📖 story" : "🎬 reel"}
               </div>
             </div>
-            <span className={`badge ${STATUS_COLOR[t.status]}`}>{t.status}</span>
+            <span className={`badge ${STATUS_COLOR[t.status]}`}>{pubStatus(t.status)}</span>
           </li>
         ))}
         {timeline.length === 0 && <li className="empty">Nenhuma atividade ainda.</li>}
@@ -204,7 +213,7 @@ export default function PublishDashboard() {
               }
             }}
           >
-            <strong>🧾 Logs de automação ({Math.min(logs.length, 30)}{logs.length > 30 ? "+" : ""})</strong>
+            <strong>🧾 Registro de atividades da automação ({Math.min(logs.length, 30)}{logs.length > 30 ? "+" : ""})</strong>
             <span className="caret">▶</span>
           </div>
           {logsOpen && (
@@ -213,7 +222,7 @@ export default function PublishDashboard() {
                 <li key={log.id} className="card" style={{ alignItems: "flex-start" }}>
                   <div className="card-main" style={{ width: "100%" }}>
                     <strong className={log.nivel === "erro" ? "st-danger" : "st-muted"}>
-                      [{log.nivel}] {nomeConta(log.account_id)}
+                      {log.nivel === "erro" ? "Erro" : log.nivel === "aviso" ? "Aviso" : "Info"} · {nomeConta(log.account_id)}
                     </strong>
                     <div className="meta">{log.mensagem}</div>
                     <div className="meta">{new Date(log.criado_em).toLocaleString("pt-BR")}</div>
@@ -225,6 +234,39 @@ export default function PublishDashboard() {
           )}
         </div>
       </div>
+
+      {reagendando && (
+        <Modal
+          title="Mudar horário da publicação"
+          onClose={() => setReagendando(null)}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              confirmarReagendar();
+            }}
+          >
+            <label className="field">
+              Novo dia e horário
+              <input
+                type="datetime-local"
+                className="modal-input"
+                value={reagendando.valor}
+                onChange={(e) => setReagendando({ ...reagendando, valor: e.target.value })}
+                autoFocus
+              />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="btn ghost" onClick={() => setReagendando(null)}>
+                Cancelar
+              </button>
+              <button type="submit" className="btn primary" disabled={!reagendando.valor}>
+                Salvar horário
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </>
   );
 }

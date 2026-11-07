@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ErrorBanner, confirmar } from "./Dialog";
 import { createKey, deleteKey, listKeys, type ApiKey } from "./api";
 
 export default function ApiKeys() {
@@ -30,7 +31,7 @@ export default function ApiKeys() {
         Chaves para integrar sistemas externos. Use no cabeçalho{" "}
         <code>Authorization: Bearer &lt;chave&gt;</code> nos mesmos endpoints da API.
       </p>
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       <div className="uploader" style={{ flexDirection: "row", alignItems: "center" }}>
         <input
@@ -67,7 +68,13 @@ export default function ApiKeys() {
               <button
                 className="btn danger"
                 onClick={async () => {
-                  if (confirm(`Revogar a chave "${k.nome}"? Sistemas que a usam vão parar de funcionar.`)) {
+                  if (
+                    await confirmar({
+                      title: "Revogar esta chave?",
+                      message: `A chave "${k.nome}" vai parar de funcionar. Sistemas que usam ela não vão mais conseguir acessar o Nitro.`,
+                      confirmLabel: "Revogar chave",
+                    })
+                  ) {
                     await deleteKey(k.id);
                     refresh();
                   }

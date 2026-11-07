@@ -11,6 +11,7 @@ import Publishing from "./Publishing";
 import Stories from "./Stories";
 import Calendar from "./Calendar";
 import Accounts from "./Accounts";
+import { ConfirmDialog, ConfirmHost, Modal } from "./Dialog";
 
 type Section =
   | "midias"
@@ -82,12 +83,11 @@ function Icon({ name, active }: { name: Section; active: boolean }) {
           <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8 6.2 21l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.3-.3-.3-2.3 2.6-2.6Z" />
         </svg>
       );
-    case "stories": // anel de story (círculo + plus)
+    case "stories": // anel de story (círculo tracejado + imagem dentro) — diferente do "+" de Criar
       return (
         <svg {...common}>
-          <circle cx="12" cy="12" r="9" />
-          <line x1="12" y1="8" x2="12" y2="16" />
-          <line x1="8" y1="12" x2="16" y2="12" />
+          <circle cx="12" cy="12" r="10" strokeDasharray="4 2.2" />
+          <circle cx="12" cy="12" r="5.5" fill={active ? "currentColor" : "none"} />
         </svg>
       );
     case "calendario": // calendário
@@ -118,30 +118,61 @@ function Icon({ name, active }: { name: Section; active: boolean }) {
   }
 }
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: "midias", label: "Mídias" },
-  { id: "frases", label: "Frases" },
-  { id: "criar", label: "Criar" },
-  { id: "historico", label: "Histórico" },
-  { id: "publicacao", label: "Publicação" },
-  { id: "calendario", label: "Calendário" },
-  { id: "contas", label: "Contas" },
-  { id: "stories", label: "Stories" },
-  { id: "utilitarios", label: "Utilitários" },
-  { id: "api", label: "API" },
+// Menu agrupado por etapa do trabalho — o nome de cada item diz o que ele faz.
+// `mobile: true` = aparece direto na barra inferior do celular; os demais ficam em "Menu".
+const GROUPS: { titulo: string; itens: { id: Section; label: string; mobile?: boolean }[] }[] = [
+  {
+    titulo: "Criar conteúdo",
+    itens: [
+      { id: "midias", label: "Mídias", mobile: true },
+      { id: "frases", label: "Frases" },
+      { id: "criar", label: "Criar vídeos", mobile: true },
+      { id: "historico", label: "Vídeos gerados" },
+    ],
+  },
+  {
+    titulo: "Publicar",
+    itens: [
+      { id: "publicacao", label: "Publicação", mobile: true },
+      { id: "calendario", label: "Calendário" },
+      { id: "stories", label: "Stories", mobile: true },
+      { id: "contas", label: "Contas" },
+    ],
+  },
+  {
+    titulo: "Ferramentas",
+    itens: [
+      { id: "utilitarios", label: "Utilitários" },
+      { id: "api", label: "Chaves de API" },
+    ],
+  },
 ];
 
 const TITLES: Record<Section, string> = {
   midias: "Mídias",
   frases: "Frases",
-  criar: "Criar",
-  historico: "Histórico",
+  criar: "Criar vídeos",
+  historico: "Vídeos gerados",
   publicacao: "Publicação",
   calendario: "Calendário",
   contas: "Contas",
   stories: "Stories",
   utilitarios: "Utilitários",
-  api: "API",
+  api: "Chaves de API",
+};
+
+// Uma frase dizendo PARA QUE serve cada página — sempre no mesmo lugar, logo abaixo do título.
+const DESCS: Record<Section, string> = {
+  midias: "Guarde aqui os vídeos, fotos e músicas usados para criar o conteúdo, organizados em pastas.",
+  frases: "Frases que aparecem dentro dos vídeos. Escolha um tipo para ver e editar as frases dele.",
+  criar: "Gere vários vídeos de uma vez a partir de uma pasta de mídias.",
+  historico: "Todos os vídeos que já foram gerados, do mais novo para o mais antigo.",
+  publicacao: "Acompanhe o que foi publicado hoje e aprove o que ainda vai ser publicado.",
+  calendario: "Veja os dias e horários de cada publicação. Arraste um item para mudar o horário.",
+  contas: "As contas do Instagram usadas para publicar, e as configurações de cada uma.",
+  stories: "Stories publicados automaticamente todo dia, por conta ou em várias contas de uma vez.",
+  utilitarios: "Ferramentas extras, como ampliar imagens.",
+  api: "Chaves para outros sistemas usarem o Nitro. Só mexa aqui se souber para que serve.",
 };
 
 type Theme = "dark" | "light";
@@ -167,6 +198,8 @@ function sectionFromPath(path: string): Section {
 export default function App() {
   const [logged, setLogged] = useState<boolean>(!!getToken());
   const [section, setSection] = useState<Section>(() => sectionFromPath(window.location.pathname));
+  const [menuAberto, setMenuAberto] = useState(false);
+  const [confirmaSair, setConfirmaSair] = useState(false);
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem("nitro-theme") as Theme) || "dark"
   );
@@ -177,6 +210,7 @@ export default function App() {
     if (window.location.pathname !== PATHS[next]) {
       window.history.pushState(null, "", PATHS[next]);
     }
+    window.scrollTo(0, 0);
   }
 
   // mantém a URL em sincronia quando o usuário usa voltar/avançar
@@ -217,40 +251,65 @@ export default function App() {
     setLogged(false);
   }
 
+  function navBtn(id: Section, label: string, extra = "") {
+    const active = section === id;
+    return (
+      <button
+        key={id}
+        type="button"
+        className={`igtab-btn${active ? " active" : ""}${extra}`}
+        onClick={() => {
+          goTo(id);
+          setMenuAberto(false);
+        }}
+        aria-current={active ? "page" : undefined}
+      >
+        <Icon name={id} active={active} />
+        <span className="igtab-label">{label}</span>
+      </button>
+    );
+  }
+
   return (
     <div className="app">
+      <a className="skip-link" href="#conteudo">
+        Pular para o conteúdo
+      </a>
       <header className="ighead">
         <span className="iglogo">Nitro</span>
-        <span className="ightitle">{TITLES[section]}</span>
+        <h1 className="ightitle">{TITLES[section]}</h1>
         <button
+          type="button"
           className="igtheme"
           onClick={toggleTheme}
-          title={theme === "dark" ? "Tema claro" : "Tema escuro"}
-          aria-label="Alternar tema"
+          title={theme === "dark" ? "Mudar para o tema claro" : "Mudar para o tema escuro"}
+          aria-label={theme === "dark" ? "Mudar para o tema claro" : "Mudar para o tema escuro"}
         >
           {theme === "dark" ? (
             /* sol */
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="4" />
               <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
             </svg>
           ) : (
             /* lua */
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
             </svg>
           )}
         </button>
-        <button className="iglogout" onClick={logout} title="Sair" aria-label="Sair">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <button type="button" className="iglogout" onClick={() => setConfirmaSair(true)} title="Sair da conta">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
+          <span className="iglogout-label">Sair</span>
         </button>
       </header>
 
-      <main className="igmain">
+      <main className="igmain" id="conteudo" tabIndex={-1}>
+        <p className="page-desc">{DESCS[section]}</p>
         {section === "midias" && <MediaLibrary />}
         {section === "frases" && <Phrases />}
         {section === "criar" && <Create />}
@@ -263,19 +322,59 @@ export default function App() {
         {section === "api" && <ApiKeys />}
       </main>
 
-      <nav className="igtab">
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            className={section === s.id ? "igtab-btn active" : "igtab-btn"}
-            onClick={() => goTo(s.id)}
-            aria-label={s.label}
-          >
-            <Icon name={s.id} active={section === s.id} />
-            <span className="igtab-label">{s.label}</span>
-          </button>
+      {/* desktop: barra lateral com todos os itens, agrupados.
+          celular: barra inferior só com os principais + "Menu" (abre a lista completa). */}
+      <nav className="igtab" aria-label="Menu principal">
+        {GROUPS.map((g) => (
+          <div key={g.titulo} className="igtab-group" role="group" aria-label={g.titulo}>
+            <div className="igtab-group-title" aria-hidden="true">
+              {g.titulo}
+            </div>
+            {g.itens.map((it) => navBtn(it.id, it.label, it.mobile ? "" : " igtab-btn--desk"))}
+          </div>
         ))}
+        <button
+          type="button"
+          className={`igtab-btn igtab-btn--more${menuAberto ? " active" : ""}`}
+          onClick={() => setMenuAberto(true)}
+          aria-haspopup="dialog"
+        >
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <line x1="4" y1="7" x2="20" y2="7" />
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <line x1="4" y1="17" x2="20" y2="17" />
+          </svg>
+          <span className="igtab-label">Menu</span>
+        </button>
       </nav>
+
+      {menuAberto && (
+        <Modal title="Menu" onClose={() => setMenuAberto(false)}>
+          <div className="menu-sheet">
+            {GROUPS.map((g) => (
+              <div key={g.titulo} className="menu-sheet-group" role="group" aria-label={g.titulo}>
+                <div className="igtab-group-title">{g.titulo}</div>
+                {g.itens.map((it) => navBtn(it.id, it.label))}
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
+      <ConfirmHost />
+      {confirmaSair && (
+        <ConfirmDialog
+          title="Sair da conta?"
+          message="Você vai precisar digitar o e-mail e a senha de novo para entrar."
+          confirmLabel="Sair"
+          cancelLabel="Ficar"
+          tone="primary"
+          onConfirm={() => {
+            setConfirmaSair(false);
+            logout();
+          }}
+          onClose={() => setConfirmaSair(false)}
+        />
+      )}
     </div>
   );
 }

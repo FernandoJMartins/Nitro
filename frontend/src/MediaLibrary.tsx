@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ConfirmDialog, NameDialog } from "./Dialog";
+import { ConfirmDialog, NameDialog, confirmar } from "./Dialog";
 import {
   createFolder,
   deleteFolder,
@@ -113,7 +113,14 @@ function MediaCard({ m, onDelete }: { m: Media; onDelete: () => void }) {
           <button
             className="btn danger sm"
             onClick={async () => {
-              if (confirm("Remover esta mídia?")) onDelete();
+              if (
+                await confirmar({
+                  title: "Excluir esta mídia?",
+                  message: `"${m.nome_original}" será apagada da biblioteca. Isso não pode ser desfeito.`,
+                  confirmLabel: "Excluir mídia",
+                })
+              )
+                onDelete();
             }}
           >
             Excluir
@@ -144,7 +151,14 @@ function MusicRow({ m, onDelete }: { m: Media; onDelete: () => void }) {
         <button
           className="btn danger sm"
           onClick={async () => {
-            if (confirm("Remover esta música?")) onDelete();
+            if (
+              await confirmar({
+                title: "Excluir esta música?",
+                message: `"${m.nome_original}" será apagada e não poderá mais ser usada nos vídeos. Isso não pode ser desfeito.`,
+                confirmLabel: "Excluir música",
+              })
+            )
+              onDelete();
           }}
         >
           Excluir

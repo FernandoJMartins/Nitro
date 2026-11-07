@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { KIND_LABEL, pubStatus } from "./labels";
+import { ErrorBanner, confirmar } from "./Dialog";
 import {
   AlertTriangle,
   BookImage,
@@ -102,7 +104,7 @@ function ItemChip({
       onClick={() => selectable && onToggle()}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      title={`${item.kind} · ${item.status} · @${item.account_username}\n${when.toLocaleString("pt-BR")}`}
+      title={`${KIND_LABEL[item.kind] ?? item.kind} · ${pubStatus(item.status)} · @${item.account_username}\n${when.toLocaleString("pt-BR")}`}
     >
       <span className="cal-dot" style={{ background: color }} />
       <span className="cal-icon">
@@ -141,7 +143,14 @@ export default function Calendar() {
 
   async function desprogramar() {
     if (selected.size === 0) return;
-    if (!confirm(`Desprogramar ${selected.size} publicação(ões)? O conteúdo volta para a fila de aprovação.`)) return;
+    if (
+      !(await confirmar({
+        title: "Tirar do calendário?",
+        message: `${selected.size} publicação(ões) sairão do calendário e voltarão para a fila de aprovação. Nada é apagado.`,
+        confirmLabel: "Tirar do calendário",
+      }))
+    )
+      return;
     setBusy("cancel");
     try {
       await cancelPublications([...selected]);
@@ -156,7 +165,15 @@ export default function Calendar() {
 
   async function postarAgora() {
     if (selected.size === 0) return;
-    if (!confirm(`Postar ${selected.size} publicação(ões) AGORA na conta?`)) return;
+    if (
+      !(await confirmar({
+        title: "Publicar agora?",
+        message: `${selected.size} publicação(ões) serão publicadas agora, sem esperar o horário marcado.`,
+        confirmLabel: "Publicar agora",
+        tone: "primary",
+      }))
+    )
+      return;
     setBusy("now");
     try {
       await postNowPublications([...selected]);
@@ -250,28 +267,24 @@ export default function Calendar() {
 
   return (
     <>
-      <p className="sub">
-        Calendário de publicações: arraste um item para mudar a data/horário — o novo horário é salvo no backend e
-        usado pela fila de execução. Cada item mostra a conta responsável.
-      </p>
-      {error && <div className="error">⚠️ {error}</div>}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
 
       <div className="selbar" style={{ marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <div className="cal-nav">
-          <button className="btn sm" onClick={() => moveAnchor(-1)} aria-label="Anterior">
+          <button className="btn sm" onClick={() => moveAnchor(-1)} aria-label="Período anterior" title="Período anterior">
             <ChevronLeft size={15} />
           </button>
           <button className="btn sm" onClick={() => setAnchor(new Date())}>
             Hoje
           </button>
-          <button className="btn sm" onClick={() => moveAnchor(1)} aria-label="Próximo">
+          <button className="btn sm" onClick={() => moveAnchor(1)} aria-label="Próximo período" title="Próximo período">
             <ChevronRight size={15} />
           </button>
           <strong style={{ marginLeft: 8 }}>{title}</strong>
         </div>
         <div className="cal-views">
           {VIEWS.map(({ key, label, Icon }) => (
-            <button key={key} className={`btn sm ${view === key ? "primary" : ""}`} onClick={() => setView(key)}>
+            <button key={key} className={`btn sm ${view === key ? "primary" : ""}`} aria-pressed={view === key} onClick={() => setView(key)}>
               <Icon size={13} /> {label}
             </button>
           ))}
@@ -281,10 +294,10 @@ export default function Calendar() {
             {selected.size > 0 ? `${selected.size} selecionada(s)` : "Clique nos itens para selecionar"}
           </span>
           <button className="btn sm" onClick={postarAgora} disabled={selected.size === 0 || busy !== null}>
-            <Zap size={13} /> Postar agora
+            <Zap size={13} /> Publicar agora
           </button>
           <button className="btn danger sm" onClick={desprogramar} disabled={selected.size === 0 || busy !== null}>
-            <Trash2 size={13} /> Desprogramar
+            <Trash2 size={13} /> Tirar do calendário
           </button>
         </div>
       </div>

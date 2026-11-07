@@ -77,9 +77,12 @@ def update_proxy(proxy_id: int, body: ProxyUpdate, user: User = Depends(get_curr
     if proxy is None or proxy.user_id != user.id:
         raise HTTPException(404, "Proxy não encontrado.")
     data = body.model_dump(exclude_unset=True)
-    senha = data.pop("senha", None)
-    if senha:
-        proxy.senha = senha
+    if "senha" in data:
+        senha = data.pop("senha")
+        if senha is None:
+            proxy.senha = None
+        elif senha:
+            proxy.senha = senha
     nome_interno = data.pop("nome_interno", None)
     for k, v in data.items():
         setattr(proxy, k, v)

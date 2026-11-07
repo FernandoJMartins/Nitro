@@ -657,7 +657,7 @@ def build_video(
     # mantém esse áudio; se houver música também, os dois são MIXADOS juntos (não
     # um substitui o outro). False descarta o áudio original (comportamento
     # antigo: sem música = mudo; com música = só a música).
-    keep_original_audio: bool = True,
+    keep_original_audio: bool = False,
 ) -> None:
     """Gera um .mp4 aplicando (no máximo) um tipo de vídeo especial.
 

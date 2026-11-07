@@ -135,6 +135,18 @@ def _app_versions_do_fork() -> list[str]:
     return [default] + [v for v in config.APP_SETTINGS if v != default]
 
 
+HTTP_TIMEOUT = (20, 120)  # (conexão, leitura sem dados) em segundos
+
+
+def _com_timeout_padrao(request_fn):
+    def request(method, url, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = HTTP_TIMEOUT
+        return request_fn(method, url, **kwargs)
+
+    return request
+
+
 def _default_client_factory(proxy_url: str | None):
     """Cria um Client instagrapi novo para ESTA conta. Importação tardia: o resto
     do sistema (e os testes) funciona sem a biblioteca instalada."""
@@ -178,6 +190,15 @@ def _default_client_factory(proxy_url: str | None):
             # ChallengeRequired — que o adapter converte no pedido de código
             # para o operador.
             self.challenge_code_handler = lambda username, choice=None: None
+            # O fork não passa timeout nas chamadas HTTP (o adapter curl repassa
+            # None = esperar para sempre). Se a rede cai no meio de um upload
+            # (troca de wifi/IP), a requisição trava eternamente e congela o
+            # scheduler inteiro. Timeout padrão (conexão, leitura) — o de leitura
+            # é por inatividade, então upload grande e lento continua funcionando.
+            for nome in ("private", "public", "graphql"):
+                sessao = getattr(self, nome, None)
+                if sessao is not None:
+                    sessao.request = _com_timeout_padrao(sessao.request)
 
         def _try_caa_login(self, exc: Exception, verification_code: str = "") -> bool:
             if self.skip_caa_login:

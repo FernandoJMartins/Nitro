@@ -18,6 +18,7 @@ DEFAULT_WINDOW = ("08:00", "23:00")
 JITTER_SECONDS = 90  # pequena variação natural entre posts, evita intervalos idênticos
 SELECTED_OFFSET_SECONDS = 15 * 60  # offset aleatório (±15min) em torno do horário selecionado
 SELECTED_MIN_GAP = timedelta(minutes=30)  # colisão com publicação existente perto do horário selecionado
+OVERDUE_TOLERANCE = timedelta(minutes=30)  # reel automático mais atrasado que isso => recalendariza a conta
 
 
 def _parse_hhmm(value: str) -> time:
@@ -289,6 +290,37 @@ def reschedule_account(db: Session, account: Account, *, now: datetime | None = 
             )
         )
     )
+    for pub in pubs:
+        db.delete(pub)
+    db.flush()
+    db.expire_all()
+    return build_schedule_for_account(db, account, now=now)
+
+
+def reschedule_overdue(db: Session, account: Account, *, now: datetime | None = None) -> list[Publication]:
+    """Se o sistema ficou parado (queda de rede, servidor desligado, scheduler travado),
+    os reels automáticos acumulam no passado e sairiam TODOS de uma vez na volta.
+    Quando há reels atrasados além da tolerância, refaz o calendário a partir de agora
+    (mesma ordem, mesmos horários/cadência da conta) — o atraso vira deslocamento,
+    não rajada. Agendamentos específicos e stories não são tocados.
+    """
+    now = now or datetime.now(timezone.utc)
+    if not account.ativa:
+        return []
+    pubs = list(
+        db.scalars(
+            select(Publication)
+            .join(Content, Content.id == Publication.content_id)
+            .where(
+                Publication.account_id == account.id,
+                Publication.status == "PENDING",
+                Content.kind == "reel",
+                Content.schedule_mode == "automatico",
+            )
+        )
+    )
+    if not any(_aware(p.scheduled_at) < now - OVERDUE_TOLERANCE for p in pubs):
+        return []
     for pub in pubs:
         db.delete(pub)
     db.flush()
