@@ -153,10 +153,10 @@ def _tem_pixel(im, x0, y0, w, h, pred) -> bool:
 
 def test_build_proxy_url():
     assert build_proxy_url(None) is None
-    assert build_proxy_url({"host": "1.2.3.4", "port": 1080}) == "socks5://1.2.3.4:1080"
+    assert build_proxy_url({"host": "1.2.3.4", "port": 1080}) == "socks5h://1.2.3.4:1080"
     assert (
         build_proxy_url({"host": "1.2.3.4", "port": 1080, "username": "u", "password": "p"})
-        == "socks5://u:p@1.2.3.4:1080"
+        == "socks5h://u:p@1.2.3.4:1080"
     )
     assert (
         build_proxy_url({"protocol": "http", "host": "h", "port": 8080, "username": "a b", "password": "c@d"})
@@ -177,7 +177,7 @@ def test_adapter_recebe_proxy_da_conta():
         client_factory=factory,
     )
     adapter.open()
-    assert seen["url"] == "socks5://u:p@9.9.9.9:1080"
+    assert seen["url"] == "socks5h://u:p@9.9.9.9:1080"
     assert adapter._client.proxy == seen["url"]
 
 

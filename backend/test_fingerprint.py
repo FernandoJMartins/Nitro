@@ -74,6 +74,23 @@ _tok = client.post(
 ).json()["access_token"]
 client.headers.update({"Authorization": f"Bearer {_tok}"})
 
+# SaaS: o usuário do teste precisa de um plano ativo para usar a API
+def _libera_plano():
+    from datetime import datetime, timedelta, timezone
+
+    from app.database import SessionLocal
+    from app.deps import _resolve_user
+
+    db = SessionLocal()
+    u = _resolve_user(_tok, db)
+    u.plano = "agencia"
+    u.acesso_manual_ate = datetime.now(timezone.utc) + timedelta(days=1)
+    db.commit()
+    db.close()
+
+
+_libera_plano()
+
 
 def test_endpoint_fingerprint_regenera_e_expoe_resumo():
     if not _com_instagrapi():
