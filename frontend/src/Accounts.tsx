@@ -103,10 +103,25 @@ function HourPicker({
  * Aceita dois formatos:
  *   - URL:        "socks5://usuario:senha@host:porta" (protocolo opcional, porta opcional = 1080)
  *   - Provider:   "host:porta:usuario:senha"  (ex.: server.sixproxy.com:24654:user:pass)
+ *   - Invertido:  "host:porta@usuario:senha"  (ex.: 62.93.164.201:50000@user:pass)
  */
 function parseProxyUrl(raw: string): { protocolo: string; host: string; porta: number; usuario?: string; senha?: string } | null {
   let value = raw.trim();
   if (!value) return null;
+  {
+    // formato invertido: [protocolo://]host:porta@usuario:senha (senha pode conter ":" e "@")
+    const m = value.match(/^(?:([a-zA-Z][a-zA-Z0-9+.-]*):\/\/)?([^\s:@/]+):(\d+)@([^:]*)(?::(.*))?$/);
+    if (m && !/:\d+$/.test(value.slice(value.indexOf("@") + 1))) {
+      const [, proto, host, porta, usuario, senha] = m;
+      return {
+        protocolo: (proto || "socks5").toLowerCase(),
+        host,
+        porta: Number(porta),
+        ...(usuario ? { usuario } : {}),
+        ...(senha ? { senha } : {}),
+      };
+    }
+  }
   if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
     // formato de provider: host:porta:usuario:senha (senha pode conter ":")
     const parts = value.split(":");
@@ -260,7 +275,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
             </label>
             <div className="checkrow" style={{ gap: 8 }}>
               <input
-                placeholder="socks5://usuario:senha@host:porta — ou — host:porta:usuario:senha"
+                placeholder="socks5://usuario:senha@host:porta — ou — host:porta:usuario:senha — ou — host:porta@usuario:senha"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 style={{ flex: 1 }}
@@ -272,7 +287,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
             </div>
             <div className="hint" style={{ marginTop: 6 }}>
               Uma linha só. Formatos aceitos: <code>socks5://usuario:senha@host:porta</code> ou o formato de
-              provider <code>host:porta:usuario:senha</code> (protocolo e porta opcionais — padrão socks5 e 1080).
+              provider <code>host:porta:usuario:senha</code> ou <code>host:porta@usuario:senha</code> (protocolo e porta opcionais — padrão socks5 e 1080).
             </div>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setNovo(false)}>
@@ -297,7 +312,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
               />
             </label>
             <input
-              placeholder="socks5://usuario:senha@host:porta — ou — host:porta:usuario:senha"
+              placeholder="socks5://usuario:senha@host:porta — ou — host:porta:usuario:senha — ou — host:porta@usuario:senha"
               value={editUrl}
               onChange={(e) => setEditUrl(e.target.value)}
               autoComplete="off"
@@ -305,7 +320,7 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
             />
             <div className="hint" style={{ marginTop: 6 }}>
               Uma linha só, nos mesmos formatos do cadastro: <code>socks5://usuario:senha@host:porta</code> ou{" "}
-              <code>host:porta:usuario:senha</code>.
+              <code>host:porta:usuario:senha</code> ou <code>host:porta@usuario:senha</code>.
             </div>
             <div className="modal-actions">
               <button className="btn ghost sm" onClick={() => setEditando(null)}>

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..billing import limits as billing_limits
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import GeneratedVideo, User
@@ -104,6 +105,8 @@ def import_from_generator(
     videos = [v for v in videos if v.id not in ja_importados]
     if not videos:
         raise HTTPException(404, "Nenhum vídeo encontrado para importar (todos já foram importados).")
+    # SaaS: limite de vídeos na fila de publicação (calendário) do plano
+    billing_limits.check_calendar(db, user, len(videos))
 
     # resolve as contas destino ANTES de criar qualquer coisa — seleção inválida
     # não deixa conteúdo órfão no banco.

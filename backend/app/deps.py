@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import security
+from .billing import limits as billing_limits
 from .database import get_db
 from .models import ApiKey, User
 
@@ -21,16 +22,42 @@ def _resolve_user(token: str, db: Session) -> User | None:
     return db.get(User, uid) if uid is not None else None
 
 
-def get_current_user(
+def _check_access(user: User, token: str) -> User:
+    """SaaS: sem assinatura ativa (e sem ser admin) não usa o sistema — 402.
+    API key só funciona se o plano incluir a função de API."""
+    plan = billing_limits.require_plan(user)
+    if security.is_api_key(token) and not plan.api_keys:
+        raise HTTPException(402, f"Acesso via API não está incluído no plano {plan.nome}.")
+    return user
+
+
+def get_authenticated_user(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User:
-    """Autenticação padrão via header Authorization: Bearer <token> (JWT ou API key)."""
+    """Só autentica (JWT ou API key), SEM exigir assinatura. Usado pelas rotas de
+    login/perfil e de cobrança — quem não pagou ainda precisa conseguir assinar."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Não autenticado. Envie Authorization: Bearer <token>.")
     user = _resolve_user(authorization[7:].strip(), db)
     if user is None:
         raise HTTPException(status_code=401, detail="Token ou API key inválidos/expirados.")
+    return user
+
+
+def get_current_user(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User:
+    """Autenticação padrão via header Authorization: Bearer <token> (JWT ou API key)
+    + assinatura ativa (admins passam sempre)."""
+    user = get_authenticated_user(authorization, db)
+    return _check_access(user, authorization[7:].strip())
+
+
+def get_admin_user(user: User = Depends(get_authenticated_user)) -> User:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
     return user
 
 
@@ -52,4 +79,4 @@ def get_user_for_file(
     user = _resolve_user(raw, db) if raw else None
     if user is None:
         raise HTTPException(status_code=401, detail="Token inválido ou ausente.")
-    return user
+    return _check_access(user, raw)

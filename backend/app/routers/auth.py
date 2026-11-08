@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from .. import security
 from ..database import get_db
-from ..deps import get_current_user
+from ..billing import limits as billing_limits
+from ..deps import get_authenticated_user, get_current_user
 from ..models import ApiKey, User
 from ..schemas import (
     ApiKeyCreate,
@@ -52,13 +53,24 @@ def login(body: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/auth/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)):
-    return user
+def me(user: User = Depends(get_authenticated_user)):
+    plan = billing_limits.effective_plan(user)
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        criado_em=user.criado_em,
+        is_admin=user.is_admin,
+        plano=user.plano,
+        assinatura_status=user.assinatura_status,
+        tem_acesso=plan is not None,
+        recursos=plan.as_dict() if plan else None,
+    )
 
 
 # ---------- Chaves de API ----------
 @router.post("/keys", response_model=ApiKeyCreated)
 def create_key(body: ApiKeyCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    billing_limits.require_feature(user, "api_keys", "Chaves de API")
     raw, chave_hash, prefixo = security.generate_api_key()
     ak = ApiKey(user_id=user.id, nome=body.nome.strip() or "Minha chave", chave_hash=chave_hash, prefixo=prefixo)
     db.add(ak)

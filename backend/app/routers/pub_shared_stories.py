@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..billing import limits as billing_limits
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import User
@@ -105,6 +106,7 @@ def list_shared_stories(user: User = Depends(get_current_user), db: Session = De
 
 @router.post("/shared-stories", response_model=SharedStoryOut)
 def create_shared_story(body: SharedStoryUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    billing_limits.require_feature(user, "stories_compartilhados", "Stories compartilhados")
     _owned_account_ids(db, user, body.account_ids)
     plan = SharedStoryPlan(
         user_id=user.id,
@@ -130,6 +132,7 @@ def create_shared_story(body: SharedStoryUpdate, user: User = Depends(get_curren
 def update_shared_story(
     plan_id: int, body: SharedStoryUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
+    billing_limits.require_feature(user, "stories_compartilhados", "Stories compartilhados")
     plan = _get_shared_plan(db, user, plan_id)
     _owned_account_ids(db, user, body.account_ids)
     plan.enabled = body.enabled
@@ -159,6 +162,7 @@ def post_shared_story_now(plan_id: int, user: User = Depends(get_current_user), 
     """Publica AGORA em TODAS as contas-alvo do story compartilhado (uma de cada
     vez — cada conta isolada: uma falhar não impede as outras). Cada conta conta
     como "já gerada hoje" depois de publicar — não repete no horário normal."""
+    billing_limits.require_feature(user, "stories_compartilhados", "Stories compartilhados")
     plan = _get_shared_plan(db, user, plan_id)
     paths = _frames_of_shared_plan(db, plan.id)
     if not paths:
@@ -173,6 +177,8 @@ def post_shared_story_now(plan_id: int, user: User = Depends(get_current_user), 
         account = db.get(Account, target.account_id)
         if account is None or not account.ativa or account.status != "pronta":
             continue  # conta indisponível: pula, sem derrubar as outras
+        if billing_limits.stories_restantes_hoje(db, account) <= 0:
+            continue  # limite diário de stories do plano atingido nesta conta
 
         agora = datetime.now(timezone.utc)
         content = Content(

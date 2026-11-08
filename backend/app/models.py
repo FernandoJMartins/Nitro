@@ -23,6 +23,25 @@ class User(Base):
     senha_hash: Mapped[str] = mapped_column(String(255))
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    # ---------- assinatura (SaaS) — ver app/billing ----------
+    # plano contratado: 'basico' | 'pro' | 'agencia' | None (sem plano)
+    plano: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # status da assinatura na Stripe: active | trialing | past_due | canceled | unpaid | incomplete...
+    assinatura_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    periodo_fim: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # acesso concedido MANUALMENTE por um admin (cortesia/teste), sem Stripe, até esta data
+    acesso_manual_ate: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # usuário bloqueado por um admin (perde o acesso mesmo pagando)
+    bloqueado: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    @property
+    def is_admin(self) -> bool:
+        from .config import settings
+
+        return (self.email or "").lower() in settings.admin_emails_set
+
 
 class ApiKey(Base):
     """Chave de API de um usuário, para integração externa."""

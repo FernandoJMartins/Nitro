@@ -12,16 +12,17 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..billing import limits as billing_limits
 from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, get_user_for_file
 from ..models import GeneratedVideo, Job, Media, Phrase, PhraseType, User
-from ..schemas import BulkRequest, GeneratedVideoOut, JobOut
+from ..schemas import BulkRequest, GeneratedVideoOut, JobOut, StripesConfig
 from ..services import bulk, video
 from ..services.bulk import BulkConfig
 
@@ -171,12 +172,16 @@ def generate_bulk(
     if not body.base_media_ids:
         raise HTTPException(status_code=400, detail="Selecione ao menos uma mídia base")
     quantidade = max(1, min(body.quantidade, 200))
+    # SaaS: lote e cota mensal do plano; IA só nos planos que incluem
+    billing_limits.check_bulk(db, user, quantidade)
+    if body.use_ia_texto or body.gerar_legenda_ia:
+        billing_limits.require_feature(user, "ia", "IA de textos/legendas")
 
     # tipos de vídeo habilitados. Back-compat: use_flash antigo vira o tipo "pause".
     tipos = list(dict.fromkeys(body.video_types))  # remove duplicatas, mantém ordem
     if body.use_flash and "pause" not in tipos:
         tipos.append("pause")
-    validos = {"pause", "imagem", "final", "texto"}
+    validos = {"pause", "imagem", "final", "texto", "persiana"}
     invalidos = [t for t in tipos if t not in validos]
     if invalidos:
         raise HTTPException(status_code=400, detail=f"Tipos de vídeo inválidos: {invalidos}")
@@ -185,6 +190,7 @@ def generate_bulk(
     orders = {
         "base": body.order_base, "music": body.order_music, "hot": body.order_hot,
         "overlay": body.order_overlay, "final": body.order_final, "text": body.order_text,
+        "stripes": body.order_stripes,
     }
     for nome, v in orders.items():
         if v not in ("random", "sequential"):
@@ -233,9 +239,14 @@ def generate_bulk(
     _owned_media_ids(
         db,
         body.base_media_ids + body.music_media_ids + body.hot_media_ids
-        + body.overlay_media_ids + body.final_media_ids,
+        + body.overlay_media_ids + body.final_media_ids + body.stripes_media_ids,
         user.id,
     )
+    if "persiana" in tipos:
+        for mid in set(body.stripes_media_ids):
+            m = db.get(Media, mid)
+            if not video.is_image(Path(m.caminho)):
+                raise HTTPException(status_code=400, detail=f'Persiana: o fundo "{m.nome_original}" precisa ser uma imagem')
     # todos os tipos de frase usados (global + por tipo) precisam ser do usuário
     pt_ids = set(text_types.values())
     if body.phrase_type_id is not None:
@@ -286,9 +297,46 @@ def generate_bulk(
         order_overlay=body.order_overlay,
         order_final=body.order_final,
         order_text=body.order_text,
+        stripes_media_ids=body.stripes_media_ids if "persiana" in tipos else [],
+        stripes=body.stripes.model_dump(),
+        order_stripes=body.order_stripes,
     )
     background.add_task(bulk.run_bulk_job, job.id, cfg)
     return job
+
+
+class StripesPreviewRequest(BaseModel):
+    base_media_id: int                  # vídeo (ou foto) base
+    bg_media_id: int | None = None      # imagem de fundo (None = 1º frame do vídeo)
+    stripes: StripesConfig = StripesConfig()
+    at: float | None = None             # segundo do vídeo usado no frame (padrão: ~1s)
+
+
+@router.post("/stripes/preview")
+def stripes_preview(body: StripesPreviewRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Um frame PNG da persiana diagonal, para validar ângulo/espessura antes do lote."""
+    storage = settings.storage_path
+    base = _media_or_404(db, body.base_media_id, {"video", "photo"}, user.id)
+    bg_path = None
+    if body.bg_media_id is not None:
+        bg = db.get(Media, body.bg_media_id)
+        if not bg or bg.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Imagem de fundo não encontrada")
+        bg_path = storage / bg.caminho
+        if not video.is_image(bg_path):
+            raise HTTPException(status_code=400, detail="O fundo da persiana precisa ser uma imagem")
+    tmp_dir = storage / "_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    out = tmp_dir / f"stripes_preview_{uuid.uuid4().hex}.png"
+    try:
+        video.render_stripes_preview(storage / base.caminho, out, bg_path=bg_path,
+                                     stripes=body.stripes.model_dump(), at=body.at)
+        data = out.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Falha ao gerar preview: {exc}") from exc
+    finally:
+        out.unlink(missing_ok=True)
+    return Response(content=data, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)

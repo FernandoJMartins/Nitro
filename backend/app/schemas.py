@@ -16,6 +16,12 @@ class UserOut(BaseModel):
     id: int
     email: str
     criado_em: datetime
+    # SaaS
+    is_admin: bool = False
+    plano: str | None = None
+    assinatura_status: str | None = None
+    tem_acesso: bool = False
+    recursos: dict | None = None  # limites/funções do plano efetivo (ver app/billing/plans.py)
 
 
 class TokenOut(BaseModel):
@@ -136,6 +142,23 @@ class PhraseBulkSave(BaseModel):
 
 
 # ---------- Geração em massa (Fase 5) ----------
+class StripesConfig(BaseModel):
+    """Parâmetros do tipo "persiana" (Diagonal Stripes). Ver video.STRIPES_DEFAULTS."""
+
+    stripe_angle: float = 38.0          # graus em relação à horizontal (20–70)
+    stripe_period: float = 48.0         # px em 1080 de largura (1 faixa A + 1 faixa B)
+    stripe_density: float | None = None  # nº de pares na largura; se vier, substitui o período
+    stripe_duty: float = 0.5            # fração ocupada pela faixa A (composto imagem+vídeo)
+    video_opacity: float = 0.85
+    light_band_brightness: float = 0.10
+    light_band_saturation: float = 0.6
+    mirror: bool = True
+    stripe_offset: float = 0.0          # deslocamento das faixas (px)
+    randomize: bool = False             # ângulo ±4°, período ±15% e offset sorteados por versão
+    mute: bool = False                  # True = vídeo final sem áudio (nem original, nem música)
+    blur: float = 0.0                   # blur leve (sigma px) só no vídeo; 0 = desligado
+
+
 class BulkRequest(BaseModel):
     quantidade: int = 5
     base_media_ids: list[int]
@@ -170,13 +193,18 @@ class BulkRequest(BaseModel):
     order_overlay: str = "random"   # imagens estáticas (tipo "imagem")
     order_final: str = "random"     # clipes finais (tipo "final")
     order_text: str = "random"      # textos (frases), por tipo de frase usado
+    order_stripes: str = "random"   # imagens de fundo da persiana (tipo "persiana")
 
     # ---- Tipos de vídeo (marque 1 ou vários — sorteado por vídeo) ----
     # subconjunto de: "pause" (flash hot) | "imagem" (imagem estática) | "final" (clipe final)
+    #                | "texto" (apenas texto) | "persiana" (persiana diagonal)
     video_types: list[str] = []
     hot_media_ids: list[int] = []       # pool do tipo "pause"
     overlay_media_ids: list[int] = []   # pool do tipo "imagem"
     final_media_ids: list[int] = []     # pool do tipo "final"
+    # tipo "persiana": imagens de fundo (opcional — vazio = 1º frame do próprio vídeo)
+    stripes_media_ids: list[int] = []
+    stripes: StripesConfig = StripesConfig()
     font_id: str | None = None          # fonte do texto (ver GET /videos/fonts)
     # tamanho da fonte (px) POR tipo de vídeo, ex.: {"pause": 64, "imagem": 80}
     font_sizes: dict[str, int] = {}

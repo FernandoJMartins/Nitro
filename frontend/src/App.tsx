@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { clearToken, getToken } from "./api";
+import { clearToken, getToken, me, type UserOut } from "./api";
+import Plans from "./Plans";
+import Admin from "./Admin";
 import Auth from "./Auth";
 import MediaLibrary from "./MediaLibrary";
 import Phrases from "./Phrases";
@@ -23,7 +25,9 @@ type Section =
   | "contas"
   | "stories"
   | "utilitarios"
-  | "api";
+  | "api"
+  | "planos"
+  | "admin";
 
 /* ícones de linha, no estilo Instagram (stroke fino, 24px) */
 function Icon({ name, active }: { name: Section; active: boolean }) {
@@ -108,6 +112,20 @@ function Icon({ name, active }: { name: Section; active: boolean }) {
           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
       );
+    case "planos": // cartão
+      return (
+        <svg {...common}>
+          <rect x="2" y="5" width="20" height="14" rx="2.5" />
+          <line x1="2" y1="10" x2="22" y2="10" />
+          <line x1="6" y1="15" x2="10" y2="15" />
+        </svg>
+      );
+    case "admin": // escudo
+      return (
+        <svg {...common} fill={active ? "currentColor" : "none"}>
+          <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z" />
+        </svg>
+      );
     case "api": // perfil / chave
       return (
         <svg {...common} fill={active ? "currentColor" : "none"}>
@@ -146,6 +164,13 @@ const GROUPS: { titulo: string; itens: { id: Section; label: string; mobile?: bo
       { id: "api", label: "Chaves de API" },
     ],
   },
+  {
+    titulo: "Conta",
+    itens: [
+      { id: "planos", label: "Plano" },
+      { id: "admin", label: "Admin" },
+    ],
+  },
 ];
 
 const TITLES: Record<Section, string> = {
@@ -159,6 +184,8 @@ const TITLES: Record<Section, string> = {
   stories: "Stories",
   utilitarios: "Utilitários",
   api: "Chaves de API",
+  planos: "Plano e assinatura",
+  admin: "Administração",
 };
 
 // Uma frase dizendo PARA QUE serve cada página — sempre no mesmo lugar, logo abaixo do título.
@@ -173,6 +200,8 @@ const DESCS: Record<Section, string> = {
   stories: "Stories publicados automaticamente todo dia, por conta ou em várias contas de uma vez.",
   utilitarios: "Ferramentas extras, como ampliar imagens.",
   api: "Chaves para outros sistemas usarem o Nitro. Só mexa aqui se souber para que serve.",
+  planos: "Seu plano, o quanto você já usou e o pagamento mensal (cartão).",
+  admin: "Todos os usuários, planos e uso. Libere acesso de cortesia ou bloqueie usuários.",
 };
 
 type Theme = "dark" | "light";
@@ -188,6 +217,8 @@ const PATHS: Record<Section, string> = {
   stories: "/stories",
   utilitarios: "/utilitarios",
   api: "/api",
+  planos: "/planos",
+  admin: "/admin",
 };
 
 function sectionFromPath(path: string): Section {
@@ -200,6 +231,7 @@ export default function App() {
   const [section, setSection] = useState<Section>(() => sectionFromPath(window.location.pathname));
   const [menuAberto, setMenuAberto] = useState(false);
   const [confirmaSair, setConfirmaSair] = useState(false);
+  const [user, setUser] = useState<UserOut | null>(null);
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem("nitro-theme") as Theme) || "dark"
   );
@@ -244,15 +276,38 @@ export default function App() {
     return () => window.removeEventListener("nitro-unauth", onUnauth);
   }, []);
 
+  // perfil + plano: recarrega ao logar e sempre que a API responder 402
+  // (assinatura caiu ou limite do plano atingido)
+  useEffect(() => {
+    if (!logged) {
+      setUser(null);
+      return;
+    }
+    const load = () => me().then(setUser).catch(() => {});
+    load();
+    window.addEventListener("nitro-paywall", load);
+    return () => window.removeEventListener("nitro-paywall", load);
+  }, [logged]);
+
   if (!logged) return <Auth onAuth={() => setLogged(true)} />;
+  if (!user) return <div className="loading">Carregando…</div>;
+
+  // sem assinatura ativa: só a tela de planos fica disponível
+  const semAcesso = !user.tem_acesso;
+  const visiveis = (id: Section) => (semAcesso ? id === "planos" : id !== "admin" || user.is_admin);
+  const groups = GROUPS.map((g) => ({ ...g, itens: g.itens.filter((it) => visiveis(it.id)) })).filter(
+    (g) => g.itens.length > 0
+  );
+  const atual: Section = visiveis(section) ? section : "planos";
 
   function logout() {
     clearToken();
     setLogged(false);
+    setUser(null);
   }
 
   function navBtn(id: Section, label: string, extra = "") {
-    const active = section === id;
+    const active = atual === id;
     return (
       <button
         key={id}
@@ -277,7 +332,7 @@ export default function App() {
       </a>
       <header className="ighead">
         <span className="iglogo">Nitro</span>
-        <h1 className="ightitle">{TITLES[section]}</h1>
+        <h1 className="ightitle">{TITLES[atual]}</h1>
         <button
           type="button"
           className="igtheme"
@@ -309,23 +364,25 @@ export default function App() {
       </header>
 
       <main className="igmain" id="conteudo" tabIndex={-1}>
-        <p className="page-desc">{DESCS[section]}</p>
-        {section === "midias" && <MediaLibrary />}
-        {section === "frases" && <Phrases />}
-        {section === "criar" && <Create />}
-        {section === "historico" && <History />}
-        {section === "publicacao" && <Publishing />}
-        {section === "calendario" && <Calendar />}
-        {section === "contas" && <Accounts />}
-        {section === "stories" && <Stories />}
-        {section === "utilitarios" && <Utils />}
-        {section === "api" && <ApiKeys />}
+        <p className="page-desc">{DESCS[atual]}</p>
+        {atual === "midias" && <MediaLibrary />}
+        {atual === "frases" && <Phrases />}
+        {atual === "criar" && <Create />}
+        {atual === "historico" && <History />}
+        {atual === "publicacao" && <Publishing />}
+        {atual === "calendario" && <Calendar />}
+        {atual === "contas" && <Accounts />}
+        {atual === "stories" && <Stories />}
+        {atual === "utilitarios" && <Utils />}
+        {atual === "api" && <ApiKeys />}
+        {atual === "planos" && <Plans />}
+        {atual === "admin" && user.is_admin && <Admin />}
       </main>
 
       {/* desktop: barra lateral com todos os itens, agrupados.
           celular: barra inferior só com os principais + "Menu" (abre a lista completa). */}
       <nav className="igtab" aria-label="Menu principal">
-        {GROUPS.map((g) => (
+        {groups.map((g) => (
           <div key={g.titulo} className="igtab-group" role="group" aria-label={g.titulo}>
             <div className="igtab-group-title" aria-hidden="true">
               {g.titulo}
@@ -351,7 +408,7 @@ export default function App() {
       {menuAberto && (
         <Modal title="Menu" onClose={() => setMenuAberto(false)}>
           <div className="menu-sheet">
-            {GROUPS.map((g) => (
+            {groups.map((g) => (
               <div key={g.titulo} className="menu-sheet-group" role="group" aria-label={g.titulo}>
                 <div className="igtab-group-title">{g.titulo}</div>
                 {g.itens.map((it) => navBtn(it.id, it.label))}

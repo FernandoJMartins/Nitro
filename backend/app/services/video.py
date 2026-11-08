@@ -7,7 +7,9 @@ Monta um vídeo curto (formato vertical 1080x1920) a partir de:
 - e UM tipo de vídeo (opcional), que muda o formato:
     * pause  -> FLASH HOT: um bloco curto de frames da imagem hot no meio (subliminar);
     * imagem -> IMAGEM ESTÁTICA sobreposta no topo/embaixo, acima do texto (a duração toda);
-    * final  -> CLIPE FINAL: um vídeo/foto extra concatenado no fim (com o mesmo texto).
+    * final  -> CLIPE FINAL: um vídeo/foto extra concatenado no fim (com o mesmo texto);
+    * persiana -> PERSIANA DIAGONAL: imagem de fundo + vídeo semitransparente, vistos
+      através de faixas diagonais fixas que alternam com a imagem clareada.
 
 Tudo via ffmpeg. Cada vídeo do lote usa só UM tipo (sorteado), então as opções
 não se combinam — o código tolera, mas na prática só uma via é usada por vez.
@@ -268,6 +270,164 @@ def _has_audio(path: Path) -> bool:
         capture_output=True, text=True,
     )
     return bool(result.stdout.strip())
+
+
+# ---------------- tipo "persiana" (Diagonal Stripes) ----------------
+# Valores padrão do efeito. Período em px na largura de saída (1080), medido
+# PERPENDICULAR às linhas = 1 faixa A (composto imagem+vídeo) + 1 faixa B (imagem clara).
+STRIPES_DEFAULTS: dict = {
+    "stripe_angle": 38.0,          # graus em relação à horizontal (20–70)
+    "stripe_period": 48.0,         # px (largura de 1 faixa A + 1 faixa B)
+    "stripe_duty": 0.5,            # fração do período ocupada pela faixa A
+    "video_opacity": 0.85,         # opacidade do vídeo sobre a imagem (faixas A)
+    "light_band_brightness": 0.10,  # faixas B: imagem clareada...
+    "light_band_saturation": 0.6,   # ...e levemente dessaturada
+    "mirror": True,                # hflip na imagem e no vídeo
+    "stripe_offset": 0.0,          # deslocamento das faixas (px)
+    "randomize": False,            # sorteia ângulo ±4°, período ±15% e offset por versão
+    "mute": False,                 # True = vídeo final SEM áudio (nem original, nem música)
+    "blur": 0.0,                   # blur gaussiano (sigma, px) SÓ no vídeo; 0 = sem blur
+}
+
+
+def resolve_stripes(cfg: dict | None, *, width: int = 1080, rng: random.Random | None = None) -> dict:
+    """Normaliza (e, se ``randomize``, sorteia) os parâmetros da persiana.
+
+    Aceita ``stripe_density`` (nº de pares na largura) como alternativa ao período.
+    Sempre devolve valores dentro dos limites, prontos para ``_stripes_mask``.
+    """
+    p = {**STRIPES_DEFAULTS, **{k: v for k, v in (cfg or {}).items() if v is not None}}
+    density = p.pop("stripe_density", None)
+    if density:
+        p["stripe_period"] = width / float(density)
+    angle = float(p["stripe_angle"])
+    period = float(p["stripe_period"])
+    offset = float(p["stripe_offset"])
+    if p["randomize"]:
+        rng = rng or random
+        angle += rng.uniform(-4.0, 4.0)
+        period *= rng.uniform(0.85, 1.15)
+        offset = rng.uniform(0.0, period)
+    p["stripe_angle"] = max(20.0, min(70.0, angle))
+    p["stripe_period"] = max(6.0, min(400.0, period))
+    p["stripe_duty"] = max(0.05, min(0.95, float(p["stripe_duty"])))
+    p["stripe_offset"] = offset % p["stripe_period"]
+    p["video_opacity"] = max(0.0, min(1.0, float(p["video_opacity"])))
+    p["light_band_brightness"] = max(-1.0, min(1.0, float(p["light_band_brightness"])))
+    p["light_band_saturation"] = max(0.0, min(3.0, float(p["light_band_saturation"])))
+    p["mirror"] = bool(p["mirror"])
+    p["mute"] = bool(p["mute"])
+    p["blur"] = max(0.0, min(10.0, float(p["blur"])))
+    # já sorteado: o resultado é idempotente (resolver de novo não sorteia outra vez)
+    p["randomize"] = False
+    return p
+
+
+def _stripes_mask(width: int, height: int, p: dict) -> Path:
+    """PNG cinza (0/255, sem anti-aliasing) com as faixas diagonais.
+
+    Gerado UMA vez por combinação de parâmetros (cache em storage/cache/stripes)
+    e depois só reaproveitado em loop — ``geq`` por frame seria lento demais.
+    d = X*sin(a) + Y*cos(a) + offset  ->  255 (faixa A) se mod(d, P) < P*duty, senão 0.
+    Com a entre 20° e 70° as linhas sobem da esquerda-baixo para a direita-cima.
+    """
+    a = math.radians(p["stripe_angle"])
+    period = p["stripe_period"]
+    thresh = period * p["stripe_duty"]
+    key = f"{width}x{height}_{p['stripe_angle']:.3f}_{period:.3f}_{p['stripe_duty']:.4f}_{p['stripe_offset']:.3f}"
+    cache = settings.storage_path / "cache" / "stripes"
+    cache.mkdir(parents=True, exist_ok=True)
+    out = cache / f"{key}.png"
+    if out.exists():
+        return out
+    expr = (
+        f"if(lt(mod(X*{math.sin(a):.8f}+Y*{math.cos(a):.8f}+{p['stripe_offset']:.4f}\\,{period:.4f})"
+        f"\\,{thresh:.4f})\\,255\\,0)"
+    )
+    tmp = cache / f"{key}.{uuid.uuid4().hex}.png"
+    _run_ffmpeg(
+        [FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", f"color=black:s={width}x{height},format=gray",
+         "-frames:v", "1", "-vf", f"geq=lum={expr}", "-pix_fmt", "gray", str(tmp)],
+        [],
+    )
+    tmp.replace(out)  # atômico: dois vídeos do lote nunca leem um PNG pela metade
+    return out
+
+
+def _first_frame(src: Path, out: Path) -> None:
+    """Extrai o primeiro frame do vídeo (fundo padrão da persiana sem imagem)."""
+    _run_ffmpeg([FFMPEG, "-y", "-v", "error", "-i", str(src), "-frames:v", "1", str(out)], [])
+
+
+def _stripes_chain(
+    parts: list[str], *, video_idx: int, bg_idx: int, mask_idx: int, p: dict,
+    width: int, height: int, fps: int, out_label: str = "base",
+) -> str:
+    """Monta a composição da persiana no filter_complex e devolve o rótulo de saída.
+
+    [bg] imagem cover (+hflip) -> faixas B: clareada/dessaturada
+    [bg] + [vídeo cover (+hflip, +blur) em PRETO E BRANCO, alpha=video_opacity] -> composto (faixas A)
+    máscara como ALPHA do composto, sobreposto às faixas B. (alphamerge+overlay em vez
+    de maskedmerge: o maskedmerge força a máscara a virar yuv e o croma dela vira 128,
+    misturando a cor das duas faixas pela metade.)
+    """
+    cover = (f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+             f"crop={width}:{height},setsar=1")
+    flip = ",hflip" if p["mirror"] else ""
+    # blur SÓ no vídeo (a imagem de fundo fica nítida), antes da máscara: as bordas
+    # das faixas também seguem nítidas
+    vblur = f",gblur=sigma={p['blur']:.2f}" if p["blur"] > 0 else ""
+    parts.append(f"[{bg_idx}:v]{cover}{flip},fps={fps},format=yuv420p,split[sbg1][sbg2]")
+    parts.append(
+        # hue=s=0: só o VÍDEO fica preto e branco; a imagem de fundo mantém a cor
+        f"[{video_idx}:v]{cover}{flip}{vblur},fps={fps},hue=s=0,format=yuva420p,"
+        f"colorchannelmixer=aa={p['video_opacity']:.3f}[svid]"
+    )
+    parts.append("[sbg1][svid]overlay=format=auto[scomp]")
+    parts.append(
+        f"[sbg2]eq=brightness={p['light_band_brightness']:.3f}:"
+        f"saturation={p['light_band_saturation']:.3f}[slight]"
+    )
+    parts.append(f"[{mask_idx}:v]format=gray,fps={fps}[smask]")
+    parts.append("[scomp][smask]alphamerge[scompa]")
+    parts.append(f"[slight][scompa]overlay=format=yuv444,format=yuv420p[{out_label}]")
+    return out_label
+
+
+def render_stripes_preview(
+    base_path: Path, out_png: Path, *, bg_path: Path | None = None, stripes: dict | None = None,
+    at: float | None = None, width: int = 1080, height: int = 1920,
+) -> dict:
+    """Gera UM frame PNG da persiana (para validar antes de renderizar o vídeo inteiro).
+
+    Devolve os parâmetros efetivos (úteis quando ``randomize`` está ligado).
+    """
+    p = resolve_stripes(stripes, width=width)
+    temp: list[Path] = []
+    base_is_img = is_image(base_path)
+    if bg_path is None:
+        if base_is_img:
+            bg_path = base_path
+        else:
+            bg_path = out_png.with_name(f"_bg_{uuid.uuid4().hex}.png")
+            _first_frame(base_path, bg_path)
+            temp.append(bg_path)
+    mask = _stripes_mask(width, height, p)
+    cmd = [FFMPEG, "-y", "-v", "error"]
+    if base_is_img:
+        cmd += ["-loop", "1", "-i", str(base_path)]
+    else:
+        if at is None:
+            from .metadata import probe_duration  # import tardio (evita ciclo)
+            dur = probe_duration(base_path) or 2.0
+            at = min(1.0, dur / 2)
+        cmd += ["-ss", f"{at:.3f}", "-i", str(base_path)]
+    cmd += ["-loop", "1", "-i", str(bg_path), "-loop", "1", "-i", str(mask)]
+    parts: list[str] = []
+    out = _stripes_chain(parts, video_idx=0, bg_idx=1, mask_idx=2, p=p, width=width, height=height, fps=30)
+    cmd += ["-filter_complex", ";".join(parts), "-map", f"[{out}]", "-frames:v", "1", str(out_png)]
+    _run_ffmpeg(cmd, temp)
+    return p
 
 
 def wrap_text(text: str, width: int = 25) -> str:
@@ -641,6 +801,10 @@ def build_video(
     # tipo "final" (clipe final concatenado)
     final_path: Path | None = None,
     final_duration: float = FINAL_PHOTO_SECONDS,
+    # tipo "persiana" (Diagonal Stripes): parâmetros (ver STRIPES_DEFAULTS) e a
+    # imagem de fundo opcional (None = primeiro frame do próprio vídeo base)
+    stripes: dict | None = None,
+    stripes_bg_path: Path | None = None,
     # aparência / posição do texto (centro em frações [0..1])
     font_path: str | None = None,
     font_size: int = DEFAULT_FONTSIZE,
@@ -663,7 +827,8 @@ def build_video(
 
     - ``hot_path``     -> flash hot subliminar no meio (tipo "pause");
     - ``overlay_path`` -> imagem estática no topo/embaixo, acima do texto (tipo "imagem");
-    - ``final_path``   -> clipe (vídeo/foto) concatenado no fim (tipo "final").
+    - ``final_path``   -> clipe (vídeo/foto) concatenado no fim (tipo "final");
+    - ``stripes``      -> persiana diagonal (tipo "persiana"), com ``stripes_bg_path``.
     """
     if text_file is not None and not text:
         text = text_file.read_text(encoding="utf-8")
@@ -782,7 +947,24 @@ def build_video(
         hot_idx = idx
         idx += 1
 
-    parts = [f"[0:v]{scale_crop},fps={fps}[base]"]
+    if stripes is not None:
+        # persiana: fundo = imagem escolhida, ou a própria foto base, ou o 1º frame do vídeo
+        p = resolve_stripes(stripes, width=width)
+        bg = stripes_bg_path
+        if bg is None:
+            if base_is_image:
+                bg = base_path
+            else:
+                bg = out_dir / f"_stripes_bg_{uuid.uuid4().hex}.png"
+                _first_frame(base_path, bg)
+                temp_files.append(bg)
+        cmd += ["-loop", "1", "-i", str(bg), "-loop", "1", "-i", str(_stripes_mask(width, height, p))]
+        parts: list[str] = []
+        _stripes_chain(parts, video_idx=0, bg_idx=idx, mask_idx=idx + 1, p=p,
+                       width=width, height=height, fps=fps, out_label="base")
+        idx += 2
+    else:
+        parts = [f"[0:v]{scale_crop},fps={fps}[base]"]
     cur = "base"
 
     # imagem estática (a duração toda), centrada no ponto (overlay_x, overlay_y).

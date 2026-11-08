@@ -19,3 +19,4 @@ instagrapi @ https://codeload.github.com/subzeroid/instagrapi/tar.gz/09c96e40ee7
 # aqui porque o login depende dele diretamente
 curl_cffi>=0.15.0,<1
 cryptography==43.0.3
+stripe>=11,<13

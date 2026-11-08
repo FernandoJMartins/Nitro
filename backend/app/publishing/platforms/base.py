@@ -31,7 +31,13 @@ def build_proxy_url(proxy: dict | None) -> str | None:
     automação (ex.: 'socks5://usuario:senha@host:porta')."""
     if not proxy or not proxy.get("host"):
         return None
-    protocolo = proxy.get("protocol") or "socks5"
+    protocolo = (proxy.get("protocol") or "socks5").lower()
+    if protocolo == "socks5":
+        # DNS remoto: com 'socks5' o curl (instagrapi/curl_cffi) resolve o host
+        # localmente — muitas vezes para IPv6 — e o proxy recusa a conexão
+        # ("cannot complete SOCKS5 connection ... (4)"). 'socks5h' manda o nome
+        # para o proxy resolver, que é o que o requests/PySocks já fazia na checagem.
+        protocolo = "socks5h"
     host = proxy["host"]
     porta = proxy.get("port")
     auth = ""

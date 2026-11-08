@@ -288,7 +288,7 @@ export default function History() {
                         {v.tipo_video && (
                           <>
                             {" "}
-                            · <span className="badge">{({ pause: "pause", imagem: "imagem", final: "final", texto: "texto" } as Record<string, string>)[v.tipo_video] ?? v.tipo_video}</span>
+                            · <span className="badge">{({ pause: "pause", imagem: "imagem", final: "final", texto: "texto", persiana: "persiana" } as Record<string, string>)[v.tipo_video] ?? v.tipo_video}</span>
                           </>
                         )}
                         {v.job_id && <> · lote #{v.job_id}</>}

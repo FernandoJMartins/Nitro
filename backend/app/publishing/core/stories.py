@@ -13,7 +13,8 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...models import Media
+from ...billing import limits as billing_limits
+from ...models import Media, User
 from ..models import (
     Account,
     Content,
@@ -119,6 +120,11 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
     plans = list(
         db.scalars(select(StoryPlan).where(StoryPlan.story_config_id == cfg.id).order_by(StoryPlan.ordem))
     )
+    # SaaS: stories por dia POR CONTA conforme o plano do dono. Plano sem saldo
+    # hoje -> não gera (e não marca como gerado: se liberar, gera no próximo ciclo).
+    restantes = billing_limits.stories_restantes_hoje(db, account, today)
+    if restantes <= 0:
+        return []
     if not plans:
         # modo legado: config antiga com 1 imagem / 1 horário — comporta-se como um plano único
         if _ja_gerado_hoje(cfg.ultima_geracao_em, tz, today):
@@ -135,6 +141,8 @@ def ensure_daily_stories(db: Session, account: Account, *, today: date | None = 
         for plan in plans:
             if _ja_gerado_hoje(plan.ultima_geracao_em, tz, today):
                 continue
+            if len(created) >= restantes:
+                break
             frames = _frames_of_plan(db, plan)
             if not frames:
                 continue
@@ -198,6 +206,13 @@ def ensure_daily_shared_stories(db: Session, account: Account, *, today: date | 
     agora = datetime.now(timezone.utc)
     created: list[Content] = []
 
+    # SaaS: plano do dono precisa incluir stories compartilhados + saldo diário
+    owner = db.get(User, account.user_id)
+    plano = billing_limits.effective_plan(owner) if owner else None
+    if plano is None or not plano.stories_compartilhados:
+        return []
+    restantes = billing_limits.stories_restantes_hoje(db, account, today)
+
     targets = list(
         db.scalars(
             select(SharedStoryTarget).where(
@@ -209,6 +224,8 @@ def ensure_daily_shared_stories(db: Session, account: Account, *, today: date | 
     for target in targets:
         if _ja_gerado_hoje(target.ultima_geracao_em, tz, today):
             continue
+        if len(created) >= restantes:
+            break
         plan = target.plan
         paths = _frames_of_shared_plan(db, plan.id)
         if not paths:

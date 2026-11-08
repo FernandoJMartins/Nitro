@@ -16,6 +16,8 @@ import {
   listFonts,
   listMedia,
   listPhraseTypes,
+  STRIPES_DEFAULTS,
+  stripesPreview,
   videoDownloadUrl,
   type Folder,
   type Font,
@@ -25,6 +27,7 @@ import {
   type PhraseType,
   type PoolOrder,
   type PubAccount,
+  type StripesConfig,
 } from "./api";
 
 const VIDEO_RE = /\.(mp4|mov|mkv|webm|avi)$/i;
@@ -694,6 +697,108 @@ function PreviewCanvas({
   );
 }
 
+// Slider numérico com rótulo (usado nos parâmetros da persiana).
+function NumSlider({
+  label, value, min, max, step, onChange, fmt,
+}: {
+  label: string; value: number; min: number; max: number; step: number;
+  onChange: (v: number) => void; fmt?: (v: number) => string;
+}) {
+  return (
+    <label className="field">
+      <span>{label}: {fmt ? fmt(value) : value}</span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
+  );
+}
+
+// Parâmetros + preview (1 frame PNG gerado no servidor) da persiana diagonal.
+function StripesControls({
+  cfg, setCfg, baseMedia, bgMedia,
+}: {
+  cfg: StripesConfig;
+  setCfg: React.Dispatch<React.SetStateAction<StripesConfig>>;
+  baseMedia: Media | undefined;
+  bgMedia: Media | undefined;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = <K extends keyof StripesConfig>(k: K) => (v: StripesConfig[K]) => setCfg((c) => ({ ...c, [k]: v }));
+  const density = cfg.stripe_density ?? Math.round(1080 / cfg.stripe_period);
+
+  // libera o object URL anterior ao trocar/desmontar
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  async function gerarPreview() {
+    if (!baseMedia) return setErr("Escolha a base do vídeo (seção 1) para gerar o preview.");
+    setErr(null);
+    setLoading(true);
+    try {
+      setPreviewUrl(await stripesPreview({ base_media_id: baseMedia.id, bg_media_id: bgMedia?.id ?? null, stripes: cfg }));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <NumSlider label="Ângulo das faixas" value={cfg.stripe_angle} min={20} max={70} step={1}
+        onChange={set("stripe_angle")} fmt={(v) => `${v}°`} />
+      <NumSlider label="Densidade (pares na largura)" value={density} min={6} max={60} step={1}
+        onChange={(v) => set("stripe_density")(v)} fmt={(v) => `${v} · período ${Math.round(1080 / v)}px`} />
+      <NumSlider label="Faixa com vídeo" value={cfg.stripe_duty} min={0.2} max={0.8} step={0.05}
+        onChange={set("stripe_duty")} fmt={(v) => `${Math.round(v * 100)}%`} />
+      <NumSlider label="Opacidade do vídeo" value={cfg.video_opacity} min={0.3} max={1} step={0.05}
+        onChange={set("video_opacity")} fmt={(v) => `${Math.round(v * 100)}%`} />
+      <NumSlider label="Brilho da faixa clara" value={cfg.light_band_brightness} min={0} max={0.4} step={0.01}
+        onChange={set("light_band_brightness")} fmt={(v) => `+${v.toFixed(2)}`} />
+      <NumSlider label="Saturação da faixa clara" value={cfg.light_band_saturation} min={0} max={1.5} step={0.05}
+        onChange={set("light_band_saturation")} fmt={(v) => v.toFixed(2)} />
+      <NumSlider label="Deslocamento das faixas" value={cfg.stripe_offset} min={0} max={Math.round(1080 / density)} step={1}
+        onChange={set("stripe_offset")} fmt={(v) => `${v}px`} />
+      <label className="checkrow">
+        <input type="checkbox" checked={cfg.mirror} onChange={(e) => set("mirror")(e.target.checked)} />
+        <span>Espelhar imagem e vídeo</span>
+      </label>
+      <label className="checkrow">
+        <input type="checkbox" checked={cfg.randomize} onChange={(e) => set("randomize")(e.target.checked)} />
+        <span>Variar a cada vídeo (ângulo ±4°, densidade ±15% e deslocamento sorteados)</span>
+      </label>
+      <label className="checkrow">
+        <input type="checkbox" checked={cfg.blur > 0} onChange={(e) => set("blur")(e.target.checked ? 1.5 : 0)} />
+        <span>Aplicar blur leve no vídeo</span>
+      </label>
+      {cfg.blur > 0 && (
+        <NumSlider label="Intensidade do blur" value={cfg.blur} min={0.5} max={6} step={0.5}
+          onChange={set("blur")} fmt={(v) => v.toFixed(1)} />
+      )}
+      <label className="checkrow">
+        <input type="checkbox" checked={cfg.mute} onChange={(e) => set("mute")(e.target.checked)} />
+        <span>Gerar vídeo sem áudio</span>
+      </label>
+      <div className="hint">
+        {cfg.mute
+          ? "Sem áudio: nem o som original do vídeo nem a música entram."
+          : "Mantém o áudio original do vídeo (e mistura com a música, se você escolher uma)."}
+      </div>
+      <div className="field">
+        <button type="button" className="btn sm" onClick={gerarPreview} disabled={loading}>
+          {loading ? "Gerando preview…" : "Gerar preview (1 frame)"}
+        </button>
+        {cfg.randomize && <div className="hint">Com “variar” ligado, cada vídeo sai um pouco diferente deste preview.</div>}
+        {err && <div className="hint" style={{ color: "var(--danger, #c33)" }}>{err}</div>}
+        {previewUrl && (
+          <img src={previewUrl} alt="Preview da persiana"
+            style={{ width: "100%", maxWidth: 270, aspectRatio: "9 / 16", borderRadius: 8, marginTop: 8, display: "block" }} />
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function Create() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [musics, setMusics] = useState<Media[]>([]);
@@ -714,6 +819,15 @@ export default function Create() {
   const [typeImagem, setTypeImagem] = useState(false);
   const [typeFinal, setTypeFinal] = useState(false);
   const [typeTexto, setTypeTexto] = useState(false);
+  const [typePersiana, setTypePersiana] = useState(false);
+
+  // pool da "persiana" (imagens de fundo — opcional; vazio = 1º frame do vídeo)
+  const [stFolderId, setStFolderId] = useState<number | null>(null);
+  const [stMode, setStMode] = useState<"whole" | "items">("whole");
+  const [stItems, setStItems] = useState<Media[]>([]);
+  const [stSel, setStSel] = useState<Set<number>>(new Set());
+  const [orderStripes, setOrderStripes] = useState<PoolOrder>("random");
+  const [stripesCfg, setStripesCfg] = useState<StripesConfig>(STRIPES_DEFAULTS);
 
   // pool do "pause" (fotos hot)
   const [hotFolderId, setHotFolderId] = useState<number | null>(null);
@@ -760,12 +874,14 @@ export default function Create() {
   const [ptImagem, setPtImagem] = useState<number | null>(null);
   const [ptFinal, setPtFinal] = useState<number | null>(null);
   const [ptTexto, setPtTexto] = useState<number | null>(null);
+  const [ptPersiana, setPtPersiana] = useState<number | null>(null);
   const [fontId, setFontId] = useState<string | null>(null);
   // tamanho da fonte (px) POR tipo de vídeo
   const [fsPause, setFsPause] = useState(64);
   const [fsImagem, setFsImagem] = useState(64);
   const [fsFinal, setFsFinal] = useState(64);
   const [fsTexto, setFsTexto] = useState(64);
+  const [fsPersiana, setFsPersiana] = useState(64);
   // Distorção de texto estilo "Fisheye" (Instagram Edits, opcional)
   const [fisheyeOn, setFisheyeOn] = useState(false);
   const [fisheyePreset, setFisheyePreset] = useState<FisheyeId>("fisheye");
@@ -848,6 +964,12 @@ export default function Create() {
     listMedia("final_clip", finFolderId).then(setFinItems).catch((e) => setError(String(e)));
   }, [finFolderId]);
 
+  useEffect(() => {
+    setStSel(new Set());
+    if (stFolderId == null) return setStItems([]);
+    listMedia("photo", stFolderId).then(setStItems).catch((e) => setError(String(e)));
+  }, [stFolderId]);
+
   function toggler(setter: React.Dispatch<React.SetStateAction<Set<number>>>) {
     return (id: number) =>
       setter((prev) => {
@@ -868,6 +990,7 @@ export default function Create() {
     const hotIds = typePause ? resolveIds(hotMode, hotItems, hotSel) : [];
     const ovIds = typeImagem ? resolveIds(ovMode, ovItems, ovSel) : [];
     const finIds = typeFinal ? resolveIds(finMode, finItems, finSel) : [];
+    const stIds = typePersiana && stFolderId != null ? resolveIds(stMode, stItems, stSel) : [];
 
     if (typePause && hotIds.length === 0) return setError('Desafio do pause: escolha fotos hot (pasta ou itens).');
     if (typeImagem && ovIds.length === 0) return setError('Imagem estática: escolha as imagens (pasta ou itens).');
@@ -881,6 +1004,7 @@ export default function Create() {
     if (typeImagem) text_types.imagem = ptImagem;
     if (typeFinal) text_types.final = ptFinal;
     if (typeTexto) text_types.texto = ptTexto;
+    if (typePersiana) text_types.persiana = ptPersiana;
 
     // tamanho da fonte por tipo de vídeo (só dos tipos habilitados)
     const font_sizes: Record<string, number> = {};
@@ -888,12 +1012,14 @@ export default function Create() {
     if (typeImagem) font_sizes.imagem = fsImagem;
     if (typeFinal) font_sizes.final = fsFinal;
     if (typeTexto) font_sizes.texto = fsTexto;
+    if (typePersiana) font_sizes.persiana = fsPersiana;
 
     const video_types = [
       ...(typePause ? (["pause"] as const) : []),
       ...(typeImagem ? (["imagem"] as const) : []),
       ...(typeFinal ? (["final"] as const) : []),
       ...(typeTexto ? (["texto"] as const) : []),
+      ...(typePersiana ? (["persiana"] as const) : []),
     ];
 
     setResults([]);
@@ -928,6 +1054,9 @@ export default function Create() {
         overlay_y: ovPos.y,
         overlay_scale: ovScale,
         text_fisheye: fisheyeOn ? fisheyePreset : null,
+        stripes_media_ids: stIds,
+        order_stripes: orderStripes,
+        stripes: stripesCfg,
       });
       setJob(j);
       startPolling(j.id);
@@ -1026,7 +1155,7 @@ export default function Create() {
     );
   }
 
-  const TIPO_BADGE: Record<string, string> = { pause: "⏸️ pause", imagem: "🏷️ imagem", final: "🎞️ final", texto: "🔤 texto" };
+  const TIPO_BADGE: Record<string, string> = { pause: "⏸️ pause", imagem: "🏷️ imagem", final: "🎞️ final", texto: "🔤 texto", persiana: "🪟 persiana" };
 
   const pickFirst = (mode: "whole" | "items", items: Media[], sel: Set<number>) =>
     mode === "whole" ? items[0] : items.find((m) => sel.has(m.id));
@@ -1037,6 +1166,7 @@ export default function Create() {
     typeImagem && "imagem",
     typeFinal && "final",
     typeTexto && "texto",
+    typePersiana && "persiana",
   ].filter(Boolean) as string[];
   const typesSummary = activeTypeLabels.length > 0 ? ` · ${activeTypeLabels.join(" + ")}` : " · vídeo simples (sem tipo)";
   const sampleText = "Seu texto aparece aqui";
@@ -1051,6 +1181,7 @@ export default function Create() {
     (typeImagem && ptImagem != null) ? fsImagem :
     (typeFinal && ptFinal != null) ? fsFinal :
     (typeTexto && ptTexto != null) ? fsTexto :
+    (typePersiana && ptPersiana != null) ? fsPersiana :
     64;
 
   return (
@@ -1067,7 +1198,8 @@ export default function Create() {
             (typePause && ptPause != null) ||
             (typeImagem && ptImagem != null) ||
             (typeFinal && ptFinal != null) ||
-            (typeTexto && ptTexto != null)
+            (typeTexto && ptTexto != null) ||
+            (typePersiana && ptPersiana != null)
           }
           textPos={textPos}
           setTextPos={setTextPos}
@@ -1271,13 +1403,44 @@ export default function Create() {
             <PhraseSelect types={types} value={ptTexto} onChange={setPtTexto} required />
             <FontSizeControl value={fsTexto} onChange={setFsTexto} />
           </TypeCard>
+
+          <TypeCard
+            icon="🪟"
+            title="Persiana diagonal"
+            desc="Imagem de fundo + vídeo em preto e branco vistos por faixas diagonais fixas, alternando com a imagem clareada."
+            checked={typePersiana}
+            onToggle={setTypePersiana}
+          >
+            <FolderPicker
+              label="Imagens de fundo (opcional — sem pasta, usa o 1º frame do próprio vídeo)"
+              folders={folders}
+              folderId={stFolderId}
+              setFolderId={setStFolderId}
+              mode={stMode}
+              setMode={setStMode}
+              items={stItems}
+              sel={stSel}
+              toggle={toggler(setStSel)}
+              setSel={setStSel}
+              order={orderStripes}
+              setOrder={setOrderStripes}
+            />
+            <StripesControls
+              cfg={stripesCfg}
+              setCfg={setStripesCfg}
+              baseMedia={bgMedia}
+              bgMedia={stFolderId != null ? pickFirst(stMode, stItems, stSel) : undefined}
+            />
+            <PhraseSelect types={types} value={ptPersiana} onChange={setPtPersiana} />
+            <FontSizeControl value={fsPersiana} onChange={setFsPersiana} />
+          </TypeCard>
         </div>
 
         <Secao n={4} titulo="Quantidade e duração" dica="Quantos vídeos gerar e o teto de duração de cada um." />
 
         <label className="field">
           <span>Quantidade de vídeos: {quantidade}</span>
-          <input type="range" min={1} max={50} value={quantidade} onChange={(e) => setQuantidade(Number(e.target.value))} />
+          <input type="range" min={1} max={200} value={quantidade} onChange={(e) => setQuantidade(Number(e.target.value))} />
         </label>
 
         <div className="field">

@@ -36,11 +36,35 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-troque-em-producao"
     jwt_expire_hours: int = 720  # 30 dias
 
+    # ---------- SaaS: admins, planos e cobrança (ver backend/app/billing) ----------
+    # e-mails com controle TOTAL: sem assinatura, sem limites, acesso ao painel admin.
+    admin_emails: str = "scarlett.campelo@gmail.com,julio8martins@gmail.com"
+
+    # Stripe (pagamento recorrente mensal, cartão). Sem STRIPE_SECRET_KEY o checkout
+    # fica indisponível (503) — o resto do sistema funciona (admins e acessos manuais).
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    # price_id (mensal recorrente) de cada plano, criados no painel da Stripe
+    stripe_price_basico: str = ""
+    stripe_price_pro: str = ""
+    stripe_price_agencia: str = ""
+    # URL pública do frontend — para onde a Stripe devolve o usuário após pagar
+    app_url: str = "http://localhost:5273"
+
+    # vídeos gerados são apagados (arquivo + registro) após N dias
+    video_retention_days: int = 30
+    # a retenção vale também para os admins? (padrão: não)
+    video_retention_include_admins: bool = True
+
     @property
     def storage_path(self) -> Path:
         p = Path(self.storage_dir)
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    @property
+    def admin_emails_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.admin_emails.split(",") if e.strip()}
 
     @property
     def cors_origins_list(self) -> list[str]:

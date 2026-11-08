@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..billing import limits as billing_limits
 from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, get_user_for_file
@@ -54,6 +55,7 @@ def upscale_upload(
     user: User = Depends(get_current_user),
 ):
     """Recebe as imagens direto e amplia. Guarda os originais em storage/upscale_src/."""
+    billing_limits.require_feature(user, "upscale", "Ampliar imagens")
     escala = _valida_escala(escala)
     if not files:
         raise HTTPException(status_code=400, detail="Envie ao menos uma imagem")
@@ -93,6 +95,7 @@ def upscale_from_media(
     user: User = Depends(get_current_user),
 ):
     """Amplia fotos que já estão na biblioteca (ex.: todas as fotos de uma pasta)."""
+    billing_limits.require_feature(user, "upscale", "Ampliar imagens")
     escala = _valida_escala(body.escala)
     if not body.media_ids:
         raise HTTPException(status_code=400, detail="Selecione ao menos uma imagem")

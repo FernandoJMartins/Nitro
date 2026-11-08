@@ -4,6 +4,70 @@ Plataforma web para **gerar vídeos curtos (8–14s) em massa** para redes socia
 
 ---
 
+## 💳 SaaS — planos, admins e cobrança (pasta `NitroSaaS`, branch `saas`)
+
+> Esta pasta é a versão **comercial** do Nitro. O Nitro caseiro (`/opt/apps/Nitro`, branch `main`) continua igual e sem planos.
+> Para trazer correções do caseiro para cá: `git merge main` dentro desta pasta.
+
+### Quem paga e quem não paga
+- **Admins** (`ADMIN_EMAILS`, padrão: `scarlett.campelo@gmail.com` e `julio8martins@gmail.com`): **controle total**. Não precisam de assinatura, não têm limites e veem a página **Admin** (todos os usuários, plano, uso, liberar acesso grátis por 30 dias e bloquear).
+- **Demais usuários**: precisam de uma **assinatura mensal no cartão** (Stripe). Sem assinatura ativa, só a página **Plano** funciona e a API responde `402`. O scheduler também para de publicar nas contas dessas pessoas.
+
+### Planos
+
+| | **Básico** | **Pro** | **Agência** |
+|---|---|---|---|
+| Preço sugerido | R$ 97/mês | R$ 247/mês | R$ 597/mês |
+| Perfis conectados | 2 | 10 | 40 |
+| Vídeos gerados em massa **por mês** | 600 | 3.000 | 10.000 |
+| Vídeos **por lote** | 50 | 100 | 200 |
+| Vídeos no calendário (fila de publicação) | 60 | 400 | 2.000 |
+| Stories por dia (**somando todas as contas**) | 5 | 25 | 100 |
+| IA de frases, textos e legendas | ✗ | ✓ | ✓ |
+| Stories em várias contas de uma vez | ✗ | ✓ | ✓ |
+| Ampliar imagens (upscale) | ✗ | ✓ | ✓ |
+| Acesso via API (chaves) | ✗ | ✗ | ✓ |
+| Guarda dos vídeos gerados | 30 dias | 30 dias | 30 dias |
+
+- **Tudo isso se muda num lugar só:** `backend/app/billing/plans.py`. O preço ali serve **só para exibir**. Quem cobra de fato é o `price_id` da Stripe, então mantenha os dois iguais.
+- **Stories por dia** é o total da assinatura. No Básico dá para postar 5 stories numa conta, ou 1 story em cada uma de 5 contas. O "dia" segue o fuso padrão do usuário (padrão: São Paulo). Stories que falharam ou foram cancelados não contam.
+- **Cota mensal** conta os lotes do mês, mesmo que os vídeos sejam apagados depois. Apagar vídeo não devolve cota.
+- **Calendário** são os reels aprovados ou agendados que ainda não foram publicados. O limite é checado na hora de importar vídeos do gerador para a publicação.
+- **Downgrade:** se a pessoa tem mais contas do que o novo plano permite, só as **N mais antigas** continuam publicando.
+- **Retenção de 30 dias** (`VIDEO_RETENTION_DAYS`): vale para **todos, inclusive admins**. Roda a cada 6h e apaga arquivo e registro. Vídeo que ainda está na fila de publicação só é apagado depois de publicado ou cancelado.
+
+### Onde está no código
+| Arquivo | O quê |
+|---|---|
+| `backend/app/billing/plans.py` | limites, funções e preço de cada plano |
+| `backend/app/billing/limits.py` | todas as checagens (acesso, lote, cota, contas, calendário, stories) |
+| `backend/app/billing/retention.py` | exclusão automática após 30 dias |
+| `backend/app/routers/billing.py` | `/api/v1/billing/*`: planos, uso, checkout, portal, webhook |
+| `backend/app/routers/admin.py` | `/api/v1/admin/*`: painel admin |
+| `backend/app/deps.py` | `get_current_user` exige assinatura ativa (`get_authenticated_user` não exige) |
+| `frontend/src/Plans.tsx`, `Admin.tsx` | telas de Plano e Admin |
+| `backend/test_billing.py` | testes de tudo acima |
+
+### Configurar a Stripe (passo a passo)
+1. No painel da Stripe, crie 3 **Produtos** (Básico, Pro, Agência), cada um com um **preço recorrente mensal** em BRL. Copie os `price_...` para `STRIPE_PRICE_BASICO`, `STRIPE_PRICE_PRO` e `STRIPE_PRICE_AGENCIA`.
+2. Copie a **chave secreta** (`sk_test_...` para testar, `sk_live_...` em produção) para `STRIPE_SECRET_KEY`.
+3. Crie um **webhook** apontando para `https://SEU_DOMINIO/api/v1/billing/webhook` com os eventos `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` e `invoice.payment_failed`. Copie o `whsec_...` para `STRIPE_WEBHOOK_SECRET`.
+   - Testando local: `stripe listen --forward-to localhost:8100/api/v1/billing/webhook`.
+4. Ative o **Portal do cliente** (Settings → Billing → Customer portal), permitindo trocar de plano, trocar cartão e cancelar.
+5. `APP_URL` = endereço público do frontend (a Stripe devolve o usuário para `APP_URL/planos`).
+
+Status que liberam o acesso: `active`, `trialing` e `past_due` (cobrança falhou e a Stripe ainda está tentando de novo). Quando ela desiste, vira `canceled`/`unpaid` e o acesso é bloqueado.
+
+### Rodar ao lado do Nitro caseiro
+```bash
+psql -U postgres -c "CREATE DATABASE nitro_saas;"   # banco PRÓPRIO, nunca o do caseiro
+cp .env.example .env                                 # preencha o bloco "Nitro SaaS"
+docker compose -f docker-compose.saas.yml up -d      # app em :5273, API em :8100
+```
+⚠️ **Nunca** use o mesmo banco do Nitro caseiro: os dois schedulers publicariam nas mesmas contas em dobro.
+
+---
+
 ## 📌 Visão geral
 
 O sistema é uma **biblioteca de mídias + motor de composição de vídeo**. O usuário faz upload de mídias, cadastra frases, escolhe músicas, e o sistema combina tudo automaticamente para produzir dezenas/centenas de vídeos de uma vez.

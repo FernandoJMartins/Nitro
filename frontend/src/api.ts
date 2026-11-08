@@ -21,6 +21,11 @@ async function jsonOrThrow(r: Response) {
     clearToken();
     window.dispatchEvent(new Event("nitro-unauth"));
   }
+  // 402 = assinatura inativa ou limite do plano: o App recarrega o perfil
+  // (se perdeu o acesso, mostra a tela de planos). A mensagem segue como erro normal.
+  if (r.status === 402) {
+    window.dispatchEvent(new Event("nitro-paywall"));
+  }
   if (!r.ok) {
     const raw = await r.text();
     let detail: string | undefined;
@@ -52,10 +57,30 @@ async function apiSend(path: string, method: string, body?: unknown) {
 }
 
 // ---------- Auth endpoints ----------
+export interface PlanInfo {
+  id: string;
+  nome: string;
+  preco_mensal: number;
+  max_contas: number;
+  videos_por_mes: number;
+  max_por_lote: number;
+  max_calendario: number;
+  stories_por_dia: number;
+  ia: boolean;
+  upscale: boolean;
+  stories_compartilhados: boolean;
+  api_keys: boolean;
+}
+
 export interface UserOut {
   id: number;
   email: string;
   criado_em: string;
+  is_admin: boolean;
+  plano: string | null;
+  assinatura_status: string | null;
+  tem_acesso: boolean;
+  recursos: PlanInfo | null;
 }
 
 export async function register(email: string, senha: string): Promise<void> {
@@ -82,6 +107,61 @@ export async function login(email: string, senha: string): Promise<void> {
 
 export function me(): Promise<UserOut> {
   return apiGetAsync("/api/v1/auth/me");
+}
+
+// ---------- Planos / assinatura (Stripe) ----------
+export interface Usage {
+  videos_mes: number;
+  contas: number;
+  calendario: number;
+  stories_hoje: number;
+}
+export interface BillingMe {
+  is_admin: boolean;
+  plano: string | null;
+  assinatura_status: string | null;
+  periodo_fim: string | null;
+  acesso_manual_ate: string | null;
+  tem_acesso: boolean;
+  recursos: PlanInfo | null;
+  uso: Usage;
+  pagamento_configurado: boolean;
+}
+export function listPlans(): Promise<PlanInfo[]> {
+  return apiGetAsync("/api/v1/billing/plans");
+}
+export function billingMe(): Promise<BillingMe> {
+  return apiGetAsync("/api/v1/billing/me");
+}
+export function startCheckout(plano: string): Promise<{ url: string }> {
+  return apiSend("/api/v1/billing/checkout", "POST", { plano });
+}
+export function openPortal(): Promise<{ url: string }> {
+  return apiSend("/api/v1/billing/portal", "POST");
+}
+
+// ---------- Admin ----------
+export interface AdminUser {
+  id: number;
+  email: string;
+  criado_em: string;
+  is_admin: boolean;
+  plano: string | null;
+  assinatura_status: string | null;
+  periodo_fim: string | null;
+  acesso_manual_ate: string | null;
+  bloqueado: boolean;
+  tem_acesso: boolean;
+  uso: Usage;
+}
+export function adminListUsers(): Promise<AdminUser[]> {
+  return apiGetAsync("/api/v1/admin/users");
+}
+export function adminUpdateUser(
+  id: number,
+  body: { plano?: string; dias_acesso_manual?: number; bloqueado?: boolean }
+): Promise<AdminUser> {
+  return apiSend(`/api/v1/admin/users/${id}`, "PATCH", body);
 }
 
 // ---------- API keys ----------
@@ -255,7 +335,37 @@ export function generateVideo(body: GenerateBody): Promise<GenerateResult> {
   return apiSend(`${V1}/videos/generate`, "POST", body);
 }
 
-export type VideoType = "pause" | "imagem" | "final" | "texto";
+export type VideoType = "pause" | "imagem" | "final" | "texto" | "persiana";
+
+// Parâmetros do tipo "persiana" (Diagonal Stripes) — espelha StripesConfig do backend.
+export interface StripesConfig {
+  stripe_angle: number;          // graus em relação à horizontal (20–70)
+  stripe_period: number;         // px em 1080 de largura (1 faixa A + 1 faixa B)
+  stripe_density: number | null; // nº de pares na largura; se vier, substitui o período
+  stripe_duty: number;           // fração ocupada pela faixa A (imagem+vídeo)
+  video_opacity: number;
+  light_band_brightness: number;
+  light_band_saturation: number;
+  mirror: boolean;
+  stripe_offset: number;         // deslocamento das faixas (px)
+  randomize: boolean;            // ângulo ±4°, período ±15% e offset sorteados por versão
+  mute: boolean;                 // true = vídeo final sem áudio (nem original, nem música)
+  blur: number;                  // blur leve (sigma px) só no vídeo; 0 = desligado
+}
+export const STRIPES_DEFAULTS: StripesConfig = {
+  stripe_angle: 38,
+  stripe_period: 48,
+  stripe_density: null,
+  stripe_duty: 0.5,
+  video_opacity: 0.85,
+  light_band_brightness: 0.1,
+  light_band_saturation: 0.6,
+  mirror: true,
+  stripe_offset: 0,
+  randomize: false,
+  mute: false,
+  blur: 0,
+};
 // ordem de sorteio de um pool: aleatório (padrão) ou sequencial (round-robin,
 // dá a volta quando chega ao fim — garante variedade em pools pequenos).
 export type PoolOrder = "random" | "sequential";
@@ -298,6 +408,10 @@ export interface BulkBody {
   overlay_y: number;
   overlay_scale: number; // multiplicador de tamanho da imagem estática
   text_fisheye: string | null;                    // preset "fisheye"/"curve"/... ou null (sem distorção)
+  // tipo "persiana": imagens de fundo (vazio = 1º frame do vídeo) + parâmetros
+  stripes_media_ids: number[];
+  order_stripes: PoolOrder;
+  stripes: StripesConfig;
 }
 
 export interface Font {
@@ -337,6 +451,21 @@ export interface GeneratedVideo {
 
 export function bulkGenerate(body: BulkBody): Promise<Job> {
   return apiSend(`${V1}/videos/bulk`, "POST", body);
+}
+// Um frame PNG da persiana (antes de renderizar o lote). Devolve um object URL —
+// quem chama deve liberar com URL.revokeObjectURL quando trocar/desmontar.
+export async function stripesPreview(body: {
+  base_media_id: number;
+  bg_media_id: number | null;
+  stripes: StripesConfig;
+}): Promise<string> {
+  const r = await fetch(`${V1}/videos/stripes/preview`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) await jsonOrThrow(r);
+  return URL.createObjectURL(await r.blob());
 }
 export function getJob(id: number): Promise<Job> {
   return apiGetAsync(`${V1}/videos/jobs/${id}`);

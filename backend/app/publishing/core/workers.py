@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from ...billing.limits import allowed_account_ids
 from ...config import settings
 from ...database import SessionLocal
 from ..models import Account, Publication
@@ -66,9 +67,13 @@ def run_cycle() -> None:
     try:
         reconcile_stale_publications(db)
 
+        # SaaS: dono sem assinatura ativa (ou conta além do limite do plano) não roda
+        permitidas = allowed_account_ids(db)
         accounts = list(db.scalars(select(Account).where(Account.status == "pronta")))
         for account in accounts:
             if not account.ativa or account.automation_status == "pausada":
+                continue
+            if account.id not in permitidas:
                 continue
             try:
                 if account.stories_enabled:
@@ -91,6 +96,8 @@ def run_cycle() -> None:
         # numa thread (no máximo settings.publishing_concurrency contas em paralelo).
         grupos: dict[int, list[int]] = {}
         for pub_id, account_id in due:
+            if account_id not in permitidas:
+                continue
             grupos.setdefault(account_id, []).append(pub_id)
         db.expire_all()
         if grupos:

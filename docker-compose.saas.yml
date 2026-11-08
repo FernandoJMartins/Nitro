@@ -1,0 +1,60 @@
+# Nitro SaaS (planos + Stripe) — roda AO LADO do Nitro caseiro sem conflitar:
+#   - nome de projeto próprio (containers/volumes "nitro-saas-*")
+#   - portas próprias: frontend :5273, API :8100
+#   - banco PRÓPRIO (SAAS_DATABASE_URL) — NUNCA aponte para o banco do Nitro
+#     caseiro: os dois schedulers publicariam nas mesmas contas em dobro.
+#
+# Pré-requisito (uma vez):  psql -U postgres -c "CREATE DATABASE nitro_saas;"
+# Subir:                    docker compose -f docker-compose.saas.yml up -d
+name: nitro-saas
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --timeout-graceful-shutdown 30
+    environment:
+      DATABASE_URL: ${SAAS_DATABASE_URL}
+      STORAGE_DIR: /app/storage
+      CORS_ORIGINS: ${APP_URL:-http://localhost:5273}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SECRET_KEY: ${SAAS_SECRET_KEY:-dev-secret-troque-em-producao}
+      INSTAGRAM_APP_VERSION: ${INSTAGRAM_APP_VERSION:-446.0.0.49.77}
+      INSTAGRAM_APP_VERSION_CODE: ${INSTAGRAM_APP_VERSION_CODE:-1060018354}
+      # --- SaaS ---
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-scarlett.campelo@gmail.com,julio8martins@gmail.com}
+      APP_URL: ${APP_URL:-http://localhost:5273}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_BASICO: ${STRIPE_PRICE_BASICO:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_AGENCIA: ${STRIPE_PRICE_AGENCIA:-}
+      VIDEO_RETENTION_DAYS: ${VIDEO_RETENTION_DAYS:-30}
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ./backend/app:/app/app
+      - storage:/app/storage
+      - ./fonts:/app/storage/fonts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8100:8000"
+
+  frontend:
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5273:5173"
+    depends_on:
+      - backend
+
+volumes:
+  storage:

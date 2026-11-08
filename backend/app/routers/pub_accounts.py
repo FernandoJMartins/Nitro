@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..billing import limits as billing_limits
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import User
@@ -177,6 +178,7 @@ def list_accounts(user: User = Depends(get_current_user), db: Session = Depends(
 
 @router.post("/accounts", response_model=AccountOut)
 def create_account(body: AccountCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    billing_limits.check_new_account(db, user)
     if body.proxy_id is not None:
         _require_own_proxy(db, user, body.proxy_id)
     data = body.model_dump()
@@ -630,6 +632,7 @@ def post_story_now(account_id: int, plan_id: int, user: User = Depends(get_curre
         raise HTTPException(409, "Conta desativada — reative-a em Contas para publicar stories.")
     if account.status != "pronta":
         raise HTTPException(409, "Conta não está pronta para publicação — confira sessão/proxy em Contas.")
+    billing_limits.check_story(db, account)
 
     plan = db.scalar(
         select(StoryPlan)

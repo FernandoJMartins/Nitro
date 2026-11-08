@@ -66,6 +66,10 @@ class BulkConfig:
     order_overlay: str = "random"
     order_final: str = "random"
     order_text: str = "random"
+    # tipo "persiana": pool de imagens de fundo (vazio = 1º frame do vídeo) e parâmetros
+    stripes_media_ids: list[int] = field(default_factory=list)
+    stripes: dict = field(default_factory=dict)
+    order_stripes: str = "random"
 
 
 def _eff_phrase_type(cfg: BulkConfig, modo: str | None) -> int | None:
@@ -198,6 +202,13 @@ def run_bulk_job(job_id: int, cfg: BulkConfig) -> None:
                         else:
                             natural = metadata.probe_duration(fp) or video.FINAL_PHOTO_SECONDS
                             kwargs["final_duration"] = max(1.0, min(natural, 8.0))
+                elif modo == "persiana":
+                    kwargs["stripes_bg_path"] = _pick_path(cfg.stripes_media_ids, cfg.order_stripes, "stripes")
+                    # resolvido AQUI (não no build_video) para cada versão sortear o seu
+                    # ângulo/período/offset quando "randomize" está ligado
+                    kwargs["stripes"] = video.resolve_stripes(cfg.stripes)
+                    if kwargs["stripes"]["mute"]:
+                        music_path = None  # "sem áudio": descarta também a música
 
                 # duração: foto (sem duração própria) ou loop LIGADO (preenche o
                 # range pedido) sorteiam um valor dentro do range escolhido.
@@ -226,7 +237,11 @@ def run_bulk_job(job_id: int, cfg: BulkConfig) -> None:
                     text_x=cfg.text_x,
                     text_y=cfg.text_y,
                     text_fisheye=cfg.text_fisheye,
-                    keep_original_audio=cfg.keep_original_audio,
+                    # persiana mantém o áudio original do vídeo (mixado com a música, se houver),
+                    # a menos que "gerar sem áudio" esteja marcado
+                    keep_original_audio=(
+                        not kwargs["stripes"]["mute"] if modo == "persiana" else cfg.keep_original_audio
+                    ),
                     **kwargs,
                 )
 

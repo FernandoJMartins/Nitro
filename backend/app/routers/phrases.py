@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..billing import limits as billing_limits
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Phrase, PhraseType, User
@@ -156,6 +157,7 @@ def delete_phrase(phrase_id: int, db: Session = Depends(get_db), user: User = De
 # ---------- IA (só quando o usuário pede) ----------
 @router.post("/phrases/ai", response_model=AIGenerateResponse)
 def generate_with_ai(body: AIGenerateRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    billing_limits.require_feature(user, "ia", "IA de frases")
     pt = _owned_type(db, body.phrase_type_id, user.id)
 
     quantidade = max(1, min(body.quantidade, 20))

@@ -7,8 +7,11 @@ from .config import settings
 from .database import Base, engine
 from .publishing import models as pub_models  # noqa: F401 — registra as tabelas em Base.metadata
 from .publishing.core.workers import start_background_scheduler
+from .billing.retention import start_retention_worker
 from .routers import (
+    admin,
     auth,
+    billing,
     folders,
     media,
     phrases,
@@ -40,6 +43,14 @@ def _ensure_column(table: str, column: str, ddl_type: str) -> None:
 
 
 _ensure_column("generated_videos", "tipo_video", "VARCHAR(16)")
+# SaaS: assinatura no usuário
+_ensure_column("users", "plano", "VARCHAR(16)")
+_ensure_column("users", "assinatura_status", "VARCHAR(32)")
+_ensure_column("users", "stripe_customer_id", "VARCHAR(64)")
+_ensure_column("users", "stripe_subscription_id", "VARCHAR(64)")
+_ensure_column("users", "periodo_fim", "TIMESTAMP WITH TIME ZONE")
+_ensure_column("users", "acesso_manual_ate", "TIMESTAMP WITH TIME ZONE")
+_ensure_column("users", "bloqueado", "BOOLEAN DEFAULT FALSE")
 _ensure_column("phrase_types", "share_slug", "VARCHAR(32)")
 _ensure_column("pub_proxies", "nome_interno", "VARCHAR(100)")
 # bancos antigos: a coluna legada "nome" (host:porta) vira o nome interno inicial
@@ -89,6 +100,8 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(billing.router)
+app.include_router(admin.router)
 app.include_router(folders.router)
 app.include_router(media.router)
 app.include_router(phrases.router)
@@ -103,6 +116,7 @@ app.include_router(pub_shared_stories.router)
 @app.on_event("startup")
 def _start_publishing_scheduler() -> None:
     start_background_scheduler()
+    start_retention_worker()
 
 
 @app.get("/health", tags=["infra"])
