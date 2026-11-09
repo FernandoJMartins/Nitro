@@ -201,6 +201,17 @@ assert c.get("/api/v1/media?tipo=photo", headers=U).status_code == 402
 assert c.patch(f"/api/v1/admin/users/{admin_id}", json={"bloqueado": True}, headers=A).status_code == 400
 print("bloqueio pelo admin ok")
 
+# ---------- painel de monitoramento (admin) ----------
+r = c.get("/api/v1/admin/system", headers=A)
+assert r.status_code == 200, r.text
+st = r.json()
+for k in ("servidor", "banco", "agendador", "publicacoes", "negocio", "alertas", "retencao"):
+    assert k in st, k
+assert st["banco"]["ok"] and st["servidor"]["disco"]["total"] > 0
+assert st["negocio"]["usuarios"] >= 1
+assert c.get("/api/v1/admin/system", headers=U).status_code == 403
+print("painel do sistema ok:", {k: st["servidor"][k]["nivel"] for k in ("disco", "memoria", "cpu")})
+
 # ---------- mídias: 50 MB por arquivo, quantidade e espaço por plano ----------
 import dataclasses  # noqa: E402
 import io  # noqa: E402

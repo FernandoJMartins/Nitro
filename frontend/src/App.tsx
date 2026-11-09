@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { clearToken, getToken, me, type UserOut } from "./api";
 import Plans from "./Plans";
 import Admin from "./Admin";
+import Landing from "./Landing";
+import Legal from "./Legal";
 import Auth from "./Auth";
 import MediaLibrary from "./MediaLibrary";
 import Phrases from "./Phrases";
@@ -221,6 +223,9 @@ const PATHS: Record<Section, string> = {
   admin: "/admin",
 };
 
+// rotas públicas (sem login). Logado em "/entrar" ou "/" cai no app normalmente.
+const PUBLICAS = new Set(["/termos", "/privacidade"]);
+
 function sectionFromPath(path: string): Section {
   const found = (Object.keys(PATHS) as Section[]).find((s) => PATHS[s] === path);
   return found ?? "midias";
@@ -232,6 +237,8 @@ export default function App() {
   const [menuAberto, setMenuAberto] = useState(false);
   const [confirmaSair, setConfirmaSair] = useState(false);
   const [user, setUser] = useState<UserOut | null>(null);
+  // caminho atual — decide as páginas públicas (início, entrar, termos...)
+  const [path, setPath] = useState(window.location.pathname);
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem("nitro-theme") as Theme) || "dark"
   );
@@ -247,14 +254,18 @@ export default function App() {
 
   // mantém a URL em sincronia quando o usuário usa voltar/avançar
   useEffect(() => {
-    const onPop = () => setSection(sectionFromPath(window.location.pathname));
+    const onPop = () => {
+      setSection(sectionFromPath(window.location.pathname));
+      setPath(window.location.pathname);
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  // normaliza a URL inicial (ex.: "/" vira "/midias") sem empilhar no histórico
+  // normaliza a URL inicial (ex.: "/" vira "/midias") sem empilhar no histórico.
+  // Só para quem está logado: visitante fica nas páginas públicas.
   useEffect(() => {
-    if (window.location.pathname !== PATHS[section]) {
+    if (logged && !PUBLICAS.has(window.location.pathname) && window.location.pathname !== PATHS[section]) {
       window.history.replaceState(null, "", PATHS[section]);
     }
   }, []);
@@ -289,7 +300,25 @@ export default function App() {
     return () => window.removeEventListener("nitro-paywall", load);
   }, [logged]);
 
-  if (!logged) return <Auth onAuth={() => setLogged(true)} />;
+  // páginas legais: abertas para todos, logado ou não
+  if (path === "/termos" || path === "/privacidade") return <Legal pagina={path === "/termos" ? "termos" : "privacidade"} />;
+
+  if (!logged) {
+    if (path === "/entrar" || path === "/cadastro")
+      return (
+        <Auth
+          key={path}
+          inicial={path === "/cadastro" ? "registro" : "login"}
+          onAuth={() => {
+            window.history.replaceState(null, "", PATHS.midias);
+            setPath(PATHS.midias);
+            setSection("midias");
+            setLogged(true);
+          }}
+        />
+      );
+    return <Landing />;
+  }
   if (!user) return <div className="loading">Carregando…</div>;
 
   // sem assinatura ativa: só a tela de planos fica disponível
@@ -304,6 +333,8 @@ export default function App() {
     clearToken();
     setLogged(false);
     setUser(null);
+    window.history.pushState(null, "", "/");
+    setPath("/");
   }
 
   function navBtn(id: Section, label: string, extra = "") {

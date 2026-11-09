@@ -23,6 +23,7 @@ logger = logging.getLogger("nitro.retention")
 
 INTERVALO_SEGUNDOS = 6 * 3600  # roda a cada 6h
 _stop = threading.Event()
+HEARTBEAT: dict = {"ultima_execucao_em": None, "removidos": 0}
 
 
 def purge_expired_videos(db: Session, *, now: datetime | None = None) -> int:
@@ -67,7 +68,9 @@ def _loop() -> None:
     while not _stop.is_set():
         db = SessionLocal()
         try:
-            purge_expired_videos(db)
+            n = purge_expired_videos(db)
+            HEARTBEAT["ultima_execucao_em"] = datetime.now(timezone.utc)
+            HEARTBEAT["removidos"] = n
         except Exception:  # noqa: BLE001 — o loop nunca pode morrer
             logger.exception("Falha na retenção de vídeos")
         finally:

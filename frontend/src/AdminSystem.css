@@ -1,0 +1,181 @@
+/* Painel de monitoramento (Admin → Sistema).
+   Cores de STATUS reservadas (ok / atenção / crítico), sempre com ícone + texto.
+   Texto em tinta neutra; a cor só aparece no ícone, na pílula e no medidor. */
+.sys {
+  --st-ok: #0ca30c;
+  --st-warn: #fab219;
+  --st-crit: #d03b3b;
+  --st-ok-soft: rgba(12, 163, 12, 0.14);
+  --st-warn-soft: rgba(250, 178, 25, 0.16);
+  --st-crit-soft: rgba(208, 59, 59, 0.16);
+  --sys-track: rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+:root[data-theme="light"] .sys {
+  --sys-track: rgba(11, 11, 11, 0.08);
+}
+
+.sys-h {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sys-muted {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.sys-note {
+  margin-top: 8px;
+}
+
+/* faixa de status geral */
+.sys-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.sys-banner-ok { border-left: 4px solid var(--st-ok); }
+.sys-banner-atencao { border-left: 4px solid var(--st-warn); }
+.sys-banner-critico { border-left: 4px solid var(--st-crit); }
+
+.sys-alerts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.sys-alerts li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* pílula de status: ícone + texto */
+.sys-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.sys-pill svg { flex: none; }
+.sys-ok { background: var(--st-ok-soft); }
+.sys-ok svg { color: var(--st-ok); }
+.sys-atencao { background: var(--st-warn-soft); }
+.sys-atencao svg { color: var(--st-warn); }
+.sys-critico { background: var(--st-crit-soft); }
+.sys-critico svg { color: var(--st-crit); }
+
+/* tiles de número */
+.sys-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.sys-tile {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  min-width: 0;
+}
+.sys-tile-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.sys-tile-value {
+  margin-top: 4px;
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* cartões e medidores */
+.sys-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.sys-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  min-width: 0;
+}
+.sys-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sys-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.sys-big {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.sys-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--sys-track);
+  overflow: hidden;
+}
+.sys-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.sys-fill-ok { background: var(--st-ok); }
+.sys-fill-atencao { background: var(--st-warn); }
+.sys-fill-critico { background: var(--st-crit); }
+
+.sys-errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sys-errors li {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}

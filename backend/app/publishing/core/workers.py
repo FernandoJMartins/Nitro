@@ -30,6 +30,9 @@ logger = logging.getLogger("nitro.publishing")
 CYCLE_SECONDS = 20
 _stop_event = threading.Event()
 
+# batimento do scheduler — lido pelo painel admin (/api/v1/admin/system)
+HEARTBEAT: dict = {"ultimo_ciclo_em": None, "ultimo_erro": None, "ultimo_erro_em": None, "ciclos": 0}
+
 
 def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
@@ -112,8 +115,12 @@ def _loop() -> None:
     while not _stop_event.is_set():
         try:
             run_cycle()
-        except Exception:  # noqa: BLE001 — o loop nunca pode morrer
+            HEARTBEAT["ultimo_ciclo_em"] = datetime.now(timezone.utc)
+            HEARTBEAT["ciclos"] += 1
+        except Exception as exc:  # noqa: BLE001 — o loop nunca pode morrer
             logger.exception("Falha no ciclo do scheduler de publicação")
+            HEARTBEAT["ultimo_erro"] = f"{type(exc).__name__}: {exc}"[:300]
+            HEARTBEAT["ultimo_erro_em"] = datetime.now(timezone.utc)
         _stop_event.wait(CYCLE_SECONDS)
 
 

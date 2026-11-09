@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { ErrorBanner } from "./Dialog";
 import { login, register } from "./api";
+import { irPara } from "./nav";
 
-export default function Auth({ onAuth }: { onAuth: () => void }) {
-  const [modo, setModo] = useState<"login" | "registro">("login");
+export default function Auth({ onAuth, inicial = "login" }: { onAuth: () => void; inicial?: "login" | "registro" }) {
+  const [modo, setModo] = useState<"login" | "registro">(inicial);
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +68,16 @@ export default function Auth({ onAuth }: { onAuth: () => void }) {
             </>
           )}
         </div>
+        {modo === "registro" && (
+          <p className="sub" style={{ fontSize: 12, marginTop: 12 }}>
+            Ao criar a conta você concorda com os{" "}
+            <a href="/termos" onClick={(e) => { e.preventDefault(); irPara("/termos"); }}>Termos de Uso</a> e a{" "}
+            <a href="/privacidade" onClick={(e) => { e.preventDefault(); irPara("/privacidade"); }}>Política de Privacidade</a>.
+          </p>
+        )}
+        <button className="linkbtn" style={{ marginTop: 12 }} onClick={() => irPara("/")}>
+          ← Voltar para o início
+        </button>
       </div>
     </div>
   );

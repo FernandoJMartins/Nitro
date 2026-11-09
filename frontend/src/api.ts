@@ -158,6 +158,52 @@ export interface AdminUser {
   tem_acesso: boolean;
   uso: Usage;
 }
+export type Nivel = "ok" | "atencao" | "critico";
+export interface SystemStatus {
+  gerado_em: string;
+  alertas: { nivel: Nivel; mensagem: string }[];
+  servidor: {
+    disco: { total: number; usado: number; livre: number; nivel: Nivel };
+    memoria: { total: number; usado: number; nivel: Nivel };
+    swap: { total: number; usado: number };
+    cpu: { nucleos: number; load1: number; load5: number; load15: number; nivel: Nivel };
+    uptime_servidor_s: number | null;
+    uptime_app_s: number;
+  };
+  banco: { ok: boolean; latencia_ms: number | null; tamanho: number | null; erro: string | null };
+  agendador: {
+    ok: boolean;
+    ultimo_ciclo_em: string | null;
+    segundos_desde_ultimo: number | null;
+    ciclos: number;
+    ultimo_erro: string | null;
+    ultimo_erro_em: string | null;
+  };
+  retencao: { ultima_execucao_em: string | null; removidos: number; dias: number };
+  publicacoes: {
+    ultimas_24h: Record<string, number>;
+    pendentes: number;
+    atrasadas: number;
+    contas_com_erro_24h: number;
+    erros_recentes: { em: string; conta_id: number | null; mensagem: string }[];
+  };
+  negocio: {
+    usuarios: number;
+    novos_7d: number;
+    pagantes: number;
+    cortesia: number;
+    sem_acesso: number;
+    por_plano: Record<string, number>;
+    mrr: number;
+    videos_gerados_mes: number;
+    midias: number;
+    videos_guardados: number;
+    contas_instagram: number;
+  };
+}
+export function adminSystem(): Promise<SystemStatus> {
+  return apiGetAsync("/api/v1/admin/system");
+}
 export function adminListUsers(): Promise<AdminUser[]> {
   return apiGetAsync("/api/v1/admin/users");
 }

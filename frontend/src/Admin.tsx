@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ErrorBanner } from "./Dialog";
 import { adminListUsers, adminUpdateUser, type AdminUser } from "./api";
+import AdminSystem from "./AdminSystem";
 
 const PLANOS = [
   { id: "basico", nome: "Básico" },
@@ -12,8 +13,26 @@ function dataBR(iso: string | null) {
   return iso ? new Date(iso).toLocaleDateString("pt-BR") : "—";
 }
 
-/** Painel admin: todos os usuários, plano, uso, acesso manual (cortesia) e bloqueio. */
+/** Painel admin: aba Sistema (monitoramento) e aba Usuários. */
 export default function Admin() {
+  const [aba, setAba] = useState<"sistema" | "usuarios">("sistema");
+  return (
+    <>
+      <div className="seg" role="tablist" style={{ marginBottom: 16 }}>
+        <button role="tab" aria-selected={aba === "sistema"} className={`seg-btn${aba === "sistema" ? " active" : ""}`} onClick={() => setAba("sistema")}>
+          Sistema
+        </button>
+        <button role="tab" aria-selected={aba === "usuarios"} className={`seg-btn${aba === "usuarios" ? " active" : ""}`} onClick={() => setAba("usuarios")}>
+          Usuários
+        </button>
+      </div>
+      {aba === "sistema" ? <AdminSystem /> : <AdminUsers />}
+    </>
+  );
+}
+
+/** Todos os usuários, plano, uso, acesso manual (cortesia) e bloqueio. */
+function AdminUsers() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filtro, setFiltro] = useState("");
