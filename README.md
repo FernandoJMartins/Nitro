@@ -17,7 +17,7 @@ Plataforma web para **gerar vídeos curtos (8–14s) em massa** para redes socia
 
 | | **Básico** | **Pro** | **Agência** |
 |---|---|---|---|
-| Preço | R$ 147/mês | R$ 247/mês | R$ 497/mês |
+| Preço | R$ 147/mês | R$ 299/mês | R$ 497/mês |
 | Perfis conectados | 2 | 10 | 40 |
 | Vídeos gerados em massa **por mês** | 600 | 3.000 | 10.000 |
 | Vídeos **por lote** | 50 | 100 | 200 |
