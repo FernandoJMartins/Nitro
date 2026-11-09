@@ -35,6 +35,14 @@ services:
       INSTAGRAM_APP_VERSION: ${INSTAGRAM_APP_VERSION:-446.0.0.49.77}
       INSTAGRAM_APP_VERSION_CODE: ${INSTAGRAM_APP_VERSION_CODE:-1060018354}
       # No Windows+Docker os eventos de arquivo não chegam; polling resolve.
+      # SaaS: admins (acesso total) e limpeza de vídeos — ver app/billing
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-julio8martins@gmail.com,scarlett.campelo@gmail.com}
+      VIDEO_RETENTION_INCLUDE_ADMINS: ${VIDEO_RETENTION_INCLUDE_ADMINS:-true}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_BASICO: ${STRIPE_PRICE_BASICO:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_AGENCIA: ${STRIPE_PRICE_AGENCIA:-}
       WATCHFILES_FORCE_POLLING: "true"
     volumes:
       # Código montado ao vivo -> uvicorn --reload enxerga as mudanças.
