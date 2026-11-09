@@ -40,7 +40,7 @@ PLANS: dict[str, Plan] = {
         ia=False, upscale=False, stories_compartilhados=False, api_keys=False,
     ),
     "pro": Plan(
-        id="pro", nome="Pro", preco_mensal=299.0,
+        id="pro", nome="Pro", preco_mensal=297.0,
         max_contas=10, videos_por_mes=3000, max_por_lote=100, max_calendario=400, stories_por_dia=25,
         max_midias=1000, armazenamento_gb=20,
         ia=True, upscale=True, stories_compartilhados=True, api_keys=False,
