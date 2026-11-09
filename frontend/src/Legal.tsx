@@ -65,27 +65,19 @@ function Termos() {
         30 dias e depois são apagados automaticamente; baixe os que quiser guardar. O Nitro não é um serviço de backup.
       </p>
 
-      <h2>7. Publicação em redes sociais</h2>
-      <p>
-        O Nitro publica nos perfis que você conecta, usando a sessão desses perfis, e não a API oficial da Meta. As redes
-        sociais podem limitar, suspender ou bloquear perfis por motivos próprios, inclusive por volume de publicações. Você é o
-        único responsável pelo conteúdo publicado e pelo cumprimento das regras de cada rede. Não garantimos que toda
-        publicação será concluída nem respondemos por medidas tomadas pelas redes sociais.
-      </p>
-
-      <h2>8. Disponibilidade</h2>
+      <h2>7. Disponibilidade</h2>
       <p>
         Trabalhamos para manter o serviço no ar, mas podem ocorrer interrupções para manutenção ou por falhas. O serviço é
         fornecido "no estado em que se encontra", e nossa responsabilidade fica limitada ao valor pago nos últimos 3 meses.
       </p>
 
-      <h2>9. Suspensão</h2>
+      <h2>8. Suspensão</h2>
       <p>
         Podemos suspender ou encerrar contas que violem estes termos, que tenham pagamento recusado ou que coloquem em risco o
         serviço ou outros usuários.
       </p>
 
-      <h2>10. Alterações e contato</h2>
+      <h2>9. Alterações e contato</h2>
       <p>
         Podemos atualizar estes termos e os planos, avisando com antecedência quando a mudança afetar o que você já contratou.
         Dúvidas: <Contato />. Fica eleito o foro do domicílio do consumidor.
