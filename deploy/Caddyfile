@@ -1,0 +1,14 @@
+# HTTPS automático (Let's Encrypt). Requer o DNS de nitroflow.site e www
+# apontando para o IP do droplet.
+nitroflow.site {
+	encode zstd gzip
+	# 50 MB por arquivo + folga do multipart
+	request_body {
+		max_size 60MB
+	}
+	reverse_proxy frontend:80
+}
+
+www.nitroflow.site {
+	redir https://nitroflow.site{uri} permanent
+}

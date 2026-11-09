@@ -1,0 +1,60 @@
+# PRODUÇÃO (droplet) — nitroflow.site
+#   caddy    -> HTTPS automático (Let's Encrypt) nas portas 80/443
+#   frontend -> nginx com o React compilado + proxy /api -> backend
+#   backend  -> FastAPI + ffmpeg (sem porta pública; só pela rede interna)
+# Banco: Managed PostgreSQL da DigitalOcean (SAAS_DATABASE_URL no .env).
+#
+# Subir/atualizar:  docker compose -f docker-compose.prod.yml up -d --build
+name: nitro
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    # 1 processo só: o scheduler de publicação roda dentro dele (2 workers = posts em dobro)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*" --timeout-graceful-shutdown 30
+    environment:
+      DATABASE_URL: ${SAAS_DATABASE_URL}
+      STORAGE_DIR: /app/storage
+      CORS_ORIGINS: ${APP_URL}
+      APP_URL: ${APP_URL}
+      SECRET_KEY: ${SAAS_SECRET_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      INSTAGRAM_APP_VERSION: ${INSTAGRAM_APP_VERSION:-446.0.0.49.77}
+      INSTAGRAM_APP_VERSION_CODE: ${INSTAGRAM_APP_VERSION_CODE:-1060018354}
+      ADMIN_EMAILS: ${ADMIN_EMAILS}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_BASICO: ${STRIPE_PRICE_BASICO:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_AGENCIA: ${STRIPE_PRICE_AGENCIA:-}
+      VIDEO_RETENTION_DAYS: ${VIDEO_RETENTION_DAYS:-30}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+    volumes:
+      - /opt/nitro-data/storage:/app/storage
+      - ./fonts:/app/storage/fonts
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:
