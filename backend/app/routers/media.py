@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
+from ..billing import limits as billing_limits
 from ..config import settings
+from ..uploads import max_bytes, save_limited, too_big
 from ..database import get_db
 from ..deps import get_current_user, get_user_for_file
 from ..models import Folder, Media, User
@@ -79,15 +81,18 @@ def _save_upload(
 
     # 1) grava o arquivo enviado em um temporário
     try:
-        with tmp_path.open("wb") as f:
-            while chunk := upload.file.read(1024 * 1024):
-                f.write(chunk)
+        save_limited(upload.file, tmp_path, upload.filename)  # 413 se passar de MAX_UPLOAD_MB
+        # SaaS: quantidade de mídias e espaço total do plano
+        billing_limits.check_media(db, user_id, tmp_path.stat().st_size)
 
         # 2) remove os metadados escrevendo no caminho final
         if _is_av_ext(ext):
             metadata.strip_av_metadata(tmp_path, final_path)
         else:
             metadata.strip_image_metadata(tmp_path, final_path)
+    except HTTPException:
+        final_path.unlink(missing_ok=True)
+        raise
     except Exception as exc:  # noqa: BLE001
         final_path.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=f"Falha ao processar mídia: {exc}") from exc
@@ -195,6 +200,7 @@ def _save_imported_audio(
     tmp_dir.mkdir(parents=True, exist_ok=True)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    billing_limits.check_media(db, user_id, len(content))
     token = uuid.uuid4().hex
     tmp_path = tmp_dir / f"{token}{ext}"
     final_rel = f"music/{token}{ext}"
@@ -277,7 +283,18 @@ def import_music_link(
     try:
         resp = requests.get(download_url, stream=True, timeout=90, headers={"User-Agent": _UA_NAVEGADOR})
         resp.raise_for_status()
-        content = resp.content  # áudios de reels são curtos (segundos) — ok em memória
+        cl = int(resp.headers.get("Content-Length") or 0)
+        if cl > max_bytes():
+            raise too_big()
+        partes, total = [], 0
+        for chunk in resp.iter_content(1024 * 1024):
+            total += len(chunk)
+            if total > max_bytes():
+                raise too_big()
+            partes.append(chunk)
+        content = b"".join(partes)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"Falha ao baixar o áudio do Instagram: {exc}") from exc
 

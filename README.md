@@ -23,17 +23,22 @@ Plataforma web para **gerar vídeos curtos (8–14s) em massa** para redes socia
 | Vídeos **por lote** | 50 | 100 | 200 |
 | Vídeos no calendário (fila de publicação) | 60 | 400 | 2.000 |
 | Stories por dia (**somando todas as contas**) | 5 | 25 | 100 |
+| Mídias na biblioteca (quantidade) | 200 | 1.000 | 3.000 |
+| Espaço (biblioteca + imagens ampliadas) | 5 GB | 20 GB | 50 GB |
 | IA de frases, textos e legendas | ✗ | ✓ | ✓ |
 | Stories em várias contas de uma vez | ✗ | ✓ | ✓ |
 | Ampliar imagens (upscale) | ✗ | ✓ | ✓ |
 | Acesso via API (chaves) | ✗ | ✗ | ✓ |
 | Guarda dos vídeos gerados | 30 dias | 30 dias | 30 dias |
+| Tamanho máximo por arquivo enviado | 50 MB | 50 MB | 50 MB |
+| Duração máxima de vídeo gerado | 1 min | 1 min | 1 min |
 
 - **Tudo isso se muda num lugar só:** `backend/app/billing/plans.py`. O preço ali serve **só para exibir**. Quem cobra de fato é o `price_id` da Stripe, então mantenha os dois iguais.
 - **Stories por dia** é o total da assinatura. No Básico dá para postar 5 stories numa conta, ou 1 story em cada uma de 5 contas. O "dia" segue o fuso padrão do usuário (padrão: São Paulo). Stories que falharam ou foram cancelados não contam.
 - **Cota mensal** conta os lotes do mês, mesmo que os vídeos sejam apagados depois. Apagar vídeo não devolve cota.
 - **Calendário** são os reels aprovados ou agendados que ainda não foram publicados. O limite é checado na hora de importar vídeos do gerador para a publicação.
 - **Downgrade:** se a pessoa tem mais contas do que o novo plano permite, só as **N mais antigas** continuam publicando.
+- **Arquivos e vídeos** (todos os planos): nenhum arquivo enviado passa de **50 MB** (`MAX_UPLOAD_MB`, erro 413). Nenhum vídeo gerado passa de **1 minuto** (`MAX_VIDEO_SECONDS`), contando o clipe final. As mídias também têm limite de **quantidade** e de **espaço total** por plano.
 - **Retenção de 30 dias** (`VIDEO_RETENTION_DAYS`): vale para **todos, inclusive admins**. Roda a cada 6h e apaga arquivo e registro. Vídeo que ainda está na fila de publicação só é apagado depois de publicado ou cancelado.
 
 ### Onde está no código

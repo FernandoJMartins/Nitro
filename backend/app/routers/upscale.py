@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..billing import limits as billing_limits
 from ..config import settings
+from ..uploads import save_limited
 from ..database import get_db
 from ..deps import get_current_user, get_user_for_file
 from ..models import Media, UpscaledImage, UpscaleJob, User
@@ -71,9 +72,12 @@ def upscale_upload(
             continue  # ignora arquivos não suportados em vez de derrubar o lote
         token = uuid.uuid4().hex
         dest = src_dir / f"{token}{ext}"
-        with dest.open("wb") as f:
-            while chunk := up.file.read(1024 * 1024):
-                f.write(chunk)
+        try:
+            save_limited(up.file, dest, up.filename)  # 413 se passar de MAX_UPLOAD_MB
+        except HTTPException:
+            for it in itens:  # não deixa os já salvos do lote órfãos no disco
+                it.src.unlink(missing_ok=True)
+            raise
         itens.append(UpscaleItem(src=dest, nome_original=up.filename or f"{token}{ext}"))
 
     if not itens:
@@ -81,6 +85,13 @@ def upscale_upload(
             status_code=400,
             detail=f"Nenhuma imagem válida. Aceitas: {sorted(upscale.SUPORTADOS)}",
         )
+    # SaaS: espaço do plano (o upscale não cria mídias, só ocupa espaço)
+    try:
+        billing_limits.check_media(db, user.id, sum(it.src.stat().st_size for it in itens), novos_arquivos=0)
+    except HTTPException:
+        for it in itens:
+            it.src.unlink(missing_ok=True)
+        raise
 
     job = _cria_job(db, user.id, escala, len(itens))
     background.add_task(upscale.run_upscale_job, job.id, itens, escala)

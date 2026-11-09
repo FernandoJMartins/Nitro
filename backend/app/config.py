@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # URL pública do frontend — para onde a Stripe devolve o usuário após pagar
     app_url: str = "http://localhost:5273"
 
+    # tamanho máximo de qualquer arquivo enviado pelo usuário (MB)
+    max_upload_mb: int = 50
+    # duração máxima (segundos) de um vídeo gerado pelo Nitro
+    max_video_seconds: float = 60.0
+
     # vídeos gerados são apagados (arquivo + registro) após N dias
     video_retention_days: int = 30
     # a retenção vale também para os admins? (padrão: não)

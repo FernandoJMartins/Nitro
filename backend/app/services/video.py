@@ -833,6 +833,17 @@ def build_video(
     if text_file is not None and not text:
         text = text_file.read_text(encoding="utf-8")
 
+    # SaaS: nenhum vídeo gerado passa de settings.max_video_seconds (60s),
+    # contando o clipe final concatenado. O trecho principal cede espaço ao final.
+    from ..config import settings as _settings  # import tardio (evita ciclo)
+
+    teto = float(_settings.max_video_seconds)
+    if final_path is not None:
+        final_duration = min(final_duration, teto / 2)
+        duration = min(duration, max(1.0, teto - final_duration))
+    else:
+        duration = min(duration, teto)
+
     font = _esc_filter_path(font_path or _font_path())
     scale_crop = (
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"

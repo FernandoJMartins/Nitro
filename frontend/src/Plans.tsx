@@ -81,6 +81,10 @@ export default function Plans() {
                 <li>Perfis conectados: {me.uso.contas} de {fmt(r.max_contas)}</li>
                 <li>Vídeos na fila de publicação: {me.uso.calendario} de {fmt(r.max_calendario)}</li>
                 <li>Stories hoje (todas as contas): {me.uso.stories_hoje} de {fmt(r.stories_por_dia)}</li>
+                <li>Mídias na biblioteca: {me.uso.midias} de {fmt(r.max_midias)}</li>
+                <li>
+                  Espaço usado: {(me.uso.armazenamento_bytes / 1024 ** 3).toFixed(2)} GB de {fmt(r.armazenamento_gb)} GB
+                </li>
               </ul>
             </>
           ) : (
@@ -112,6 +116,8 @@ export default function Plans() {
                 <li>até {fmt(p.max_por_lote)} vídeos por lote</li>
                 <li>{fmt(p.max_calendario)} vídeos na fila de publicação</li>
                 <li>{fmt(p.stories_por_dia)} stories por dia (somando todos os perfis)</li>
+                <li>{fmt(p.max_midias)} mídias na biblioteca ({fmt(p.armazenamento_gb)} GB)</li>
+                <li>Arquivos de até 50 MB · vídeos gerados de até 1 min</li>
                 <li>{p.ia ? "✓" : "✗"} IA de frases e legendas</li>
                 <li>{p.stories_compartilhados ? "✓" : "✗"} Stories em várias contas de uma vez</li>
                 <li>{p.upscale ? "✓" : "✗"} Ampliar imagens</li>

@@ -65,7 +65,7 @@ export default function Admin() {
                   Plano: {u.plano ?? "—"} · Stripe: {u.assinatura_status ?? "—"} · renova: {dataBR(u.periodo_fim)} · cortesia até:{" "}
                   {dataBR(u.acesso_manual_ate)}
                   <br />
-                  Uso: {u.uso.videos_mes} vídeos no mês · {u.uso.contas} perfis · {u.uso.calendario} na fila · {u.uso.stories_hoje} stories hoje
+                  Uso: {u.uso.videos_mes} vídeos no mês · {u.uso.contas} perfis · {u.uso.calendario} na fila · {u.uso.stories_hoje} stories hoje · {u.uso.midias} mídias ({(u.uso.armazenamento_bytes / 1024 ** 3).toFixed(2)} GB)
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <select className="input" value={u.plano ?? ""} onChange={(e) => e.target.value && upd(u.id, { plano: e.target.value })}>

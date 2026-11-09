@@ -201,6 +201,61 @@ assert c.get("/api/v1/media?tipo=photo", headers=U).status_code == 402
 assert c.patch(f"/api/v1/admin/users/{admin_id}", json={"bloqueado": True}, headers=A).status_code == 400
 print("bloqueio pelo admin ok")
 
+# ---------- mídias: 50 MB por arquivo, quantidade e espaço por plano ----------
+import dataclasses  # noqa: E402
+import io  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from PIL import Image  # noqa: E402
+
+from app.billing import plans as plans_mod  # noqa: E402
+
+M = reg("midias@t.com")
+mid = c.get("/api/v1/auth/me", headers=M).json()["id"]
+c.patch(f"/api/v1/admin/users/{mid}", json={"plano": "basico", "dias_acesso_manual": 30}, headers=A)
+
+
+def jpg():
+    b = io.BytesIO()
+    Image.new("RGB", (64, 64), (200, 10, 10)).save(b, format="JPEG")
+    b.seek(0)
+    return b
+
+
+grande = io.BytesIO(b"\xff" * (51 * 1024 * 1024))
+r = c.post("/api/v1/media/photo", files={"file": ("grande.jpg", grande, "image/jpeg")}, headers=M)
+assert r.status_code == 413, r.text
+assert not list((settings.storage_path / "_tmp").glob("*"))  # parcial apagado
+original = plans_mod.PLANS["basico"]
+plans_mod.PLANS["basico"] = dataclasses.replace(original, max_midias=2)
+for _ in range(2):
+    assert c.post("/api/v1/media/photo", files={"file": ("a.jpg", jpg(), "image/jpeg")}, headers=M).status_code == 200
+r = c.post("/api/v1/media/photo", files={"file": ("a.jpg", jpg(), "image/jpeg")}, headers=M)
+assert r.status_code == 402 and "mídias" in r.json()["detail"], r.text
+plans_mod.PLANS["basico"] = dataclasses.replace(original, armazenamento_gb=0.000001)  # ~1 KB
+r = c.post("/api/v1/media/photo", files={"file": ("a.jpg", jpg(), "image/jpeg")}, headers=M)
+assert r.status_code == 402 and "Espaço" in r.json()["detail"], r.text
+plans_mod.PLANS["basico"] = original
+me_b = c.get("/api/v1/billing/me", headers=M).json()
+assert me_b["uso"]["midias"] == 2 and me_b["uso"]["armazenamento_bytes"] > 0
+print("mídias: 50 MB por arquivo, quantidade e espaço do plano ok")
+
+# ---------- vídeo gerado nunca passa de 60s ----------
+from app.services import video as video_mod  # noqa: E402
+from app.services.metadata import probe_duration  # noqa: E402
+
+base = settings.storage_path / "_base.jpg"
+Image.new("RGB", (108, 192), (0, 0, 0)).save(base)
+out = settings.storage_path / "_longo.mp4"
+video_mod.build_video(base, out, duration=90, width=108, height=192, fps=10)
+d = probe_duration(out)
+assert d is not None and d <= 60.5, d
+out2 = settings.storage_path / "_longo_final.mp4"
+video_mod.build_video(base, out2, duration=90, final_path=base, final_duration=5, width=108, height=192, fps=10)
+d2 = probe_duration(out2)
+assert d2 is not None and d2 <= 60.5, d2
+print(f"vídeo limitado a 1 min ok ({d:.1f}s e {d2:.1f}s com clipe final)")
+
 db.close()
 os.remove("_smoke_billing.db")
 shutil.rmtree("_smoke_billing_storage", ignore_errors=True)

@@ -57,7 +57,7 @@ def _media_or_404(db: Session, media_id: int, tipos: set[str], user_id: int) -> 
 
 @router.post("/generate", response_model=GenerateResponse)
 def generate_video(body: GenerateRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    duration = max(1.0, min(body.duration, 60.0))
+    duration = max(1.0, min(body.duration, settings.max_video_seconds))
     storage = settings.storage_path
 
     base = _media_or_404(db, body.base_media_id, {"video", "photo"}, user.id)
@@ -257,8 +257,8 @@ def generate_bulk(
             raise HTTPException(status_code=404, detail=f"Tipo de frase {pid} não encontrado")
 
     # range de duração: clamp em [1, 60] e garante min <= max
-    dur_min = max(1.0, min(body.duration_min, 60.0))
-    dur_max = max(1.0, min(body.duration_max, 60.0))
+    dur_min = max(1.0, min(body.duration_min, settings.max_video_seconds))
+    dur_max = max(1.0, min(body.duration_max, settings.max_video_seconds))
     dur_min, dur_max = min(dur_min, dur_max), max(dur_min, dur_max)
 
     job = Job(user_id=user.id, status="fila", total=quantidade, concluidos=0)

@@ -66,6 +66,8 @@ export interface PlanInfo {
   max_por_lote: number;
   max_calendario: number;
   stories_por_dia: number;
+  max_midias: number;
+  armazenamento_gb: number;
   ia: boolean;
   upscale: boolean;
   stories_compartilhados: boolean;
@@ -115,6 +117,8 @@ export interface Usage {
   contas: number;
   calendario: number;
   stories_hoje: number;
+  midias: number;
+  armazenamento_bytes: number;
 }
 export interface BillingMe {
   is_admin: boolean;
@@ -219,7 +223,15 @@ export function listMedia(tipo: MediaType, folder?: number | "none"): Promise<Me
   return apiGetAsync(`${BASE}${q}`);
 }
 
+// limite por arquivo — o backend também recusa (413) acima disso
+export const MAX_UPLOAD_MB = 50;
+function checaTamanho(files: File[]) {
+  const grande = files.find((f) => f.size > MAX_UPLOAD_MB * 1024 * 1024);
+  if (grande) throw new Error(`O arquivo "${grande.name}" passa do limite de ${MAX_UPLOAD_MB} MB.`);
+}
+
 export async function uploadMedia(tipo: MediaType, file: File, folderId?: number | null): Promise<Media> {
+  checaTamanho([file]);
   const form = new FormData();
   form.append("file", file);
   const q = folderId ? `?folder_id=${folderId}` : "";
@@ -521,6 +533,7 @@ export interface UpscaledImage {
 }
 
 export async function upscaleUpload(files: File[], escala: Escala): Promise<UpscaleJob> {
+  checaTamanho(files);
   const form = new FormData();
   for (const f of files) form.append("files", f);
   const r = await fetch(`${V1}/upscale/upload?escala=${escala}`, {

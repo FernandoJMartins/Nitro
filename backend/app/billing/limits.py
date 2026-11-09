@@ -218,6 +218,38 @@ def check_story(db: Session, account) -> None:
         )
 
 
+# ---------------- mídias (quantidade e espaço) ----------------
+def midias_do_usuario(db: Session, user_id: int) -> tuple[int, int]:
+    """(quantidade de mídias, bytes usados). Espaço = biblioteca + imagens ampliadas."""
+    from ..models import Media, UpscaledImage
+
+    n, b = db.execute(
+        select(func.count(Media.id), func.coalesce(func.sum(Media.tamanho_bytes), 0)).where(Media.user_id == user_id)
+    ).one()
+    up = db.scalar(
+        select(func.coalesce(func.sum(UpscaledImage.tamanho_bytes), 0)).where(UpscaledImage.user_id == user_id)
+    )
+    return int(n or 0), int(b or 0) + int(up or 0)
+
+
+def check_media(db: Session, user_id: int, novos_bytes: int = 0, novos_arquivos: int = 1) -> None:
+    """Antes de salvar um arquivo: cabe na quantidade e no espaço do plano?"""
+    user = db.get(User, user_id)
+    plan = require_plan(user)
+    n, usados = midias_do_usuario(db, user_id)
+    if n + novos_arquivos > plan.max_midias:
+        raise HTTPException(
+            402, f"O plano {plan.nome} permite até {plan.max_midias} mídias. Você tem {n}: apague algumas ou faça upgrade."
+        )
+    limite = int(plan.armazenamento_gb * 1024**3)
+    if usados + novos_bytes > limite:
+        raise HTTPException(
+            402,
+            f"Espaço do plano {plan.nome} cheio: {usados / 1024**3:.2f} GB de {plan.armazenamento_gb:g} GB. "
+            "Apague mídias ou faça upgrade.",
+        )
+
+
 # ---------------- resumo (tela de planos) ----------------
 def usage_summary(db: Session, user: User) -> dict:
     from ..publishing.models import Account
@@ -228,4 +260,6 @@ def usage_summary(db: Session, user: User) -> dict:
         "contas": len(contas),
         "calendario": reels_no_calendario(db, user.id),
         "stories_hoje": stories_hoje(db, user.id),
+        "midias": midias_do_usuario(db, user.id)[0],
+        "armazenamento_bytes": midias_do_usuario(db, user.id)[1],
     }
