@@ -3,6 +3,7 @@ import { irPara } from "./nav";
 import { JOB_STATUS_LABEL } from "./labels";
 import { ErrorBanner } from "./Dialog";
 import {
+  billingMe,
   bulkGenerate,
   downloadUrl,
   downloadVideoZip,
@@ -854,6 +855,23 @@ export default function Create() {
 
   const [musicSel, setMusicSel] = useState<Set<number>>(new Set());
   const [quantidade, setQuantidade] = useState(5);
+  // limites do plano: teto por lote e o que resta da cota mensal
+  const [limite, setLimite] = useState<{ lote: number; restante: number; plano: string } | null>(null);
+  function carregaLimite() {
+    billingMe()
+      .then((b) => {
+        if (!b.recursos) return;
+        const restante = Math.max(0, b.recursos.videos_por_mes - b.uso.videos_mes);
+        setLimite({ lote: b.recursos.max_por_lote, restante, plano: b.recursos.nome });
+      })
+      .catch(() => {});
+  }
+  useEffect(carregaLimite, []);
+  const maxQtd = limite ? Math.max(1, Math.min(limite.lote, limite.restante)) : 200;
+  // se o teto cair (ex.: cota acabando), a quantidade escolhida acompanha
+  useEffect(() => {
+    if (quantidade > maxQtd) setQuantidade(maxQtd);
+  }, [maxQtd]);
   const [durMin, setDurMin] = useState(5);
   const [durMax, setDurMax] = useState(8);
   // vídeo de fundo mais curto que a duração escolhida: por padrão NÃO repete em
@@ -1024,6 +1042,7 @@ export default function Create() {
 
     setResults([]);
     try {
+      setTimeout(carregaLimite, 1500); // atualiza a cota restante depois de disparar o lote
       const j = await bulkGenerate({
         quantidade,
         base_media_ids: baseIds,
@@ -1440,7 +1459,14 @@ export default function Create() {
 
         <label className="field">
           <span>Quantidade de vídeos: {quantidade}</span>
-          <input type="range" min={1} max={200} value={quantidade} onChange={(e) => setQuantidade(Number(e.target.value))} />
+          <input type="range" min={1} max={maxQtd} value={Math.min(quantidade, maxQtd)} onChange={(e) => setQuantidade(Number(e.target.value))} />
+          {limite && (
+            <span className="field-help">
+              {limite.restante <= 0
+                ? `Você usou toda a cota de vídeos do plano ${limite.plano} este mês.`
+                : `Plano ${limite.plano}: até ${limite.lote} por lote · restam ${limite.restante.toLocaleString("pt-BR")} vídeos este mês.`}
+            </span>
+          )}
         </label>
 
         <div className="field">
