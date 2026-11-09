@@ -89,10 +89,6 @@ const FAQ = [
     q: "Existe limite de tamanho?",
     a: "Cada arquivo enviado pode ter até 50 MB e cada vídeo gerado tem até 1 minuto. A quantidade de vídeos, perfis e espaço depende do plano.",
   },
-  {
-    q: "Como o Nitro publica no Instagram?",
-    a: "Usando a sessão do seu próprio perfil, não a API oficial da Meta. Por isso, o Instagram pode limitar perfis que publicam em excesso. Recomendamos um ritmo de postagem natural.",
-  },
 ];
 
 function Recursos({ p }: { p: PlanInfo }) {
