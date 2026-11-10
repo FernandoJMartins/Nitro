@@ -79,17 +79,17 @@ assert r.status_code == 404, r.text  # passou do limite, parou na mídia inexist
 r = c.post("/api/v1/videos/bulk", json={"quantidade": 5, "base_media_ids": [999], "use_ia_texto": True}, headers=U)
 assert r.status_code == 402 and "IA" in r.json()["detail"], r.text
 db = SessionLocal()
-db.add(Job(user_id=uid, status="concluido", total=590, concluidos=590))
+db.add(Job(user_id=uid, status="concluido", total=PLANS["basico"].videos_por_mes - 10, concluidos=PLANS["basico"].videos_por_mes - 10))
 db.add(Job(user_id=uid, status="concluido", total=50, concluidos=50, criado_em=now - timedelta(days=40)))  # mês passado
 db.commit()
 r = c.post("/api/v1/videos/bulk", json={"quantidade": 11, "base_media_ids": [999]}, headers=U)
 assert r.status_code == 402 and "mensal" in r.json()["detail"], r.text
 r = c.post("/api/v1/videos/bulk", json={"quantidade": 10, "base_media_ids": [999]}, headers=U)
 assert r.status_code == 404, r.text
-print("lote (50), cota mensal (600) e IA bloqueada no Básico ok")
+print(f"lote (50), cota mensal ({PLANS['basico'].videos_por_mes}) e IA bloqueada no Básico ok")
 
-# ---------- calendário (Básico = 60) ----------
-for i in range(59):
+# ---------- calendário (limite do Básico) ----------
+for i in range(PLANS["basico"].max_calendario - 1):
     db.add(Content(user_id=uid, kind="reel", caminho=f"x{i}.mp4", approval_status="aprovado"))
 gv1 = GeneratedVideo(user_id=uid, caminho="generated/a.mp4")
 gv2 = GeneratedVideo(user_id=uid, caminho="generated/b.mp4")

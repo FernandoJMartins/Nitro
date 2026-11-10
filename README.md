@@ -19,9 +19,9 @@ Plataforma web para **gerar vídeos curtos (8–14s) em massa** para redes socia
 |---|---|---|---|
 | Preço | R$ 147/mês | R$ 297/mês | R$ 497/mês |
 | Perfis conectados | 10 | 50 | 200 |
-| Vídeos gerados em massa **por mês** | 600 | 3.000 | 10.000 |
+| Vídeos gerados em massa **por mês** | 1.500 | 7.500 | 20.000 |
 | Vídeos **por lote** | 50 | 100 | 200 |
-| Vídeos no calendário (fila de publicação) | 60 | 400 | 2.000 |
+| Vídeos no calendário (fila de publicação) | 200 | 1.000 | 3.000 |
 | Stories por dia (**somando todas as contas**) | 5 | 25 | 100 |
 | Mídias na biblioteca (quantidade) | 200 | 1.000 | 3.000 |
 | Espaço (biblioteca + imagens ampliadas) | 5 GB | 20 GB | 50 GB |
