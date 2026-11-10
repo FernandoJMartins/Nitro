@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MoreVertical, Pause, Pencil, Play, Plus, Save, ShieldCheck, Trash2, Wifi } from "lucide-react";
 import { DropdownMenu, MenuItem, Modal, ConfirmDialog, ErrorBanner } from "./Dialog";
 import {
@@ -945,7 +945,11 @@ export default function Accounts() {
 
   useEffect(refreshAll, []);
 
+  const salvando = useRef(false);
+
   async function saveAccount(body: AccountBody, storiesEnabled: boolean, gerarFingerprint: boolean) {
+    if (salvando.current) return; // evita clique duplo criando a conta 2x
+    salvando.current = true;
     try {
       let acc: PubAccount;
       if (formFor && formFor !== "new") {
@@ -962,6 +966,8 @@ export default function Accounts() {
       refreshAll();
     } catch (e) {
       setError(String(e));
+    } finally {
+      salvando.current = false;
     }
   }
 

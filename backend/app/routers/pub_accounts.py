@@ -182,6 +182,15 @@ def create_account(body: AccountCreate, user: User = Depends(get_current_user), 
     if body.proxy_id is not None:
         _require_own_proxy(db, user, body.proxy_id)
     data = body.model_dump()
+    duplicada = db.scalar(
+        select(Account).where(
+            Account.user_id == user.id,
+            Account.platform == data.get("platform", "instagram"),
+            Account.username == data.get("username"),
+        )
+    )
+    if duplicada is not None:
+        raise HTTPException(409, f"A conta @{duplicada.username} já está cadastrada.")
     senha = data.pop("senha", None)
     sessionid = data.pop("sessionid", None)
     account = Account(user_id=user.id, **data)

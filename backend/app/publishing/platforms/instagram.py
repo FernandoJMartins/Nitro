@@ -200,6 +200,33 @@ def _default_client_factory(proxy_url: str | None):
                 if sessao is not None:
                     sessao.request = _com_timeout_padrao(sessao.request)
 
+        def password_publickeys(self):
+            """Chave pública que criptografa a senha no login.
+
+            O fork busca em GET /qe/sync/, que o Instagram desativou (404, sem
+            os headers) — todo login por senha quebrava com
+            "int() argument ... not 'NoneType'". O app atual recebe a mesma chave
+            nos headers do POST launcher/sync/, então usamos esse como plano B.
+            """
+            id_hdr, key_hdr = "ig-set-password-encryption-key-id", "ig-set-password-encryption-pub-key"
+            try:
+                resp = self.public.get("https://i.instagram.com/api/v1/qe/sync/")
+                if resp.headers.get(id_hdr) and resp.headers.get(key_hdr):
+                    return int(resp.headers[id_hdr]), resp.headers[key_hdr]
+            except Exception:  # noqa: BLE001 — endpoint antigo: segue para o launcher
+                pass
+            try:
+                self.sync_launcher(login=True)
+            except ClientThrottledError:
+                raise
+            except Exception:  # noqa: BLE001 — headers podem vir mesmo com corpo de erro
+                pass
+            resp = getattr(self, "last_response", None)
+            headers = resp.headers if resp is not None else {}
+            if not headers.get(id_hdr) or not headers.get(key_hdr):
+                raise ClientError("Instagram não devolveu a chave de criptografia de senha (launcher/sync).")
+            return int(headers[id_hdr]), headers[key_hdr]
+
         def _try_caa_login(self, exc: Exception, verification_code: str = "") -> bool:
             if self.skip_caa_login:
                 return False
