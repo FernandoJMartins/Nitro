@@ -5,7 +5,7 @@ import "./Landing.css";
 
 /* RASCUNHOS de Termos de Uso e Política de Privacidade — revisar com um advogado
    antes de depender deles. Mantidos em sincronia com as regras do sistema
-   (planos, retenção de 30 dias, limites, cancelamento e reembolso). */
+   (planos, retenção de vídeos, limites, cancelamento e reembolso). */
 
 const ATUALIZADO = "9 de novembro de 2026";
 
@@ -61,8 +61,9 @@ function Termos() {
 
       <h2>6. Armazenamento e limites técnicos</h2>
       <p>
-        Cada arquivo enviado pode ter até 50 MB e cada vídeo gerado tem até 1 minuto. Os vídeos gerados ficam disponíveis por
-        30 dias e depois são apagados automaticamente; baixe os que quiser guardar. O Nitro não é um serviço de backup.
+        Cada arquivo enviado pode ter até 50 MB e cada vídeo gerado tem até 1 minuto. Cada vídeo gerado é apagado
+        automaticamente assim que é publicado, e os que não forem agendados são apagados após 3 dias; baixe os que quiser
+        guardar. O Nitro não é um serviço de backup.
       </p>
 
       <h2>7. Publicação em redes sociais</h2>
@@ -129,7 +130,7 @@ function Privacidade() {
 
       <h2>4. Por quanto tempo guardamos</h2>
       <p>
-        Vídeos gerados: 30 dias. Mídias e configurações: enquanto sua conta existir. Dados de cobrança: pelo prazo exigido pela
+        Vídeos gerados: até serem publicados, ou 3 dias se não forem agendados. Mídias e configurações: enquanto sua conta existir. Dados de cobrança: pelo prazo exigido pela
         legislação fiscal. Ao excluir a conta, apagamos seu conteúdo em até 30 dias.
       </p>
 

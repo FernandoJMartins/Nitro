@@ -57,7 +57,8 @@ class Settings(BaseSettings):
     max_video_seconds: float = 60.0
 
     # vídeos gerados são apagados (arquivo + registro) após N dias
-    video_retention_days: int = 30
+    video_retention_days: int = 3  # vídeos gerados e NÃO agendados
+    delete_after_publish: bool = True  # apaga o vídeo gerado assim que a postagem é confirmada
     # a retenção vale também para os admins? (padrão: não)
     video_retention_include_admins: bool = True
 

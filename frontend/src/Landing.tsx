@@ -83,7 +83,7 @@ const FAQ = [
   },
   {
     q: "Meus vídeos ficam guardados para sempre?",
-    a: "Os vídeos gerados ficam disponíveis por 30 dias e depois são apagados automaticamente. Baixe os que quiser guardar. Suas mídias enviadas continuam na biblioteca.",
+    a: "Não. Cada vídeo gerado é apagado automaticamente assim que é postado, e os que não forem agendados são apagados após 3 dias. Baixe os que quiser guardar. Suas mídias enviadas continuam na biblioteca.",
   },
   {
     q: "Existe limite de tamanho?",
@@ -272,7 +272,7 @@ export default function Landing() {
             })}
           </div>
           <p className="ld-fine">
-            Em todos os planos: arquivos de até 50 MB, vídeos gerados de até 1 minuto, guardados por 30 dias.
+            Em todos os planos: arquivos de até 50 MB, vídeos gerados de até 1 minuto, apagados após a postagem (ou em 3 dias, se não agendados).
           </p>
         </section>
 

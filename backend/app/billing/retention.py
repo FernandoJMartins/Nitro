@@ -1,10 +1,13 @@
-"""Retenção: vídeos gerados são apagados (arquivo + registro) após
-settings.video_retention_days (padrão 30 dias) — para todos, inclusive admins
-(desligável com VIDEO_RETENTION_INCLUDE_ADMINS=false).
+"""Retenção de vídeos gerados (disco):
 
+1. Assim que uma postagem é confirmada, o vídeo gerado usado nela é apagado
+   (arquivo + registro), já que ele está no Instagram (DELETE_AFTER_PUBLISH).
+2. Vídeos gerados que nunca foram agendados/postados são apagados após
+   settings.video_retention_days (padrão 3 dias).
+
+Vale para todos, inclusive admins (desligável com VIDEO_RETENTION_INCLUDE_ADMINS=false).
 Nunca apaga o arquivo de um vídeo que ainda está na fila de publicação (Content
-importado do gerador sem publicação concluída) — senão o post agendado quebraria.
-Esse vídeo é apagado num ciclo seguinte, depois de publicado/cancelado.
+sem publicação concluída) — senão o post agendado quebraria.
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -60,8 +63,55 @@ def purge_expired_videos(db: Session, *, now: datetime | None = None) -> int:
         removidos += 1
     db.commit()
     if removidos:
-        logger.info("Retenção: %s vídeos gerados com mais de %s dias apagados", removidos, settings.video_retention_days)
+        logger.info("Retenção: %s vídeos gerados não agendados com mais de %s dias apagados", removidos, settings.video_retention_days)
     return removidos
+
+
+def _ativos_com_arquivo(db: Session, caminho: str) -> bool:
+    """Ainda existe conteúdo pendente (sem publicação, ou com publicação em
+    andamento) usando este arquivo?"""
+    from ..publishing.models import Content, Publication
+
+    pendente = exists().where(
+        Publication.content_id == Content.id,
+        Publication.status.in_(("PENDING", "RETRYING", "UPLOADING", "PROCESSING")),
+    )
+    sem_pub = ~exists().where(Publication.content_id == Content.id)
+    return bool(
+        db.scalar(
+            select(func.count(Content.id)).where(
+                Content.caminho == caminho, Content.approval_status != "rejeitado", (pendente | sem_pub)
+            )
+        )
+    )
+
+
+def delete_after_publish(db: Session, content) -> bool:
+    """Chamado logo após uma postagem confirmada. Apaga o vídeo GERADO pelo
+    Nitro usado nela (mídias enviadas pelo usuário nunca são tocadas).
+    Retorna True se apagou."""
+    if not settings.delete_after_publish or not content.generated_video_id:
+        return False
+    try:
+        gv = db.get(GeneratedVideo, content.generated_video_id)
+        if gv is None:
+            return False
+        if not settings.video_retention_include_admins:
+            dono = db.get(User, gv.user_id) if gv.user_id is not None else None
+            if dono and dono.email.lower() in settings.admin_emails_set:
+                return False
+        if _ativos_com_arquivo(db, gv.caminho):
+            return False  # mesmo vídeo ainda agendado em outra postagem
+        (settings.storage_path / gv.caminho).unlink(missing_ok=True)
+        content.generated_video_id = None
+        db.delete(gv)
+        db.commit()
+        logger.info("Vídeo gerado %s apagado após a publicação", gv.id)
+        return True
+    except Exception:  # noqa: BLE001 — limpar disco nunca pode quebrar a publicação
+        db.rollback()
+        logger.exception("Falha ao apagar vídeo publicado")
+        return False
 
 
 def _loop() -> None:

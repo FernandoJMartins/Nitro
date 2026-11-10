@@ -122,7 +122,7 @@ export default function Plans() {
                 <li>{p.stories_compartilhados ? "✓" : "✗"} Stories em várias contas de uma vez</li>
                 <li>{p.upscale ? "✓" : "✗"} Ampliar imagens</li>
                 <li>{p.api_keys ? "✓" : "✗"} Acesso via API</li>
-                <li>Vídeos gerados ficam guardados por 30 dias</li>
+                <li>Vídeos gerados são apagados após a postagem (ou em 3 dias, se não agendados)</li>
               </ul>
               <div style={{ marginTop: "auto" }}>
                 {me?.is_admin ? null : atual ? (

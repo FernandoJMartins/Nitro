@@ -157,6 +157,9 @@ def execute_publication(db: Session, publication: Publication) -> None:
         account.ultimo_erro = None
         db.commit()
         log_event(db, "Publicação confirmada", account_id=account.id, publication_id=publication.id)
+        from ...billing.retention import delete_after_publish  # noqa: PLC0415
+
+        delete_after_publish(db, content)
 
     except SessionExpiredError as exc:
         account.status = "erro"

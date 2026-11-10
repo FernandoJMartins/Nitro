@@ -18,7 +18,7 @@ Plataforma web para **gerar vídeos curtos (8–14s) em massa** para redes socia
 | | **Básico** | **Pro** | **Agência** |
 |---|---|---|---|
 | Preço | R$ 147/mês | R$ 297/mês | R$ 497/mês |
-| Perfis conectados | 2 | 10 | 40 |
+| Perfis conectados | 10 | 50 | 200 |
 | Vídeos gerados em massa **por mês** | 600 | 3.000 | 10.000 |
 | Vídeos **por lote** | 50 | 100 | 200 |
 | Vídeos no calendário (fila de publicação) | 60 | 400 | 2.000 |
@@ -29,7 +29,7 @@ Plataforma web para **gerar vídeos curtos (8–14s) em massa** para redes socia
 | Stories em várias contas de uma vez | ✗ | ✓ | ✓ |
 | Ampliar imagens (upscale) | ✗ | ✓ | ✓ |
 | Acesso via API (chaves) | ✗ | ✗ | ✓ |
-| Guarda dos vídeos gerados | 30 dias | 30 dias | 30 dias |
+| Guarda dos vídeos gerados | até a postagem · 3 dias se não agendado | idem | idem |
 | Tamanho máximo por arquivo enviado | 50 MB | 50 MB | 50 MB |
 | Duração máxima de vídeo gerado | 1 min | 1 min | 1 min |
 
@@ -39,14 +39,17 @@ Plataforma web para **gerar vídeos curtos (8–14s) em massa** para redes socia
 - **Calendário** são os reels aprovados ou agendados que ainda não foram publicados. O limite é checado na hora de importar vídeos do gerador para a publicação.
 - **Downgrade:** se a pessoa tem mais contas do que o novo plano permite, só as **N mais antigas** continuam publicando.
 - **Arquivos e vídeos** (todos os planos): nenhum arquivo enviado passa de **50 MB** (`MAX_UPLOAD_MB`, erro 413). Nenhum vídeo gerado passa de **1 minuto** (`MAX_VIDEO_SECONDS`), contando o clipe final. As mídias também têm limite de **quantidade** e de **espaço total** por plano.
-- **Retenção de 30 dias** (`VIDEO_RETENTION_DAYS`): vale para **todos, inclusive admins**. Roda a cada 6h e apaga arquivo e registro. Vídeo que ainda está na fila de publicação só é apagado depois de publicado ou cancelado.
+- **Retenção de vídeos gerados** (economia de disco), vale para **todos, inclusive admins** (`VIDEO_RETENTION_INCLUDE_ADMINS=false` poupa os admins):
+  - apagado **assim que a postagem é confirmada** (`DELETE_AFTER_PUBLISH`, padrão ligado), a não ser que o mesmo vídeo ainda esteja agendado em outro perfil;
+  - não agendado: apagado após **3 dias** (`VIDEO_RETENTION_DAYS`), num ciclo a cada 6h. Vídeo na fila de publicação nunca é apagado antes de sair.
+- **Sem limite de postagens por perfil**: a frequência de cada perfil é escolha do cliente. Os limites são da assinatura (vídeos/mês, fila do calendário, stories/dia).
 
 ### Onde está no código
 | Arquivo | O quê |
 |---|---|
 | `backend/app/billing/plans.py` | limites, funções e preço de cada plano |
 | `backend/app/billing/limits.py` | todas as checagens (acesso, lote, cota, contas, calendário, stories) |
-| `backend/app/billing/retention.py` | exclusão automática após 30 dias |
+| `backend/app/billing/retention.py` | exclusão após a postagem e dos não agendados após 3 dias |
 | `backend/app/routers/billing.py` | `/api/v1/billing/*`: planos, uso, checkout, portal, webhook |
 | `backend/app/routers/admin.py` | `/api/v1/admin/*`: painel admin |
 | `backend/app/deps.py` | `get_current_user` exige assinatura ativa (`get_authenticated_user` não exige) |

@@ -62,10 +62,12 @@ assert r.status_code == 200 and r.json()["tem_acesso"], r.text
 assert c.get("/api/v1/media?tipo=photo", headers=U).status_code == 200
 print("admin concedeu Básico manual -> acesso ok")
 
-# ---------- contas conectadas (Básico = 2) ----------
-for i in range(2):
+# ---------- contas conectadas (limite do Básico) ----------
+from app.billing.plans import PLANS  # noqa: E402
+N_BASICO = PLANS["basico"].max_contas
+for i in range(N_BASICO):
     assert c.post("/api/v1/publishing/accounts", json={"nome_interno": f"c{i}", "username": f"u{i}"}, headers=U).status_code == 200
-r = c.post("/api/v1/publishing/accounts", json={"nome_interno": "c3", "username": "u3"}, headers=U)
+r = c.post("/api/v1/publishing/accounts", json={"nome_interno": "cx", "username": "ux"}, headers=U)
 assert r.status_code == 402, r.text
 print("limite de perfis ok:", r.json()["detail"])
 
@@ -144,9 +146,9 @@ assert len(ensure_daily_stories(db, acc)) == 1
 print("webhook de assinatura (upgrade Pro) ok")
 
 # ---------- downgrade: scheduler só opera as N contas mais antigas ----------
-c.post("/api/v1/publishing/accounts", json={"nome_interno": "c3", "username": "u3"}, headers=U)
+c.post("/api/v1/publishing/accounts", json={"nome_interno": "cx", "username": "ux"}, headers=U)
 ids = [a.id for a in db.query(Account).filter(Account.user_id == uid).order_by(Account.id)]
-assert len(ids) == 3
+assert len(ids) == N_BASICO + 1
 assert set(ids) <= limits.allowed_account_ids(db)
 _apply_subscription(db, {"id": "sub_1", "customer": "cus_1", "status": "active",
                          "metadata": {"user_id": str(uid), "plano": "basico"}, "items": {"data": []}})
@@ -154,7 +156,7 @@ u.acesso_manual_ate = None
 db.commit()
 db.expire_all()
 perm = limits.allowed_account_ids(db)
-assert ids[0] in perm and ids[1] in perm and ids[2] not in perm
+assert set(ids[:N_BASICO]) <= perm and ids[N_BASICO] not in perm
 _apply_subscription(db, {"id": "sub_1", "customer": "cus_1", "status": "canceled",
                          "metadata": {"user_id": str(uid)}, "items": {"data": []}})
 db.expire_all()
@@ -162,14 +164,14 @@ assert not (set(ids) & limits.allowed_account_ids(db))
 assert c.get("/api/v1/media?tipo=photo", headers=U).status_code == 402
 print("downgrade/cancelamento -> scheduler e acesso bloqueados ok")
 
-# ---------- retenção de 30 dias ----------
+# ---------- retenção (não agendados: 3 dias) ----------
 st = settings.storage_path
 (st / "generated").mkdir(parents=True, exist_ok=True)
 admin_id = c.get("/api/v1/auth/me", headers=A).json()["id"]
 velho = now - timedelta(days=31)
 vs = {
     "velho": GeneratedVideo(user_id=uid, caminho="generated/velho.mp4", criado_em=velho),
-    "novo": GeneratedVideo(user_id=uid, caminho="generated/novo.mp4", criado_em=now - timedelta(days=5)),
+    "novo": GeneratedVideo(user_id=uid, caminho="generated/novo.mp4", criado_em=now - timedelta(days=1)),
     "agendado": GeneratedVideo(user_id=uid, caminho="generated/agendado.mp4", criado_em=velho),
     "admin": GeneratedVideo(user_id=admin_id, caminho="generated/admin.mp4", criado_em=velho),
 }
@@ -189,7 +191,34 @@ assert db.get(GeneratedVideo, ids_v["velho"]) is None and not (st / "generated/v
 assert db.get(GeneratedVideo, ids_v["novo"]) is not None
 assert db.get(GeneratedVideo, ids_v["agendado"]) is not None and (st / "generated/agendado.mp4").exists()
 assert db.get(GeneratedVideo, ids_v["admin"]) is None  # retenção vale para todos
-print("retenção 30 dias ok (preserva agendados, inclui admins)")
+print("retenção 3 dias ok (preserva agendados, inclui admins)")
+
+# ---------- apaga o vídeo gerado assim que a postagem é confirmada ----------
+from app.billing.retention import delete_after_publish  # noqa: E402
+
+def _gerado_publicado(nome, outra_pendente=False):
+    gv = GeneratedVideo(user_id=uid, caminho=f"generated/{nome}.mp4", criado_em=now)
+    (st / gv.caminho).write_bytes(b"x")
+    db.add(gv)
+    db.flush()
+    cont = Content(user_id=uid, kind="reel", caminho=gv.caminho, generated_video_id=gv.id,
+                   account_id=ids[0], approval_status="aprovado")
+    db.add(cont)
+    db.flush()
+    db.add(Publication(content_id=cont.id, account_id=ids[0], status="PUBLISHED", scheduled_at=now))
+    if outra_pendente:
+        db.add(Publication(content_id=cont.id, account_id=ids[1], status="PENDING", scheduled_at=now + timedelta(hours=2)))
+    db.commit()
+    return gv.id, cont
+
+gid, cont = _gerado_publicado("postado")
+assert delete_after_publish(db, cont) is True
+db.expire_all()
+assert db.get(GeneratedVideo, gid) is None and not (st / "generated/postado.mp4").exists()
+gid2, cont2 = _gerado_publicado("postado2", outra_pendente=True)
+assert delete_after_publish(db, cont2) is False  # ainda agendado em outro perfil
+assert db.get(GeneratedVideo, gid2) is not None and (st / "generated/postado2.mp4").exists()
+print("apaga vídeo após publicar ok (preserva se ainda agendado em outro perfil)")
 
 # ---------- bloqueio pelo admin ----------
 u = db.get(User, uid)
