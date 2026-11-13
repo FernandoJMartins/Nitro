@@ -117,6 +117,14 @@ app.include_router(pub_shared_stories.router)
 def _start_publishing_scheduler() -> None:
     start_background_scheduler()
     start_retention_worker()
+    # registra a versão da biblioteca do Instagram (detecta atualização) e já
+    # consulta a última release em segundo plano, para o painel abrir rápido
+    import threading
+
+    from .services import lib_monitor
+
+    lib_monitor.registrar_versao()
+    threading.Thread(target=lib_monitor._ultima_versao, name="lib-monitor", daemon=True).start()
 
 
 @app.get("/health", tags=["infra"])

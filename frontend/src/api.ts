@@ -180,6 +180,19 @@ export interface SystemStatus {
     ultimo_erro_em: string | null;
   };
   retencao: { ultima_execucao_em: string | null; removidos: number; dias: number };
+  instagram?: {
+    biblioteca: {
+      instalada?: string | null;
+      em_uso_desde?: string | null;
+      anterior?: string | null;
+      ultima?: string | null;
+      ultima_url?: string | null;
+      desatualizada?: boolean;
+      verificado_em?: string | null;
+      erro?: string | null;
+    };
+    logins: { bloqueadas_24h?: number; logins_ok_24h?: number };
+  };
   publicacoes: {
     ultimas_24h: Record<string, number>;
     pendentes: number;

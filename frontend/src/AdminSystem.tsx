@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, Database, Gauge, HardDrive, MemoryStick, OctagonAlert, Send } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Database, Gauge, HardDrive, MemoryStick, Package, OctagonAlert, Send } from "lucide-react";
 import { ErrorBanner } from "./Dialog";
 import { adminSystem, type Nivel, type SystemStatus } from "./api";
 import "./AdminSystem.css";
@@ -101,6 +101,40 @@ const STATUS_PUB: [string, string][] = [
 const PLANO_NOME: Record<string, string> = { basico: "Básico", pro: "Pro", agencia: "Agência" };
 
 /** Painel de monitoramento do admin — atualiza sozinho a cada 30s. */
+/** Biblioteca do Instagram: versão em uso x última publicada + bloqueios de login. */
+function InstagramCard({ ig }: { ig: NonNullable<SystemStatus["instagram"]> }) {
+  const b = ig.biblioteca;
+  const bloqueadas = ig.logins.bloqueadas_24h ?? 0;
+  const ok = ig.logins.logins_ok_24h ?? 0;
+  const nivel: Nivel = b.desatualizada && bloqueadas >= 2 ? "critico" : b.desatualizada || bloqueadas >= 2 ? "atencao" : "ok";
+  const label = b.desatualizada ? "Atualização disponível" : bloqueadas >= 2 ? "Logins bloqueados" : "Em dia";
+  return (
+    <div className="sys-card">
+      <div className="sys-card-head">
+        <span className="sys-card-title">
+          <Package size={16} aria-hidden="true" /> Biblioteca do Instagram
+        </span>
+        <StatusPill nivel={nivel} label={label} />
+      </div>
+      <div className="sys-muted">
+        Em uso: {b.instalada ?? "?"}
+        {b.em_uso_desde && <> (atualizada {atras(b.em_uso_desde)}{b.anterior ? `, antes ${b.anterior}` : ""})</>}
+        <br />
+        Mais nova: {b.ultima ? (b.ultima_url ? <a href={b.ultima_url} target="_blank" rel="noreferrer">{b.ultima}</a> : b.ultima) : "?"}
+        {b.verificado_em && <> · verificado {atras(b.verificado_em)}</>}
+        {b.erro && (
+          <>
+            <br />
+            {b.erro}
+          </>
+        )}
+        <br />
+        Logins (24h): {ok} ok · {bloqueadas} bloqueados pelo Instagram
+      </div>
+    </div>
+  );
+}
+
 export default function AdminSystem() {
   const [st, setSt] = useState<SystemStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -217,6 +251,7 @@ export default function AdminSystem() {
             )}
           </div>
         </div>
+        {st.instagram && <InstagramCard ig={st.instagram} />}
         <div className="sys-card">
           <div className="sys-card-head">
             <span className="sys-card-title">

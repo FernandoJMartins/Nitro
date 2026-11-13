@@ -14,7 +14,7 @@ PySocks==1.7.1
 # Fixado no commit master 09c96e4 (2026-09-12, release 3.0.1): login CAA por padrão com
 # transporte curl_cffi (HTTP/2 + TLS híbrido). O transporte requests antigo leva 429 no
 # CAA/bloks, e o login legado foi descontinuado pelo Instagram (needs_upgrade em todas as versões).
-instagrapi @ https://codeload.github.com/subzeroid/instagrapi/tar.gz/09c96e40ee7c33b4b69506d4d36a0d86a5e5f6f2
+instagrapi @ https://codeload.github.com/subzeroid/instagrapi/tar.gz/fa009b92fd5539e1a5038027af2ef0cf5896fe55
 # transporte privado do fork 3.x (fingerprint de navegador no login CAA) — explicitado
 # aqui porque o login depende dele diretamente
 curl_cffi>=0.15.0,<1

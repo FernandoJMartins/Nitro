@@ -16,7 +16,7 @@ import pytest
 
 from app.config import settings
 from app.publishing.platforms.base import AdapterError, PublishContext, SessionExpiredError, build_proxy_url
-from app.publishing.platforms.instagram import InstagramAdapter
+from app.publishing.platforms.instagram import InstagramAdapter, _app_versions_do_fork
 
 
 class StubMedia:
@@ -689,6 +689,13 @@ def test_login_caa_primeiro_nao_toca_o_legado_quando_passa():
     assert len(criados) == 2
 
 
+
+def _clientes_ate(versao_ok: str) -> int:
+    """Clientes criados até a versão legada que passa: inicial (1ª versão) +
+    CAA + um por versão seguinte até `versao_ok` (lista real do fork instalado)."""
+    versoes = _app_versions_do_fork()
+    return 1 + 1 + versoes.index(versao_ok)
+
 def test_login_caa_falha_generica_cai_no_legado():
     """CAA falhou com erro genérico → o adapter tenta as versões legadas do
     fork (plano B) e conecta quando uma passa."""
@@ -699,8 +706,8 @@ def test_login_caa_falha_generica_cai_no_legado():
     session = adapter.login(_ctx())
     assert session is not None
     assert json.loads(session)["authorization_data"]["user"] == "perfil01"
-    # cliente inicial (vira a 1ª tentativa legada: 446 falha) + CAA + 428 ok
-    assert len(criados) == 3
+    # cliente inicial (1ª tentativa legada falha) + CAA + um por versão até a 428
+    assert len(criados) == _clientes_ate("428.0.0.47.67")
     assert not getattr(criados[1], "skip_caa_login", False)  # cliente do CAA
     assert getattr(criados[0], "skip_caa_login")  # tentativas legadas
     assert getattr(criados[2], "skip_caa_login")
@@ -809,7 +816,7 @@ def test_login_legado_todas_rejeitadas_erro_claro():
     except AdapterError as exc:
         assert "needs_upgrade" in str(exc)
         assert "CAA login did not return a session" in str(exc)
-    assert len(criados) == 5  # inicial + CAA + 3 clientes das versões seguintes
+    assert len(criados) == 1 + len(_app_versions_do_fork())  # inicial + CAA + versões seguintes
 
 
 def test_login_caa_desafio_anexa_estado_pendente():
@@ -1105,8 +1112,8 @@ def test_login_ignora_versao_configurada_sem_code(monkeypatch):
     adapter = InstagramAdapter(client_factory=factory)
     session = adapter.login(_ctx())
     assert session is not None
-    # inicial (446 falha) + CAA + 428 ok — lista completa do fork, sem override
-    assert len(criados) == 3
+    # lista completa do fork (sem override) até a 428
+    assert len(criados) == _clientes_ate("428.0.0.47.67")
 
 
 if __name__ == "__main__":

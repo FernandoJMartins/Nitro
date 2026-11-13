@@ -165,6 +165,16 @@ def system_status(_: User = Depends(get_admin_user), db: Session = Depends(get_d
         )
     ]
 
+    # biblioteca do Instagram (versão em uso x última publicada) e bloqueios de login
+    from ..services import lib_monitor
+
+    try:
+        instagram = lib_monitor.status(db)
+        for nivel, msg in instagram.pop("_alertas"):
+            alerta(nivel, msg)
+    except Exception as exc:  # noqa: BLE001 — o monitor nunca derruba o painel
+        instagram = {"biblioteca": {"erro": str(exc)[:200]}, "logins": {}}
+
     # negócio
     users = list(db.scalars(select(User)))
     clientes = [u for u in users if not u.is_admin]
@@ -189,6 +199,7 @@ def system_status(_: User = Depends(get_admin_user), db: Session = Depends(get_d
         "banco": banco,
         "agendador": agendador,
         "retencao": {**RET, "dias": settings.video_retention_days},
+        "instagram": instagram,
         "publicacoes": {
             "ultimas_24h": por_status,
             "pendentes": pendentes,

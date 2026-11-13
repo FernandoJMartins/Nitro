@@ -147,6 +147,68 @@ def _com_timeout_padrao(request_fn):
     return request
 
 
+# ---- leitura de expressões bloks (cópia local: os helpers privados do fork
+# mudam de nome entre versões — ex.: _bloks_string_literals sumiu na 3.2) ----
+def _bloks_strings(value, output: list) -> None:
+    if isinstance(value, str):
+        output.append(value)
+    elif isinstance(value, dict):
+        for child in value.values():
+            _bloks_strings(child, output)
+    elif isinstance(value, list):
+        for child in value:
+            _bloks_strings(child, output)
+
+
+def _bloks_expressao(value: str, start: int) -> str:
+    """Uma expressão bloks balanceada a partir de `start`, respeitando aspas."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(value)):
+        ch = value[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return value[start : index + 1]
+    return ""
+
+
+def _bloks_literais(value: str) -> list:
+    """Strings JSON ("...") contidas numa expressão bloks, na ordem."""
+    strings: list = []
+    decoder = json.JSONDecoder()
+    index = 0
+    while True:
+        index = value.find('"', index)
+        if index < 0:
+            return strings
+        try:
+            decoded, consumed = decoder.raw_decode(value[index:])
+        except ValueError:
+            index += 1
+            continue
+        if isinstance(decoded, str):
+            strings.append(decoded)
+        index += consumed
+
+
+# Campos do perfil do APP (não do aparelho) — sempre do fork instalado.
+APP_PROFILE_KEYS = ("app_version", "version_code", "bloks_versioning_id")
+
+
 def _default_client_factory(proxy_url: str | None):
     """Cria um Client instagrapi novo para ESTA conta. Importação tardia: o resto
     do sistema (e os testes) funciona sem a biblioteca instalada."""
@@ -200,61 +262,12 @@ def _default_client_factory(proxy_url: str | None):
                 if sessao is not None:
                     sessao.request = _com_timeout_padrao(sessao.request)
 
-        def password_publickeys(self):
-            """Chave pública que criptografa a senha no login.
-
-            O fork busca em GET /qe/sync/, que o Instagram desativou (404, sem
-            os headers) — todo login por senha quebrava com
-            "int() argument ... not 'NoneType'". O app atual recebe a mesma chave
-            nos headers do POST launcher/sync/, então usamos esse como plano B.
-            """
-            id_hdr, key_hdr = "ig-set-password-encryption-key-id", "ig-set-password-encryption-pub-key"
-            try:
-                resp = self.public.get("https://i.instagram.com/api/v1/qe/sync/")
-                if resp.headers.get(id_hdr) and resp.headers.get(key_hdr):
-                    return int(resp.headers[id_hdr]), resp.headers[key_hdr]
-            except Exception:  # noqa: BLE001 — endpoint antigo: segue para o launcher
-                pass
-            try:
-                self.sync_launcher(login=True)
-            except ClientThrottledError:
-                raise
-            except Exception:  # noqa: BLE001 — headers podem vir mesmo com corpo de erro
-                pass
-            resp = getattr(self, "last_response", None)
-            headers = resp.headers if resp is not None else {}
-            if not headers.get(id_hdr) or not headers.get(key_hdr):
-                raise ClientError("Instagram não devolveu a chave de criptografia de senha (launcher/sync).")
-            return int(headers[id_hdr]), headers[key_hdr]
-
         def _try_caa_login(self, exc: Exception, verification_code: str = "") -> bool:
+            # A versão atual do fork já propaga 429/desafio/2FA; aqui só
+            # mantemos o atalho para a rodada "só login legado" do adapter.
             if self.skip_caa_login:
                 return False
-            try:
-                outcome = self.bloks_caa_login(verification_code=verification_code)
-            except ClientThrottledError:
-                raise
-            except (ChallengeError, TwoFactorRequired):
-                raise
-            except ClientError as caa_exc:
-                self.logger.warning("CAA login fallback failed: %s", caa_exc)
-                return False
-            if outcome.get("logged_in"):
-                return True
-            context = str(outcome.get("two_step_verification_context") or "")
-            if not context:
-                return False
-            if not verification_code.strip():
-                raise TwoFactorRequired(
-                    f"{exc} (Instagram returned a Bloks two-factor context from the CAA login flow; "
-                    "provide verification_code for login)",
-                    response=getattr(exc, "response", None),
-                ) from exc
-            return self._login_with_bloks_two_factor(
-                verification_code,
-                {"two_step_verification_context": context},
-                exc,
-            )
+            return super()._try_caa_login(exc, verification_code)
 
         # ---- desafio profile-code (código por e-mail): extração TOLERANTE ----
 
@@ -330,13 +343,13 @@ def _default_client_factory(proxy_url: str | None):
             )
 
             strings: list[str] = []
-            self._bloks_collect_strings(result, strings)
+            _bloks_strings(result, strings)
             ids = (AP_2SV_CODE_ENTRY, AP_2SV_CODE_ENTRY_ASYNC)
             for texto in strings:
                 if not any(app_id in texto for app_id in ids):
                     continue
                 for match in re.finditer(r"\(f4i", texto):
-                    expression = self._bloks_parenthesized_expression(texto, match.start())
+                    expression = _bloks_expressao(texto, match.start())
                     if not expression:
                         continue
                     groups: list[list[str]] = []
@@ -345,10 +358,10 @@ def _default_client_factory(proxy_url: str | None):
                         group_start = expression.find("(dkc", cursor)
                         if group_start < 0:
                             break
-                        group = self._bloks_parenthesized_expression(expression, group_start)
+                        group = _bloks_expressao(expression, group_start)
                         if not group:
                             break
-                        groups.append(self._bloks_string_literals(group))
+                        groups.append(_bloks_literais(group))
                         cursor = group_start + len(group)
                     for keys, values in zip(groups, groups[1:]):
                         if "context_data" in keys:
@@ -955,13 +968,19 @@ class InstagramAdapter(PlatformAdapter):
             return
         try:
             if dados.get("device_settings"):
-                client.set_device(dict(dados["device_settings"]), hydrate_app_profile=True)
+                # Só o APARELHO (modelo, Android, tela) vem do fingerprint. A
+                # versão do app fica com o fork: fingerprints antigos gravaram o
+                # app da época (ex.: 446) e o Instagram passa a recusar o login
+                # de versões velhas (429 / "needs upgrade"). Assim cada update do
+                # fork vale para todas as contas sem regerar fingerprint.
+                aparelho = {k: v for k, v in dict(dados["device_settings"]).items() if k not in APP_PROFILE_KEYS}
+                client.set_device(aparelho, hydrate_app_profile=True)
             if dados.get("uuids"):
                 client.set_uuids(dict(dados["uuids"]))
             if dados.get("locale"):
                 client.set_locale(dados["locale"])
-            if dados.get("user_agent"):
-                client.set_user_agent(dados["user_agent"])
+            # user_agent gravado NÃO é aplicado: ele carrega a versão antiga do
+            # app; o fork monta o user-agent a partir do aparelho + app atual.
             if dados.get("timezone_offset") is not None:
                 client.set_timezone_offset(
                     int(dados["timezone_offset"]), timezone_name=dados.get("timezone_name") or None
@@ -1028,6 +1047,16 @@ class InstagramAdapter(PlatformAdapter):
             nome = type(exc).__name__
             if nome in _THROTTLE_NAMES:
                 raise _error_from_exception(exc, "login CAA") from exc
+            if nome == "ClientNeedsUpgradeError":
+                # O Instagram responde "versão desatualizada" também quando a
+                # SENHA está errada (confirmado pelo mantenedor do fork, issue
+                # #2807). O login legado não resolve (está descontinuado).
+                raise AdapterError(
+                    "login: o Instagram recusou e respondeu \"versão desatualizada\". Na maioria das "
+                    "vezes isso significa usuário ou senha incorretos — confira os dois. Se estiverem "
+                    "certos, a biblioteca do Instagram pode precisar de atualização (veja Admin → Sistema) "
+                    "ou use o cookie sessionid."
+                ) from exc
             desafiou = (
                 nome in {"ChallengeRequired", "TwoFactorRequired"}
                 or "code_entry" in str(exc)
@@ -1068,7 +1097,9 @@ class InstagramAdapter(PlatformAdapter):
                 if ctx.fingerprint:
                     self._apply_fingerprint(cliente, ctx.fingerprint)
                     try:
-                        device = {**(json.loads(ctx.fingerprint).get("device_settings") or {}), "app_version": versao}
+                        aparelho = json.loads(ctx.fingerprint).get("device_settings") or {}
+                        aparelho = {k: v for k, v in aparelho.items() if k not in APP_PROFILE_KEYS}
+                        device = {**aparelho, "app_version": versao}
                     except (ValueError, TypeError, AttributeError):
                         pass
                 cliente.set_device(device, hydrate_app_profile=True)

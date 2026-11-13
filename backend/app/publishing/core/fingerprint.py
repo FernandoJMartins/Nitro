@@ -68,7 +68,13 @@ def gerar_fingerprint(idioma: str | None, timezone_nome: str | None) -> str:
     settings = client.get_settings()
     return json.dumps(
         {
-            "device_settings": settings.get("device_settings") or {},
+            # só o aparelho: a versão do app fica com o fork instalado (ver
+            # APP_PROFILE_KEYS em platforms/instagram.py)
+            "device_settings": {
+                k: v
+                for k, v in (settings.get("device_settings") or {}).items()
+                if k not in ("app_version", "version_code", "bloks_versioning_id")
+            },
             "uuids": settings.get("uuids") or {},
             "user_agent": settings.get("user_agent") or "",
             "locale": settings.get("locale") or locale,
