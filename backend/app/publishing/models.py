@@ -38,6 +38,9 @@ class Proxy(Base):
     status: Mapped[str] = mapped_column(String(16), default="cinza")
     latencia_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     ip_publico: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # tipo do IP de saída: residencial | movel | datacenter | desconhecido (ver services/ip_tipo)
+    tipo_ip: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    provedor_ip: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ultimo_check_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ultimo_erro: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -124,6 +127,24 @@ class Account(Base):
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     proxy: Mapped["Proxy | None"] = relationship()
+
+    @property
+    def login_bloqueado_ate(self) -> datetime | None:
+        """Depois de um 429 no login, o "Conectar" fica travado por
+        LOGIN_COOLDOWN_MIN: insistir na hora só estende o bloqueio do Instagram.
+        Conexão por cookie sessionid não envia senha, então não trava."""
+        from datetime import timedelta  # noqa: PLC0415
+
+        from ..config import settings  # noqa: PLC0415
+
+        if self.sessionid_enc or not self.ultimo_erro or not self.ultimo_erro_em:
+            return None
+        erro = self.ultimo_erro.lower()
+        if not any(s in erro for s in ("429", "too many requests", "limitou as tentativas")):
+            return None
+        quando = self.ultimo_erro_em if self.ultimo_erro_em.tzinfo else self.ultimo_erro_em.replace(tzinfo=timezone.utc)
+        ate = quando + timedelta(minutes=settings.login_cooldown_min)
+        return ate if ate > datetime.now(timezone.utc) else None
 
     @property
     def senha_configurada(self) -> bool:

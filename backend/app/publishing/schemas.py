@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+import re
+
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 # ---------- Proxies ----------
@@ -40,12 +42,29 @@ class ProxyOut(BaseModel):
     status: str
     latencia_ms: float | None
     ip_publico: str | None
+    tipo_ip: str | None = None
+    provedor_ip: str | None = None
     ultimo_check_em: datetime | None
     ultimo_erro: str | None
     criado_em: datetime
 
 
 # ---------- Contas ----------
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+
+def _username_valido(v: str | None) -> str | None:
+    """@ do Instagram: letras, números, ponto e _ (sem espaço). Aceita '@perfil'."""
+    if v is None:
+        return v
+    v = v.strip().lstrip("@")
+    if not _USERNAME_RE.match(v):
+        raise ValueError(
+            "usuário do Instagram inválido: use só letras, números, ponto e _ (sem espaços), ex.: perfil01"
+        )
+    return v
+
+
 class AccountCreate(BaseModel):
     nome_interno: str
     username: str
@@ -70,6 +89,9 @@ class AccountCreate(BaseModel):
     stories_enabled: bool = False
 
 
+
+    _valida_username = field_validator("username")(classmethod(lambda cls, v: _username_valido(v)))
+
 class AccountUpdate(BaseModel):
     nome_interno: str | None = None
     username: str | None = None
@@ -92,6 +114,9 @@ class AccountUpdate(BaseModel):
     automation_status: str | None = None
     session_data: str | None = None
 
+
+
+    _valida_username = field_validator("username")(classmethod(lambda cls, v: _username_valido(v)))
 
 class ConnectRequest(BaseModel):
     """Login real da conta — código de verificação opcional para 2FA/desafio."""
@@ -137,6 +162,7 @@ class AccountOut(BaseModel):
     ultimo_post_em: datetime | None
     ultimo_erro: str | None
     ultimo_erro_em: datetime | None
+    login_bloqueado_ate: datetime | None = None
     criado_em: datetime
     proxy: ProxyOutBase | None = None
 

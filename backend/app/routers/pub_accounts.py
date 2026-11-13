@@ -305,6 +305,14 @@ def connect_account(
     verification_code = body.verification_code if body else None
     if not account.senha_enc and not account.sessionid_enc and not account.session_data:
         raise HTTPException(409, "Configure a senha (ou o cookie sessionid) da conta antes de conectar.")
+    bloqueado_ate = account.login_bloqueado_ate
+    if bloqueado_ate is not None and not verification_code:
+        minutos = max(1, round((bloqueado_ate - datetime.now(timezone.utc)).total_seconds() / 60))
+        raise HTTPException(
+            429,
+            f"O Instagram limitou as tentativas desta conta há pouco. Aguarde {minutos} min antes de tentar de "
+            "novo — insistir agora só aumenta o bloqueio. Para conectar já, use o cookie sessionid.",
+        )
 
     if account.proxy is not None:
         proxy = check_proxy(db, account.proxy)

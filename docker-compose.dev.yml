@@ -32,8 +32,13 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-troque-em-producao}
       # versão de app para o login legado do Instagram — ver app/config.py
-      INSTAGRAM_APP_VERSION: ${INSTAGRAM_APP_VERSION:-446.0.0.49.77}
-      INSTAGRAM_APP_VERSION_CODE: ${INSTAGRAM_APP_VERSION_CODE:-1060018354}
+      INSTAGRAM_APP_VERSION: ${INSTAGRAM_APP_VERSION:-}
+      INSTAGRAM_APP_VERSION_CODE: ${INSTAGRAM_APP_VERSION_CODE:-}
+      # vigilância: avisos no Telegram + teste diário de login (ver README)
+      INSTANCE_NAME: ${INSTANCE_NAME:-Casa}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      INSTAGRAM_CANARY_PROXY: ${INSTAGRAM_CANARY_PROXY:-}
       # No Windows+Docker os eventos de arquivo não chegam; polling resolve.
       # SaaS: admins (acesso total) e limpeza de vídeos — ver app/billing
       ADMIN_EMAILS: ${ADMIN_EMAILS:-julio8martins@gmail.com,scarlett.campelo@gmail.com}

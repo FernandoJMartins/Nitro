@@ -75,6 +75,14 @@ def registrar_versao() -> dict:
     return dados
 
 
+def candidata_testada() -> dict | None:
+    """Resultado do deploy/instagrapi_atualizacao.sh verificar (só existe em casa)."""
+    try:
+        return json.loads((settings.storage_path / "_atualizacao_instagrapi.json").read_text())
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _buscar_ultima() -> None:
     """Consulta a última release no GitHub (sem credenciais, timeout curto)."""
     try:
@@ -123,8 +131,21 @@ def status(db: Session) -> dict:
     ultima = _cache["ultima"]
     desatualizada = bool(instalada and ultima and _tupla(ultima) > _tupla(instalada))
     falhas = falhas_de_login(db)
+    from . import login_canary
+
+    canario = login_canary.ultimo()
+    candidata = candidata_testada()
+    if candidata and candidata.get("versao") == instalada:
+        candidata = None  # já aplicada
 
     alertas: list[tuple[str, str]] = []
+    if canario and canario.get("resultado") == "bloqueado":
+        alertas.append((
+            "critico",
+            "O teste diário de login falhou: o Instagram está barrando o login da biblioteca (429). "
+            + (f"Atualize a biblioteca ({instalada} → {ultima})." if desatualizada
+               else "Ainda não há versão nova da biblioteca — use o cookie sessionid para conectar contas."),
+        ))
     if desatualizada:
         alertas.append((
             "atencao",
@@ -141,7 +162,22 @@ def status(db: Session) -> dict:
                else " — confira usuário/senha e o tipo de proxy (use residencial)."),
         ))
 
+    if candidata:
+        if candidata.get("passou"):
+            alertas.append((
+                "atencao",
+                f"instagrapi {candidata['versao']} passou nos testes automáticos e está pronta: "
+                "rode deploy/instagrapi_atualizacao.sh aplicar (atualiza casa e droplet).",
+            ))
+        else:
+            alertas.append((
+                "atencao",
+                f"instagrapi {candidata['versao']} saiu mas NÃO passou nos testes automáticos "
+                f"(etapa: {candidata.get('etapa_falhou') or '?'}) — precisa de ajuste no código antes de atualizar.",
+            ))
+
     return {
+        "candidata": candidata,
         "biblioteca": {
             "instalada": instalada,
             "em_uso_desde": hist.get("desde"),
@@ -153,5 +189,6 @@ def status(db: Session) -> dict:
             "erro": _cache["erro"],
         },
         "logins": falhas,
+        "canario": canario,
         "_alertas": alertas,
     }

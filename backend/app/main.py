@@ -44,6 +44,8 @@ def _ensure_column(table: str, column: str, ddl_type: str) -> None:
 
 _ensure_column("generated_videos", "tipo_video", "VARCHAR(16)")
 # SaaS: assinatura no usuário
+_ensure_column("pub_proxies", "tipo_ip", "VARCHAR(16)")
+_ensure_column("pub_proxies", "provedor_ip", "VARCHAR(255)")
 _ensure_column("users", "plano", "VARCHAR(16)")
 _ensure_column("users", "assinatura_status", "VARCHAR(32)")
 _ensure_column("users", "stripe_customer_id", "VARCHAR(64)")
@@ -125,6 +127,13 @@ def _start_publishing_scheduler() -> None:
 
     lib_monitor.registrar_versao()
     threading.Thread(target=lib_monitor._ultima_versao, name="lib-monitor", daemon=True).start()
+
+    # teste diário de login + aviso no Telegram quando surgir alerta
+    from .services.login_canary import start_canary_worker
+    from .services.notifier import start_alert_watcher
+
+    start_canary_worker()
+    start_alert_watcher()
 
 
 @app.get("/health", tags=["infra"])

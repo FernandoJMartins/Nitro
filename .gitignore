@@ -29,3 +29,4 @@ backend/_smoke*.db
 backend/_smoke*/
 backend/_test_tmp/
 .codewhale/
+deploy/*.log

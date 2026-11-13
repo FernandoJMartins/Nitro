@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, Database, Gauge, HardDrive, MemoryStick, Package, OctagonAlert, Send } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Database, Gauge, BellRing, HardDrive, MemoryStick, Package, OctagonAlert, Send } from "lucide-react";
 import { ErrorBanner } from "./Dialog";
-import { adminSystem, type Nivel, type SystemStatus } from "./api";
+import { adminNotifyTest, adminRunCanary, adminSystem, type LoginCanary, type Nivel, type SystemStatus } from "./api";
 import "./AdminSystem.css";
 
 const REFRESH_MS = 30_000;
@@ -102,7 +102,35 @@ const PLANO_NOME: Record<string, string> = { basico: "Básico", pro: "Pro", agen
 
 /** Painel de monitoramento do admin — atualiza sozinho a cada 30s. */
 /** Biblioteca do Instagram: versão em uso x última publicada + bloqueios de login. */
-function InstagramCard({ ig }: { ig: NonNullable<SystemStatus["instagram"]> }) {
+const CANARIO_NIVEL: Record<LoginCanary["resultado"], Nivel> = {
+  ok: "ok",
+  bloqueado: "critico",
+  inconclusivo: "atencao",
+  erro: "atencao",
+};
+const CANARIO_TEXTO: Record<LoginCanary["resultado"], string> = {
+  ok: "Login funcionando",
+  bloqueado: "Instagram barrando o login",
+  inconclusivo: "Inconclusivo",
+  erro: "Falha de rede no teste",
+};
+
+function InstagramCard({ ig, onRefresh }: { ig: NonNullable<SystemStatus["instagram"]>; onRefresh: () => void }) {
+  const [testando, setTestando] = useState(false);
+  const [erroTeste, setErroTeste] = useState<string | null>(null);
+  const c = ig.canario;
+  async function testar() {
+    setTestando(true);
+    setErroTeste(null);
+    try {
+      await adminRunCanary();
+      onRefresh();
+    } catch (e) {
+      setErroTeste(String(e));
+    } finally {
+      setTestando(false);
+    }
+  }
   const b = ig.biblioteca;
   const bloqueadas = ig.logins.bloqueadas_24h ?? 0;
   const ok = ig.logins.logins_ok_24h ?? 0;
@@ -131,6 +159,97 @@ function InstagramCard({ ig }: { ig: NonNullable<SystemStatus["instagram"]> }) {
         <br />
         Logins (24h): {ok} ok · {bloqueadas} bloqueados pelo Instagram
       </div>
+      {ig.candidata && (
+        <div className="sys-card-head" style={{ marginTop: 4 }}>
+          <span className="sys-muted">
+            Versão {ig.candidata.versao} testada {atras(ig.candidata.testado_em)}
+            {ig.candidata.passou
+              ? " — pronta: rode deploy/instagrapi_atualizacao.sh aplicar"
+              : ` — falhou na etapa “${ig.candidata.etapa_falhou ?? "?"}”`}
+          </span>
+          <StatusPill
+            nivel={ig.candidata.passou ? "ok" : "atencao"}
+            label={ig.candidata.passou ? "Aprovada" : "Precisa de ajuste"}
+          />
+        </div>
+      )}
+      <div className="sys-card-head" style={{ marginTop: 4 }}>
+        <span className="sys-muted">Teste diário de login {c ? atras(c.em) : "(ainda não rodou)"}</span>
+        {c && <StatusPill nivel={CANARIO_NIVEL[c.resultado]} label={CANARIO_TEXTO[c.resultado]} />}
+      </div>
+      {c && (
+        <div className="sys-muted">
+          Via {c.rota}
+          {c.detalhe && c.resultado !== "ok" && (
+            <>
+              <br />
+              {c.detalhe}
+            </>
+          )}
+        </div>
+      )}
+      <div>
+        <button className="btn ghost sm" onClick={testar} disabled={testando}>
+          {testando ? "Testando… (até 30s)" : "Testar login agora"}
+        </button>
+        <span className="sys-muted"> usa um usuário inventado — nenhuma conta real</span>
+      </div>
+      {erroTeste && <div className="sys-muted">{erroTeste}</div>}
+    </div>
+  );
+}
+
+/** Avisos no Telegram: configurado? último envio? botão de teste. */
+function AvisosCard({ av }: { av: NonNullable<SystemStatus["avisos"]> }) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  async function testar() {
+    setEnviando(true);
+    setMsg(null);
+    try {
+      await adminNotifyTest();
+      setMsg("Enviado — confira o Telegram.");
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setEnviando(false);
+    }
+  }
+  return (
+    <div className="sys-card">
+      <div className="sys-card-head">
+        <span className="sys-card-title">
+          <BellRing size={16} aria-hidden="true" /> Avisos no Telegram
+        </span>
+        <StatusPill
+          nivel={!av.telegram_configurado ? "atencao" : av.ultimo_erro ? "critico" : "ok"}
+          label={!av.telegram_configurado ? "Não configurado" : av.ultimo_erro ? "Falhando" : "Ativo"}
+        />
+      </div>
+      <div className="sys-muted">
+        {av.telegram_configurado ? (
+          <>
+            Servidor “{av.instancia}” · alertas conferidos {atras(av.verificado_em)}
+            {av.ultimo_envio_em && <> · último aviso {atras(av.ultimo_envio_em)}</>}
+            {av.ultimo_erro && (
+              <>
+                <br />
+                {av.ultimo_erro}
+              </>
+            )}
+          </>
+        ) : (
+          <>Defina TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no .env deste servidor (passo a passo no README).</>
+        )}
+      </div>
+      {av.telegram_configurado && (
+        <div>
+          <button className="btn ghost sm" onClick={testar} disabled={enviando}>
+            {enviando ? "Enviando…" : "Enviar teste"}
+          </button>
+          {msg && <span className="sys-muted"> {msg}</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -139,6 +258,10 @@ export default function AdminSystem() {
   const [st, setSt] = useState<SystemStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0);
+  const carregar = () =>
+    adminSystem()
+      .then((d) => (setSt(d), setError(null)))
+      .catch((e) => setError(String(e)));
 
   useEffect(() => {
     let vivo = true;
@@ -251,7 +374,8 @@ export default function AdminSystem() {
             )}
           </div>
         </div>
-        {st.instagram && <InstagramCard ig={st.instagram} />}
+        {st.instagram && <InstagramCard ig={st.instagram} onRefresh={carregar} />}
+        {st.avisos && <AvisosCard av={st.avisos} />}
         <div className="sys-card">
           <div className="sys-card-head">
             <span className="sys-card-title">

@@ -159,6 +159,14 @@ export interface AdminUser {
   uso: Usage;
 }
 export type Nivel = "ok" | "atencao" | "critico";
+export interface LoginCanary {
+  em: string;
+  biblioteca: string | null;
+  rota: string;
+  resultado: "ok" | "bloqueado" | "inconclusivo" | "erro";
+  detalhe?: string;
+}
+
 export interface SystemStatus {
   gerado_em: string;
   alertas: { nivel: Nivel; mensagem: string }[];
@@ -192,6 +200,21 @@ export interface SystemStatus {
       erro?: string | null;
     };
     logins: { bloqueadas_24h?: number; logins_ok_24h?: number };
+    canario?: LoginCanary | null;
+    candidata?: {
+      versao: string;
+      passou: boolean;
+      etapa_falhou: string | null;
+      resumo: string;
+      testado_em: string;
+    } | null;
+  };
+  avisos?: {
+    telegram_configurado: boolean;
+    instancia: string;
+    ultimo_envio_em: string | null;
+    ultimo_erro: string | null;
+    verificado_em: string | null;
   };
   publicacoes: {
     ultimas_24h: Record<string, number>;
@@ -216,6 +239,12 @@ export interface SystemStatus {
 }
 export function adminSystem(): Promise<SystemStatus> {
   return apiGetAsync("/api/v1/admin/system");
+}
+export function adminRunCanary(): Promise<LoginCanary> {
+  return apiSend("/api/v1/admin/instagram/canary", "POST");
+}
+export function adminNotifyTest(): Promise<{ ok: boolean }> {
+  return apiSend("/api/v1/admin/notify-test", "POST");
 }
 export function adminListUsers(): Promise<AdminUser[]> {
   return apiGetAsync("/api/v1/admin/users");
@@ -652,6 +681,8 @@ export interface Proxy {
   status: "verde" | "amarelo" | "vermelho" | "cinza";
   latencia_ms: number | null;
   ip_publico: string | null;
+  tipo_ip?: "residencial" | "movel" | "datacenter" | "desconhecido" | null;
+  provedor_ip?: string | null;
   ultimo_check_em: string | null;
   ultimo_erro: string | null;
   criado_em: string;
@@ -719,6 +750,7 @@ export interface PubAccount {
   ultimo_acesso_em: string | null;
   ultimo_post_em: string | null;
   ultimo_erro: string | null;
+  login_bloqueado_ate?: string | null;
   criado_em: string;
   proxy: { id: number; nome_interno: string; status: string } | null;
 }

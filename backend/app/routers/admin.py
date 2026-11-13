@@ -77,6 +77,37 @@ def _nivel(frac: float, atencao: float, critico: float) -> str:
     return "critico" if frac >= critico else "atencao" if frac >= atencao else "ok"
 
 
+def _avisos_status() -> dict:
+    from ..services import notifier
+
+    return {
+        "telegram_configurado": notifier.configurado(),
+        "instancia": notifier.nome_instancia(),
+        "ultimo_envio_em": notifier.STATUS["ultimo_envio_em"],
+        "ultimo_erro": notifier.STATUS["ultimo_erro"],
+        "verificado_em": notifier.STATUS["verificado_em"],
+    }
+
+
+@router.post("/instagram/canary")
+def run_login_canary(_: User = Depends(get_admin_user), db: Session = Depends(get_db)):
+    """Roda agora o teste de login (usuário inventado — nenhuma conta real)."""
+    from ..services import login_canary
+
+    return login_canary.executar(db)
+
+
+@router.post("/notify-test")
+def notify_test(_: User = Depends(get_admin_user)):
+    from ..services import notifier
+
+    if not notifier.configurado():
+        raise HTTPException(400, "Telegram não configurado: defina TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no .env.")
+    if not notifier.enviar(f"✅ {notifier.nome_instancia()} — teste: os avisos do Nitro estão chegando aqui."):
+        raise HTTPException(502, notifier.STATUS["ultimo_erro"] or "Falha ao enviar.")
+    return {"ok": True}
+
+
 @router.get("/system")
 def system_status(_: User = Depends(get_admin_user), db: Session = Depends(get_db)):
     """Tudo o que o admin precisa ver de uma vez: servidor, banco, agendador,
@@ -200,6 +231,7 @@ def system_status(_: User = Depends(get_admin_user), db: Session = Depends(get_d
         "agendador": agendador,
         "retencao": {**RET, "dias": settings.video_retention_days},
         "instagram": instagram,
+        "avisos": _avisos_status(),
         "publicacoes": {
             "ultimas_24h": por_status,
             "pendentes": pendentes,

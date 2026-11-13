@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # vídeos gerados são apagados (arquivo + registro) após N dias
     video_retention_days: int = 3  # vídeos gerados e NÃO agendados
     delete_after_publish: bool = True  # apaga o vídeo gerado assim que a postagem é confirmada
+
+    # --- vigilância (Admin → Sistema + avisos no Telegram) ---
+    instance_name: str = ""  # nome deste servidor nos avisos (ex.: "Casa", "nitroflow.site")
+    telegram_bot_token: str = ""  # bot criado no @BotFather
+    telegram_chat_id: str = ""  # seu chat com o bot (ver README)
+    instagram_canary_proxy: str = ""  # proxy residencial p/ o teste diário de login (opcional)
+    login_cooldown_min: int = 30  # após um 429 no login, trava o "Conectar" da conta por N min
     # a retenção vale também para os admins? (padrão: não)
     video_retention_include_admins: bool = True
 

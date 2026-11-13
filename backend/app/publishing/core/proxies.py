@@ -71,6 +71,13 @@ def _mark_ok(db: Session, proxy: Proxy, protocolo: str, latencia_ms: float, ip: 
         proxy.protocolo = protocolo
     proxy.status = "amarelo" if latencia_ms > LATENCIA_AMARELA_MS else "verde"
     proxy.latencia_ms = round(latencia_ms, 1)
+    if ip != proxy.ip_publico or not proxy.tipo_ip or proxy.tipo_ip == "desconhecido":
+        # IP mudou (proxy rotativo) ou nunca classificado: residencial x data center
+        from ...services.ip_tipo import classificar  # noqa: PLC0415
+
+        info = classificar(ip)
+        proxy.tipo_ip = info["tipo"]
+        proxy.provedor_ip = info["provedor"]
     proxy.ip_publico = ip
     proxy.ultimo_erro = None
     proxy.ultimo_check_em = datetime.now(timezone.utc)

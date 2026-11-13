@@ -234,8 +234,21 @@ function ProxyManager({ proxies, onChange }: { proxies: Proxy[]; onChange: () =>
                   {p.host}:{p.porta}
                   {p.latencia_ms != null && <> · {Math.round(p.latencia_ms)}ms</>}
                   {p.ip_publico && <> · IP {p.ip_publico}</>}
+                  {p.tipo_ip && p.tipo_ip !== "desconhecido" && (
+                    <>
+                      {" · "}
+                      {TIPO_IP_LABEL[p.tipo_ip]}
+                      {p.provedor_ip ? ` (${p.provedor_ip})` : ""}
+                    </>
+                  )}
                   {p.ultimo_erro && <> · {p.ultimo_erro}</>}
                 </div>
+                {p.tipo_ip === "datacenter" && (
+                  <div className="meta" style={{ color: "var(--danger)" }}>
+                    ⚠ IP de data center: o Instagram costuma bloquear o login por senha (429) vindo desse tipo de IP.
+                    Use proxy residencial ou móvel (4G) — ou conecte a conta pelo cookie sessionid.
+                  </div>
+                )}
               </div>
               <div className="card-actions">
                 <button className="btn ghost sm" onClick={() => checkProxy(p.id).then(onChange)}>
@@ -361,6 +374,10 @@ function AccountForm({
   const [horarios, setHorarios] = useState<Set<string>>(new Set(initial?.horarios_selecionados ?? []));
   const [modo, setModo] = useState<ScheduleMode>(inferScheduleMode(initial));
   const [formError, setFormError] = useState<string | null>(null);
+  // forma de conectar: cookie de sessão (recomendado — não envia senha, não leva 429) ou senha
+  const [metodo, setMetodo] = useState<"cookie" | "senha">(
+    initial?.senha_configurada && !initial?.sessionid_configurada ? "senha" : "cookie",
+  );
   const [janelaInicio, setJanelaInicio] = useState(initial?.janela_inicio ?? "");
   const [janelaFim, setJanelaFim] = useState(initial?.janela_fim ?? "");
   const [captionMode, setCaptionMode] = useState<AccountBody["caption_mode"]>(initial?.caption_mode ?? "automatica");
@@ -371,6 +388,10 @@ function AccountForm({
 
   function submit() {
     if (!nomeInterno.trim() || !username.trim()) return;
+    if (!USERNAME_OK.test(username.trim().replace(/^@/, ""))) {
+      setFormError("O usuário do Instagram (@) só pode ter letras, números, ponto e _ — sem espaços. Ex.: perfil01");
+      return;
+    }
     if (modo === "ciclo" && (postsCiclo === "" || horasCiclo === "")) {
       setFormError("Modo “por ciclo”: preencha quantos posts (X) e a cada quantas horas (Y).");
       return;
@@ -382,7 +403,7 @@ function AccountForm({
     setFormError(null);
     const body: AccountBody = {
       nome_interno: nomeInterno.trim(),
-      username: username.trim(),
+      username: username.trim().replace(/^@/, ""),
       ...(senha.trim() ? { senha: senha.trim() } : {}),
       ...(sessionid.trim() ? { sessionid: sessionid.trim() } : {}),
       proxy_id: proxyId === "" ? null : proxyId,
@@ -411,35 +432,72 @@ function AccountForm({
           Username (Instagram)
           <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Ex.: perfil01" />
         </label>
-        <label className="field">
-          Senha {initial?.senha_configurada ? "(já configurada — deixe em branco para manter)" : ""}
-          <input
-            type="password"
-            value={senha}
-            onChange={(e) => setSenha(e.target.value)}
-            placeholder={initial?.senha_configurada ? "••••••••" : "Senha da conta"}
-            autoComplete="new-password"
-          />
-          <span className="hint">
-            Guardada criptografada. Usada na autenticação real da conta (botão “Conectar” — login efetivo no
-            Instagram, com a sessão persistida e reutilizada).
-          </span>
-        </label>
-        <label className="field">
-          Sessionid (cookie do navegador){" "}
-          {initial?.sessionid_configurada ? "(já configurado — deixe em branco para manter)" : ""}
-          <input
-            type="password"
-            value={sessionid}
-            onChange={(e) => setSessionid(e.target.value)}
-            placeholder={initial?.sessionid_configurada ? "••••••••" : "Cole o cookie sessionid"}
-            autoComplete="new-password"
-          />
-          <span className="hint">
-            Contorna o bloqueio 429 de login: abra o Instagram já logado no navegador, copie o valor do cookie{" "}
-            <code>sessionid</code> (F12 → Application → Cookies) e cole aqui. Guardado criptografado.
-          </span>
-        </label>
+        <div className="field">
+          Como conectar a conta
+          <div className="seg" role="tablist" style={{ marginTop: 6 }}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={metodo === "cookie"}
+              className={`seg-btn${metodo === "cookie" ? " active" : ""}`}
+              onClick={() => setMetodo("cookie")}
+            >
+              Cookie de sessão (recomendado)
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={metodo === "senha"}
+              className={`seg-btn${metodo === "senha" ? " active" : ""}`}
+              onClick={() => setMetodo("senha")}
+            >
+              Usuário e senha
+            </button>
+          </div>
+        </div>
+        {metodo === "cookie" ? (
+          <label className="field">
+            Cookie sessionid{" "}
+            {initial?.sessionid_configurada ? "(já configurado — deixe em branco para manter)" : ""}
+            <input
+              type="password"
+              value={sessionid}
+              onChange={(e) => setSessionid(e.target.value)}
+              placeholder={initial?.sessionid_configurada ? "••••••••" : "Cole aqui o valor do cookie sessionid"}
+              autoComplete="new-password"
+            />
+            <span className="hint">
+              Não envia senha ao Instagram, então não sofre o bloqueio 429 e a sessão dura meses. Como pegar:
+            </span>
+            <ol className="hint" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+              <li>No computador, entre nessa conta em instagram.com (de preferência onde a pessoa já costuma entrar).</li>
+              <li>
+                Aperte <strong>F12</strong> → aba <strong>Application</strong> (no Firefox: <strong>Armazenamento</strong>) →{" "}
+                <strong>Cookies</strong> → <code>https://www.instagram.com</code>.
+              </li>
+              <li>
+                Copie o <strong>valor</strong> da linha <code>sessionid</code>, cole acima, salve e clique em{" "}
+                <strong>Conectar</strong>.
+              </li>
+              <li>Não clique em “Sair” nesse navegador depois — isso encerra a sessão copiada.</li>
+            </ol>
+          </label>
+        ) : (
+          <label className="field">
+            Senha {initial?.senha_configurada ? "(já configurada — deixe em branco para manter)" : ""}
+            <input
+              type="password"
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
+              placeholder={initial?.senha_configurada ? "••••••••" : "Senha da conta"}
+              autoComplete="new-password"
+            />
+            <span className="hint">
+              Guardada criptografada. Funciona melhor com proxy <strong>residencial ou móvel</strong>: com IP de data
+              center o Instagram costuma responder 429. Se der 429, espere e use o cookie de sessão.
+            </span>
+          </label>
+        )}
         <label className="field">
           Proxy
           <select value={proxyId} onChange={(e) => setProxyId(e.target.value ? Number(e.target.value) : "")}>
@@ -925,6 +983,22 @@ function DefaultsManager({ onChange }: { onChange: () => void }) {
   );
 }
 
+const TIPO_IP_LABEL: Record<string, string> = {
+  residencial: "🏠 Residencial",
+  movel: "📱 Móvel",
+  datacenter: "🏢 Data center",
+};
+
+/** Minutos que faltam até `ate` (0 se já passou ou não há trava). */
+function minutosRestantes(ate: string | null | undefined, agora: number): number {
+  if (!ate) return 0;
+  const ms = new Date(ate).getTime() - agora;
+  return ms > 0 ? Math.ceil(ms / 60000) : 0;
+}
+
+/** Regras de @ do Instagram: letras, números, ponto e _ (até 30). */
+const USERNAME_OK = /^[A-Za-z0-9._]{1,30}$/;
+
 export default function Accounts() {
   const [tab, setTab] = useState<"contas" | "proxies" | "global" | "legendas">("contas");
   const [accounts, setAccounts] = useState<PubAccount[]>([]);
@@ -936,6 +1010,12 @@ export default function Accounts() {
   const [verifPara, setVerifPara] = useState<PubAccount | null>(null);
   const [connecting, setConnecting] = useState<number | null>(null);
   const [verifying, setVerifying] = useState<number | null>(null);
+  // relógio para a contagem do "Aguarde N min" (trava após 429)
+  const [agora, setAgora] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setAgora(Date.now()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   function refreshAll() {
     listAccounts().then(setAccounts).catch((e) => setError(String(e)));
@@ -1091,9 +1171,23 @@ export default function Accounts() {
               {a.ultimo_erro && <div className="meta" style={{ color: "var(--danger)" }}>⚠ {a.ultimo_erro}</div>}
             </div>
             <div className="card-actions" style={{ flexWrap: "wrap" }}>
-              <button className="btn primary sm" onClick={() => conectar(a)} disabled={connecting === a.id}>
-                {connecting === a.id ? "Conectando…" : "🔗 Conectar"}
-              </button>
+              {(() => {
+                const travado = minutosRestantes(a.login_bloqueado_ate, agora);
+                return (
+                  <button
+                    className="btn primary sm"
+                    onClick={() => conectar(a)}
+                    disabled={connecting === a.id || travado > 0}
+                    title={
+                      travado > 0
+                        ? "O Instagram limitou as tentativas desta conta. Esperar evita que o bloqueio aumente; para conectar já, use o cookie sessionid."
+                        : undefined
+                    }
+                  >
+                    {connecting === a.id ? "Conectando…" : travado > 0 ? `⏳ Aguarde ${travado} min` : "🔗 Conectar"}
+                  </button>
+                );
+              })()}
               <DropdownMenu
                 align="right"
                 trigger={({ toggle }) => (

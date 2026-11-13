@@ -76,6 +76,43 @@ docker compose -f docker-compose.saas.yml up -d      # app em :5273, API em :810
 
 ---
 
+## 🛡️ Vigilância do login do Instagram (para não ser pego de surpresa)
+
+O Nitro publica pela API **não oficial** do Instagram (biblioteca `instagrapi`). O Instagram muda o login sem aviso, e versões velhas da biblioteca passam a levar **429** em qualquer IP. Isso aconteceu em nov/2026: com a 3.0.1, o login falhava de qualquer IP, e a 3.2.11 resolveu. A vigilância abaixo existe para perceber antes dos clientes e resolver em minutos.
+
+| Peça | O que faz | Onde |
+|---|---|---|
+| **Teste diário de login** | Uma vez por dia tenta logar com um usuário **inventado**, então nenhuma conta real corre risco. Resposta normal do Instagram = login ok. **429 = biblioteca barrada.** Em IP de data center (droplet) passa por um proxy residencial cadastrado, ou pelo `INSTAGRAM_CANARY_PROXY`; sem nenhum, o resultado é "inconclusivo". | `services/login_canary.py` · botão **Testar login agora** |
+| **Monitor da biblioteca** | Versão em uso, quando foi atualizada e a mais nova publicada no GitHub (consulta a cada 12h). Conta logins bloqueados nas últimas 24h. | `services/lib_monitor.py` |
+| **Avisos no Telegram** | A cada 10 min confere os alertas do painel. Alerta novo é avisado na hora; um alerta que continua ativo é lembrado a cada 12h (crítico) ou 24h (atenção); quando ele some, avisa "resolvido". | `services/notifier.py` |
+| **Atualização preparada** | `deploy/instagrapi_atualizacao.sh verificar` (cron diário, **em casa**): se saiu versão nova, testa num container descartável (dependências, testes, login de teste), mostra o resultado no painel e avisa no Telegram. `… aplicar`: atualiza casa, confere, commita e sobe no droplet. | `deploy/instagrapi_atualizacao.sh` |
+| **Trava após 429** | Depois de um 429, o **Conectar** daquela conta fica travado por 30 min (`LOGIN_COOLDOWN_MIN`), porque insistir aumenta o bloqueio. Conexão por cookie não trava. | `Account.login_bloqueado_ate` |
+| **Tipo do proxy** | Ao testar um proxy, mostra se o IP de saída é residencial, móvel ou data center. Data center ganha aviso vermelho (o login por senha leva 429). | `services/ip_tipo.py` |
+| **Cookie de sessão primeiro** | No cadastro de conta, o padrão é conectar pelo cookie `sessionid`, com passo a passo na tela. Ele não envia senha, não leva 429 e a sessão dura meses. | tela Contas |
+
+A versão do app anunciada ao Instagram vem **sempre da biblioteca instalada**: o fingerprint de cada conta guarda só o aparelho. Assim, atualizar a biblioteca vale para todas as contas.
+
+### Configurar os avisos no Telegram (2 min)
+1. No Telegram, abra o **@BotFather** → `/newbot` → escolha um nome. Ele devolve o **token** (`123456:ABC...`).
+2. Abra o seu bot novo e mande qualquer mensagem (ex.: "oi").
+3. No navegador, abra `https://api.telegram.org/bot<TOKEN>/getUpdates` e copie o número em `"chat":{"id": ...}`. Esse é o **chat id**.
+4. No `.env` (de casa e do droplet), defina:
+   ```
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   TELEGRAM_CHAT_ID=987654321
+   ```
+5. Recrie o backend (`docker compose -f docker-compose.dev.yml up -d backend` em casa) e, em **Admin → Sistema → Avisos no Telegram**, clique **Enviar teste**.
+
+### Agendar o teste de versão nova (uma vez, em casa)
+```bash
+(crontab -l 2>/dev/null; echo "10 7 * * * /opt/apps/Nitro/deploy/instagrapi_atualizacao.sh verificar >> /opt/apps/Nitro/deploy/instagrapi_atualizacao.log 2>&1") | crontab -
+```
+
+### Quando chegar "versão X passou nos testes"
+Rode `deploy/instagrapi_atualizacao.sh aplicar`, ou peça "pode subir". Se chegar "**não** passou", a mudança precisa de ajuste no código: é a hora de pedir ajuda, e o resumo do erro aparece no painel.
+
+> Solução definitiva, a longo prazo: publicar pela **API oficial da Meta** (conta Business/Criador). Ela não quebra desse jeito.
+
 ## 📌 Visão geral
 
 O sistema é uma **biblioteca de mídias + motor de composição de vídeo**. O usuário faz upload de mídias, cadastra frases, escolhe músicas, e o sistema combina tudo automaticamente para produzir dezenas/centenas de vídeos de uma vez.
